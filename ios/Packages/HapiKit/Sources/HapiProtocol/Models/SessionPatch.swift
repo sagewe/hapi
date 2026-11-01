@@ -46,6 +46,7 @@ public enum PatchField<Value: Codable & Equatable & Sendable>: Equatable, Sendab
 /// back to the strict patch, so a malformed full session must not silently
 /// half-decode as a lenient patch.
 public struct SessionPatch: Equatable, Sendable {
+    public var hasConversationContent: Bool?
     public var contentRevision: Int?
     public var readState: SessionReadState?
     public var active: Bool?
@@ -73,6 +74,7 @@ public struct SessionPatch: Equatable, Sendable {
     public var scratchlistUpdatedAt: Int?
 
     public init(
+        hasConversationContent: Bool? = nil,
         contentRevision: Int? = nil,
         readState: SessionReadState? = nil,
         active: Bool? = nil,
@@ -95,6 +97,7 @@ public struct SessionPatch: Equatable, Sendable {
         backgroundTaskCount: Int? = nil,
         scratchlistUpdatedAt: Int? = nil
     ) {
+        self.hasConversationContent = hasConversationContent
         self.contentRevision = contentRevision
         self.readState = readState
         self.active = active
@@ -121,7 +124,7 @@ public struct SessionPatch: Equatable, Sendable {
 
 extension SessionPatch: Codable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case contentRevision, readState
+        case hasConversationContent, contentRevision, readState
         case active
         case thinking
         case activeTurnStartedAt
@@ -153,6 +156,7 @@ extension SessionPatch: Codable {
             payloadName: "SessionPatch"
         )
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        hasConversationContent = try container.decodeIfPresent(Bool.self, forKey: .hasConversationContent)
         contentRevision = try container.decodeIfPresent(Int.self, forKey: .contentRevision)
         readState = try container.decodeIfPresent(SessionReadState.self, forKey: .readState)
         active = try container.decodeIfPresent(Bool.self, forKey: .active)
@@ -178,6 +182,7 @@ extension SessionPatch: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(hasConversationContent, forKey: .hasConversationContent)
         try container.encodeIfPresent(contentRevision, forKey: .contentRevision)
         try container.encodeIfPresent(readState, forKey: .readState)
         try container.encodeIfPresent(active, forKey: .active)

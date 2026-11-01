@@ -168,6 +168,7 @@ public enum SummaryPatching {
     /// (`upsertSessionSummary` in the web reference does exactly that).
     public static func toSessionSummary(_ session: Session) -> SessionSummary {
         SessionSummary(
+            hasConversationContent: session.hasConversationContent,
             contentRevision: session.contentRevision,
             readState: session.readState,
             id: session.id,
@@ -224,6 +225,7 @@ public enum SummaryPatching {
         _ patch: SessionPatch
     ) -> SessionSummary {
         var next = current
+        if let content = patch.hasConversationContent { next.hasConversationContent = content }
         if let revision = patch.contentRevision { next.contentRevision = max(current.contentRevision ?? 0, revision) }
         next.readState = SessionReadState.merge(current.readState, patch.readState)
         next.active = patch.active ?? current.active
@@ -296,6 +298,7 @@ public enum SummaryPatching {
     /// `undefined !== null` distinction for `modelReasoningEffort`; the only
     /// effect is suppressing a re-render that stores an equal-rendering value.
     public static func isRenderIrrelevantPatch(current: SessionSummary, next: SessionSummary) -> Bool {
+        if current.hasConversationContent != next.hasConversationContent { return false }
         if current.contentRevision != next.contentRevision || current.readState != next.readState { return false }
         if current.active != next.active { return false }
         if current.thinking != next.thinking { return false }

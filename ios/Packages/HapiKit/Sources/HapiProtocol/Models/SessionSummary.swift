@@ -89,6 +89,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
 /// hub-derived: badges must use `pendingRequestsCount` (authoritative total),
 /// never `pendingRequests.count` (capped at 5, oldest first).
 public struct SessionSummary: Codable, Equatable, Sendable {
+    public var hasConversationContent: Bool?
     public var contentRevision: Int?
     public var readState: SessionReadState?
     /// Server-side cap on `pendingRequests` entries
@@ -123,6 +124,7 @@ public struct SessionSummary: Codable, Equatable, Sendable {
     public var effort: String?
 
     public init(
+        hasConversationContent: Bool? = nil,
         contentRevision: Int? = nil,
         readState: SessionReadState? = nil,
         id: String,
@@ -150,6 +152,7 @@ public struct SessionSummary: Codable, Equatable, Sendable {
         effort: String? = nil
     ) {
         self.id = id
+        self.hasConversationContent = hasConversationContent
         self.contentRevision = contentRevision
         self.readState = readState
         self.active = active

@@ -10,7 +10,7 @@ This README covers development builds.
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,
-attachments, scheduled sends, `/` command suggestions, files/Git, Scratchlist, standard dictation, usage/storage,
+attachments, scheduled sends, `/` command suggestions, `@` session references, files/Git, Scratchlist, standard dictation, usage/storage,
 settings and encrypted APNs notifications. It pairs with multiple hubs and
 keeps one active. The chat's … menu also forks the conversation, rewinds or
 forks at a loaded user message with a native history point (a separate sheet,
@@ -32,6 +32,24 @@ cache; the generated-media endpoint must still be available when first loading.
 Model, permission and Codex collaboration controls follow the session's agent/capabilities;
 usage/storage require the owner namespace. See the [native app guide](../docs/guide/native-apps.md)
 for platform differences, web-only features and everyday use.
+
+### Session references
+
+In the chat composer, type `@` at a word boundary to search other sessions on
+this hub. Suggestions use the web eligibility and ranking rules: conversation
+content is required; the current session and duplicate native connections are
+excluded. An empty query shows active/recent non-archived sessions; typing also
+searches archived sessions, titles, paths, flavors, machine names and IDs.
+Picking a session replaces the active token at the caret with an editable
+`[title](/sessions/id)` reference. Multiple references, drafts, scheduled sends
+and send-error restoration use the existing text path. Picking does not ping
+or send to the target. Unlike the web rich composer, references are plain
+Markdown in the editor. Suggestions are suppressed during IME composition and
+in Scratchlist mode; `/` suggestions retain their existing behavior.
+
+Regression coverage: package `SessionMentionsTests` and app-hosted
+`MentionTextInputTests` (`ios/scripts/test-transcript.sh
+-only-testing:HapiTests/MentionTextInputTests`).
 
 ## Requirements
 

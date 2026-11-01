@@ -295,6 +295,12 @@ public final class ChatInteractor {
         }
     }
 
+    /// Same-hub candidates only; selection inserts text and never sends a ping.
+    public func sessionMentionSuggestions(query: String, machineLabel: (String?) -> String = { $0 ?? "" }) -> [SessionSummary] {
+        guard composerDestination == .chat else { return [] }
+        return SessionMentions.matches(sessionStore.sessions, query: query, excluding: sessionId, machineLabel: machineLabel)
+    }
+
     /// Slash-command dropdown rows: non-empty only while the composer is a
     /// lone `/token`; metadata names merged with the RPC list (RPC wins).
     public var slashSuggestions: [SlashCommand] {

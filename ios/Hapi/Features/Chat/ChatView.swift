@@ -97,7 +97,8 @@ struct ChatView: View {
                 ChatComposerView(
                     interactor: model.interactor,
                     dictation: model.dictation,
-                    hugsBottomEdge: isFoldedOuterScreen
+                    hugsBottomEdge: isFoldedOuterScreen,
+                    mentionMachineLabels: model.mentionMachineLabels
                 ) { entry, editing in
                     scratchlistEntry = entry
                     scratchlistStartsEditing = editing

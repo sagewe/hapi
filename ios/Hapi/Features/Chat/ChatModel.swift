@@ -36,6 +36,13 @@ struct ChatHeaderUI: Equatable {
 /// stable group ids) lives inside ``ChatPipeline``; see its docs.
 @MainActor @Observable
 final class ChatModel {
+    var mentionMachineLabels: [String: String] {
+        Dictionary(uniqueKeysWithValues: hub.machineStore.machines.map { machine in
+            let name = machine.metadata?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (machine.id, name.flatMap { $0.isEmpty ? nil : $0 } ?? machine.metadata?.host ?? String(machine.id.prefix(8)))
+        })
+    }
+
     let sessionId: String
 
     // MARK: Published render state

@@ -21,6 +21,7 @@ struct ChatComposerView: View {
     /// Folded iPhone Duo: the short outer screen keeps more transcript by
     /// letting the composer sit closer to the home indicator.
     var hugsBottomEdge = false
+    var mentionMachineLabels: [String: String] = [:]
     var onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void = { _, _ in }
 
     // Attachment pickers (the launchers live here; policy + upload live in
@@ -30,7 +31,9 @@ struct ChatComposerView: View {
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var cameraOpen = false
     @State private var filePickerOpen = false
-    @FocusState private var textFocused: Bool
+    @State private var textFocused = false
+    @State private var textSelection = NSRange(location: 0, length: 0)
+    @State private var composing = false
     @State private var preparingAttachment = false
     @State private var schedulePickerOpen = false
 
@@ -61,10 +64,25 @@ struct ChatComposerView: View {
         let composer = interactor.composer
         let attachments = interactor.attachments.items
         let slashSuggestions = interactor.slashSuggestions
+        let mentionQuery = !scratchlistMode && textFocused
+            ? SessionMentions.query(in: interactor.composerText, selection: textSelection, composing: composing) : nil
+        let mentions = mentionQuery.map { interactor.sessionMentionSuggestions(query: $0.text) { id in
+                id.map { mentionMachineLabels[$0] ?? String($0.prefix(8)) } ?? ""
+            } } ?? []
         VStack(spacing: 0) {
+            if mentionQuery != nil, !mentions.isEmpty {
+                SessionMentionList(sessions: mentions, surface: composerSurfaceColor, machineLabels: mentionMachineLabels) { session in
+                    guard !composing, let result = SessionMentions.inserting(session, into: interactor.composerText, selection: textSelection) else { return }
+                    interactor.setComposerText(result.text)
+                    textSelection = result.selection
+                    textFocused = true
+                }
+                .padding(.bottom, 6)
+            }
             if !slashSuggestions.isEmpty {
                 SlashCommandList(commands: slashSuggestions, surface: composerSurfaceColor) { command in
                     interactor.selectSlashCommand(command)
+                    textSelection = NSRange(location: interactor.composerText.utf16.count, length: 0)
                 }
                 .padding(.bottom, 6)
             }
@@ -98,14 +116,20 @@ struct ChatComposerView: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                 }
-                TextField(composerPrompt, text: text, prompt: Text(composerPrompt).foregroundColor(.secondary), axis: .vertical)
-                    .focused($textFocused)
-                    .font(typography.bodyFont)
-                    .lineLimit(1...6)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
+                ZStack(alignment: .topLeading) {
+                    if interactor.composerText.isEmpty {
+                        Text(composerPrompt).foregroundStyle(.secondary)
+                            .font(typography.bodyFont).allowsHitTesting(false)
+                    }
+                    MentionTextInput(text: text, selection: $textSelection, composing: $composing,
+                                     focused: $textFocused,
+                                     font: .systemFont(ofSize: typography.bodySize,
+                                                      weight: typography.boldText ? .semibold : .regular))
+                        .accessibilityLabel(Text(composerPrompt))
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
                 HStack(spacing: 2) {
                     addAttachmentButton
                     if interactor.scratchlist != nil { scratchlistButton }
@@ -140,6 +164,16 @@ struct ChatComposerView: View {
         // keyboard is down; above a keyboard the normal gap applies.
         .padding(.bottom, hugsBottomEdge && !textFocused ? -8 : 8)
         .animation(.snappy, value: hugsBottomEdge && !textFocused)
+        .onAppear {
+            textSelection = NSRange(location: interactor.composerText.utf16.count, length: 0)
+        }
+        .onChange(of: interactor.composerText) { _, value in
+            // Dictation, restored drafts and send clearing still use the same
+            // binding. UIKit owns the caret during local edits/IME composition.
+            if textSelection.location > value.utf16.count {
+                textSelection = NSRange(location: value.utf16.count, length: 0)
+            }
+        }
         .onChange(of: interactor.composerFocusRequest) {
             textFocused = true
         }

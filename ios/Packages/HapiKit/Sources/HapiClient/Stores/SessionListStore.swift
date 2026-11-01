@@ -382,6 +382,7 @@ public final class SessionListStore: SessionListStoring {
         // fields — carry them over from the previous row (web
         // `upsertSessionSummary`).
         var summary = SummaryPatching.toSessionSummary(session)
+        summary.hasConversationContent = session.hasConversationContent ?? existing?.hasConversationContent
         summary.futureScheduledMessageCount = existing?.futureScheduledMessageCount ?? 0
         summary.nextScheduledAt = existing?.nextScheduledAt
         summary.contentRevision = [existing?.contentRevision, session.contentRevision].compactMap { $0 }.max()
