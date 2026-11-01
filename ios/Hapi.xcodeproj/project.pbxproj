@@ -393,11 +393,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Hapi/Hapi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Y64389SULV;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hapi/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = HAPI;
+				INFOPLIST_KEY_CFBundleDisplayName = "HAPI Personal";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -409,10 +410,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.33.5;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -424,11 +426,12 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Hapi/Hapi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Y64389SULV;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hapi/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = HAPI;
+				INFOPLIST_KEY_CFBundleDisplayName = "HAPI Personal";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -440,10 +443,11 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.33.5;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -453,6 +457,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = HapiNotificationService/HapiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Y64389SULV;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HapiNotificationService/Info.plist;
@@ -464,11 +469,12 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.33.5;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.app.HapiNotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.HapiNotificationService;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -478,6 +484,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = HapiNotificationService/HapiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Y64389SULV;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HapiNotificationService/Info.plist;
@@ -489,11 +496,12 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.33.5;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.app.HapiNotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.HapiNotificationService;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -504,11 +512,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.companion.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 6.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hapi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hapi";
 			};
@@ -520,11 +529,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = run.hapi.companion.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 6.0;
+				SUPPORTS_MACCATALYST = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hapi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hapi";
 			};

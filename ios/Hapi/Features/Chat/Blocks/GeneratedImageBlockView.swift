@@ -134,9 +134,17 @@ private struct GeneratedMediaCard: View {
         }
     }
 
+    private func canPreview(_ url: URL) -> Bool {
+        #if targetEnvironment(macCatalyst)
+        return true
+        #else
+        return QLPreviewController.canPreview(url as NSURL)
+        #endif
+    }
+
     @ViewBuilder
     private func fileActions(_ file: GeneratedMediaFile) -> some View {
-        if content.kind == .file, QLPreviewController.canPreview(file.url as NSURL) {
+        if content.kind == .file, canPreview(file.url) {
             Button("Preview", systemImage: "doc.text.magnifyingglass") { previewOpen = true }
         }
         Button("Save or share", systemImage: "square.and.arrow.up") { shareOpen = true }

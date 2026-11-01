@@ -1,3 +1,19 @@
+#if targetEnvironment(macCatalyst)
+import SwiftUI
+
+struct QRScannerView: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        ContentUnavailableView {
+            Label("请使用手动配对", systemImage: "desktopcomputer")
+        } description: {
+            Text("Mac 版可在配对页面输入 Hub 地址和访问令牌。")
+        } actions: {
+            Button("返回") { dismiss() }
+        }
+    }
+}
+#else
 import HapiClient
 import HapiProtocol
 import SwiftUI
@@ -213,3 +229,5 @@ private struct DataScannerRepresentable: UIViewControllerRepresentable {
         }
     }
 }
+
+#endif

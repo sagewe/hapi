@@ -33,6 +33,37 @@ Model, permission and Codex collaboration controls follow the session's agent/ca
 usage/storage require the owner namespace. See the [native app guide](../docs/guide/native-apps.md)
 for platform differences, web-only features and everyday use.
 
+## Personal Mac Catalyst build
+
+The personal fork supports running this iOS/iPad client on macOS with Mac
+Catalyst. It uses the existing chat, approval, attachment and settings code.
+The checked-in app identifiers and development team belong to the personal
+fork; use your own identifiers and team when building outside that account.
+
+With Xcode 27.1 and the configured development certificate/account installed:
+
+```sh
+./script/build_and_run.sh --verify
+```
+
+The script builds the host architecture, lets Xcode manage provisioning,
+installs `~/Applications/HAPI Catalyst.app`, and opens it. DerivedData defaults
+to `~/Library/Developer/Xcode/DerivedData/HapiCatalyst`; override it with
+`HAPI_MAC_DERIVED_DATA`. Optional modes are `--debug`, `--logs`, and `--telemetry`.
+The repository Run action invokes the same script.
+
+Pair through manual entry or the existing companion link. Mac Catalyst does
+not expose the VisionKit live QR scanner or the phone hinge probe. Quick Look
+uses a platform-specific availability path. The iOS implementations remain
+unchanged on iPhone and iPad.
+
+Validated on 2026-11-01: signed Apple Silicon build and installation, real Hub
+pairing, historical chat/tool rendering, a Codex message/reply round trip, and
+Keychain-backed login after restarting the app. Mac attachments, dictation,
+approval/question interactions and APNs delivery still need individual device
+acceptance checks. In particular, the development APNs environment must match
+the Hub configuration before notification delivery can be assumed.
+
 ## Requirements
 
 - Xcode 27.1 or newer (the app uses iOS 27.1 SDK APIs such as
