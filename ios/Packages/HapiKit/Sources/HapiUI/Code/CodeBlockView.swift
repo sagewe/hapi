@@ -6,8 +6,8 @@ import SwiftUI
 /// applied when ready; until then (or when the engine declines) the code
 /// renders as plain text.
 ///
-/// Unsupported fence languages the web renders specially (mermaid, math)
-/// deliberately fall back to this view per the v1 plan.
+/// Math fences and unsupported languages fall back to this view. On iOS,
+/// Mermaid fences are dispatched to MermaidDiagramView by MarkdownBlockView.
 public struct CodeBlockView: View {
     public let language: String?
     public let code: String

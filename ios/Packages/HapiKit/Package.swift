@@ -46,7 +46,8 @@ targets += [
             "HapiProtocol",
             .product(name: "Markdown", package: "swift-markdown"),
             .product(name: "Highlightr", package: "Highlightr"),
-        ]
+        ],
+        resources: [.copy("Resources/Mermaid")]
     ),
     .testTarget(name: "HapiUITests", dependencies: ["HapiUI"]),
 ]

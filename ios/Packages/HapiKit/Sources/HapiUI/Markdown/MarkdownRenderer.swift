@@ -552,7 +552,15 @@ struct MarkdownBlockView: View {
                 .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
         case .codeBlock(let language, let code):
+            #if canImport(UIKit) && canImport(WebKit)
+            if language == "mermaid" {
+                MermaidDiagramView(code: code)
+            } else {
+                CodeBlockView(language: language, code: code)
+            }
+            #else
             CodeBlockView(language: language, code: code)
+            #endif
         case .blockquote(let children):
             HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5)

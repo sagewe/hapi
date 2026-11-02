@@ -64,7 +64,7 @@ struct MarkdownBlockTreeTests {
     }
 
     @Test func mermaidFenceStaysACodeBlock() throws {
-        // v1 plan: mermaid/math degrade to plain code blocks.
+        // Parsing preserves the fence; platform views choose Mermaid or source.
         let blocks = MarkdownBlockTree.build(from: "```mermaid\ngraph TD\n```")
         guard case .codeBlock(let language, _) = try #require(blocks.first) else {
             Issue.record("expected code block")

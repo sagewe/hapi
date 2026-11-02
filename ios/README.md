@@ -51,6 +51,37 @@ Regression coverage: package `SessionMentionsTests` and app-hosted
 `MentionTextInputTests` (`ios/scripts/test-transcript.sh
 -only-testing:HapiTests/MentionTextInputTests`).
 
+### Mermaid diagrams
+
+On iOS (including Catalyst builds of these sources), exact `mermaid` fences
+render offline with bundled Mermaid 11.14.0. Ordinary fences and macOS package
+consumers retain the code renderer. Inline cells use fixed-height cached
+bitmaps; tapping opens a pinch-zoomable vector view. Source/copy remain
+available, and invalid syntax, oversized input or rendering failures fall back
+to source with a reason and Retry. Source previews are bounded; Copy preserves
+the complete original text.
+
+A main-actor service serializes and coalesces rendering, uses cache budgets of 20
+previews / 32 MiB of pixel data, debounces streamed content, and cancels work
+when its last cell leaves. Rendering has a 12-second timeout, 20,000 UTF-16
+source limit and 500-edge limit. The renderer uses transient nonpersistent
+WKWebViews; transcript rows hold no WebKit instance after completion. Source
+is passed as a structured JS argument, strict mode cannot be relaxed by diagram
+configuration, navigation is restricted to the local document, and CSP blocks
+network resources. Fullscreen displays sanitized SVG with page scripts disabled.
+The resource README records the pinned bundle, hash and license provenance.
+
+Run app-hosted offline, cache, cancellation, source-error, hostile-label,
+height and vector-zoom checks with:
+
+```sh
+ios/scripts/test-transcript.sh -only-testing:HapiTests/MermaidRenderingTests
+```
+
+Optional non-networked specimens: set `TEST_RUNNER_HAPI_MERMAID_CAPTURE` to a
+fresh temporary directory. Device pinch gestures and long-conversation
+scrolling smoothness still require manual acceptance.
+
 ## Requirements
 
 - Xcode 27.1 or newer (the app uses iOS 27.1 SDK APIs such as

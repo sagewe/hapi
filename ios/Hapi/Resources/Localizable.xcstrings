@@ -1,6 +1,149 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Diagram" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表"
+          }
+        }
+      }
+    },
+    "Copy diagram source" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制图表源码"
+          }
+        }
+      }
+    },
+    "Open diagram full screen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全屏查看图表"
+          }
+        }
+      }
+    },
+    "Rendering diagram" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在渲染图表"
+          }
+        }
+      }
+    },
+    "Source preview shortened. Copy to read the complete source." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源码预览已截短，可复制完整源码查看。"
+          }
+        }
+      }
+    },
+    "Diagram is too large. View the source instead." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表过大，请查看源码。"
+          }
+        }
+      }
+    },
+    "Diagram renderer is busy. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表渲染器繁忙，请重试。"
+          }
+        }
+      }
+    },
+    "Open this conversation to render the diagram." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请打开会话后查看图表。"
+          }
+        }
+      }
+    },
+    "Offline diagram resources are missing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缺少离线图表资源。"
+          }
+        }
+      }
+    },
+    "Diagram rendering timed out. View the source instead." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表渲染超时，请查看源码。"
+          }
+        }
+      }
+    },
+    "Could not render this diagram." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法渲染此图表。"
+          }
+        }
+      }
+    },
+    "Could not create diagram preview." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法生成图表预览。"
+          }
+        }
+      }
+    },
+    "Diagram renderer stopped. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图表渲染器已停止，请重试。"
+          }
+        }
+      }
+    },
     "%@\n\nOpen a session chat to browse its files." : {
       "extractionState" : "manual",
       "localizations" : {
