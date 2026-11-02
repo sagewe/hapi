@@ -82,6 +82,20 @@ describe('useSessionActions - reopenSession', () => {
         expect(response).toEqual({ ok: true, sessionId: 'session-A-spawned', resumed: true })
     })
 
+    it('clears the archive marker in list and detail caches after reopening', async () => {
+        const queryClient = new QueryClient()
+        const session = { id: 'old', active: false, activeAt: 1, metadata: { path: '/work', lifecycleState: 'archived' } }
+        queryClient.setQueryData(['sessions'], { sessions: [session] })
+        queryClient.setQueryData(['session', 'old'], { session })
+        const { result } = renderHook(() => useSessionActions(createMockApi(async () => ({ ok: true, sessionId: 'old', resumed: true })), 'old'), { wrapper: createWrapper(queryClient) })
+        await act(async () => { await result.current.reopenSession() })
+        await waitFor(() => {
+            expect(queryClient.getQueryData<{ sessions: typeof session[] }>(['sessions'])?.sessions[0].active).toBe(true)
+            expect(queryClient.getQueryData<{ sessions: typeof session[] }>(['sessions'])?.sessions[0].metadata.lifecycleState).toBeUndefined()
+            expect(queryClient.getQueryData<{ session: typeof session }>(['session', 'old'])?.session.metadata.lifecycleState).toBeUndefined()
+        })
+    })
+
     it('throws when api or sessionId is missing', async () => {
         const { result } = renderHook(
             () => useSessionActions(null, null, null),

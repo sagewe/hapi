@@ -84,6 +84,7 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
 import { DEFAULT_SESSION_PREVIEW_LIMIT, useSessionPreviewLimit } from '@/hooks/useSessionPreviewLimit'
 import { useSessionListStatusMode } from '@/hooks/useSessionListStatusMode'
+import { useShowArchivedSessions } from '@/hooks/useShowArchivedSessions'
 import { useShowActiveSessionsOnly } from '@/hooks/useShowActiveSessionsOnly'
 import { usePinInProgressSessions } from '@/hooks/usePinInProgressSessions'
 import {
@@ -383,6 +384,14 @@ export function shouldShowSessionInSidebar(session: SessionSummary, selectedSess
 export function prepareSidebarSessions(sessions: SessionSummary[], selectedSessionId?: string | null): SessionSummary[] {
     return deduplicateSessionsByAgentId(sessions, selectedSessionId)
         .filter(session => shouldShowSessionInSidebar(session, selectedSessionId))
+}
+
+// Archive is a lifecycle, not a connection state. Keep the selected history
+// accessible, including when opened from a reference or notification.
+export function filterArchivedSessions(sessions: SessionSummary[], showArchived: boolean, selectedSessionId?: string | null): SessionSummary[] {
+    return showArchived ? sessions : sessions.filter(session =>
+        session.metadata?.lifecycleState !== 'archived' || session.id === selectedSessionId
+    )
 }
 
 // "Active sessions only" view: hide inactive sessions, but never hide the one the
@@ -1421,6 +1430,7 @@ export function SessionList(props: {
     const { sessionPreviewLimit } = useSessionPreviewLimit()
     const { sessionListStatusMode } = useSessionListStatusMode()
     const { showActiveSessionsOnly } = useShowActiveSessionsOnly()
+    const { showArchivedSessions, setShowArchivedSessions } = useShowArchivedSessions()
     const lastSeenVersion = useSessionLastSeenVersion()
     // Transient unread lens — not a Settings preference. Cleared on reload; rows drop as they're seen.
     const [showUnreadOnly, setShowUnreadOnly] = useState(false)
@@ -1501,8 +1511,8 @@ export function SessionList(props: {
     }
 
     const sidebarSessions = useMemo(
-        () => prepareSidebarSessions(props.sessions, selectedSessionId),
-        [props.sessions, selectedSessionId]
+        () => prepareSidebarSessions(filterArchivedSessions(props.sessions, showArchivedSessions, selectedSessionId), selectedSessionId),
+        [props.sessions, selectedSessionId, showArchivedSessions]
     )
     const readableSessions = useMemo(
         () => props.sessions.filter(session => shouldShowSessionInSidebar(session, selectedSessionId)),
@@ -1555,8 +1565,8 @@ export function SessionList(props: {
         [allSessions, hasTextQuery, isFiltering, normalizedQuery, searchScoreIndex, timeScopedSessions, machineLabelsById] // eslint-disable-line react-hooks/exhaustive-deps
     )
     const allGroups = useMemo(
-        () => groupSessionsByDirectory(allSessions),
-        [allSessions]
+        () => groupSessionsByDirectory(prepareSidebarSessions(props.sessions, selectedSessionId)),
+        [props.sessions, selectedSessionId]
     )
     const machineFilters = useMemo(
         () => groupByMachine(allGroups, resolveMachineLabel),
@@ -1627,6 +1637,15 @@ export function SessionList(props: {
             ),
         [unreadFilteredSessions, activeMachineFilter]
     )
+    const hasArchivedSearchMatches = !showArchivedSessions && hasTextQuery && !showActiveSessionsOnly
+        && prepareSidebarSessions(props.sessions, selectedSessionId).some(session =>
+            session.metadata?.lifecycleState === 'archived'
+            && session.id !== selectedSessionId
+            && (activeMachineFilter === null || (session.metadata?.machineId ?? UNKNOWN_MACHINE_ID) === activeMachineFilter)
+            && (timeRange === null || sessionMatchesTimeRange(session, timeRange))
+            && (!showUnreadOnly || sessionIsUnread(session, { lastSeenAt: getSessionLastSeenAt(session.id), manualUnreadAt: getSessionManualUnreadAt(session.id, session.readState) }))
+            && sessionMatchesQuery(session, normalizedQuery, resolveMachineLabel(session.metadata?.machineId ?? null))
+        )
     const globalPinnedSessions = useMemo(() => {
         const pinned = machineFilteredSessions.filter((session) => Boolean(session.globalPinned))
         if (searchScoreIndex && hasTextQuery) {
@@ -2316,6 +2335,22 @@ export function SessionList(props: {
                                     })
                                 }
                                 definedSlots.push({
+                                    id: 'archives',
+                                    keep: 6,
+                                    widthPx: slotWidth('archives', TOOLBAR_ICON_PX),
+                                    node: (
+                                        <button type="button"
+                                            onClick={() => setShowArchivedSessions(!showArchivedSessions)}
+                                            aria-pressed={showArchivedSessions}
+                                            title={t('sessions.showArchived')}
+                                            aria-label={t('sessions.showArchived')}
+                                            className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]', showArchivedSessions ? 'text-[var(--app-link)] bg-[var(--app-subtle-bg)]' : 'text-[var(--app-hint)]')}
+                                        >
+                                            <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6" /></svg>
+                                        </button>
+                                    )
+                                })
+                                definedSlots.push({
                                     id: 'unread',
                                     keep: 5,
                                     widthPx: slotWidth('unread', TOOLBAR_ICON_PX),
@@ -2408,7 +2443,7 @@ export function SessionList(props: {
                                             >
                                                 <MachineFilterMenu
                                                     machines={machineFilterItems}
-                                                    totalCount={allSessions.length}
+                                                    totalCount={machineFilterItems.reduce((sum, machine) => sum + machine.sessionCount, 0)}
                                                     value={activeMachineFilter}
                                                     onChange={setMachineFilter}
                                                 />
@@ -2439,7 +2474,7 @@ export function SessionList(props: {
             {showMachineFilterBar ? (
                 <MachineFilterBar
                     machines={machineFilterItems}
-                    totalCount={allSessions.length}
+                    totalCount={machineFilterItems.reduce((sum, machine) => sum + machine.sessionCount, 0)}
                     value={activeMachineFilter}
                     onChange={setMachineFilter}
                 />
@@ -2470,6 +2505,11 @@ export function SessionList(props: {
                 </div>
             ) : null}
             <div ref={scrollContainerRef} className="app-scroll-y session-list-scrollbar-left scrollbar-auto-hide min-h-0 flex-1">
+            {hasArchivedSearchMatches ? (
+                <button type="button" onClick={() => setShowArchivedSessions(true)} className="w-full px-4 py-3 text-sm text-[var(--app-link)]">
+                    {t('sessions.searchArchived')}
+                </button>
+            ) : null}
             <SessionListScrollAnchor sessions={props.sessions} className="mx-auto flex w-full max-w-content flex-col gap-1 pl-1.5 pr-2 pb-2">
                 {props.sessions.length === 0 && !props.isLoading ? (
                     <SessionsEmptyState
@@ -2478,9 +2518,12 @@ export function SessionList(props: {
                     />
                 ) : null}
 
-                {props.sessions.length > 0 && (isFiltering || activeMachineFilter !== null || showUnreadOnly) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
+                {props.sessions.length > 0 && (isFiltering || activeMachineFilter !== null || showUnreadOnly || !showArchivedSessions) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-[var(--app-hint)]">
                         {t('sessions.search.noResults')}
+                        {!showArchivedSessions && !isFiltering && props.sessions.some(session => session.metadata?.lifecycleState === 'archived') ? (
+                            <button type="button" className="mt-3 block w-full text-[var(--app-link)]" onClick={() => setShowArchivedSessions(true)}>{t('sessions.showArchived')}</button>
+                        ) : null}
                     </div>
                 ) : null}
 

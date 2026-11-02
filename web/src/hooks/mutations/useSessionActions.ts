@@ -47,6 +47,9 @@ export function useSessionActions(
                 session: {
                     ...previous.session,
                     active: true,
+                    metadata: previous.session.metadata?.lifecycleState === 'archived'
+                        ? { ...previous.session.metadata, lifecycleState: undefined }
+                        : previous.session.metadata,
                     activeAt: Math.max(previous.session.activeAt ?? 0, Date.now())
                 }
             }
@@ -60,6 +63,9 @@ export function useSessionActions(
                 return {
                     ...summary,
                     active: true,
+                    metadata: summary.metadata?.lifecycleState === 'archived'
+                        ? { ...summary.metadata, lifecycleState: undefined }
+                        : summary.metadata,
                     activeAt: Math.max(summary.activeAt ?? 0, Date.now())
                 }
             })

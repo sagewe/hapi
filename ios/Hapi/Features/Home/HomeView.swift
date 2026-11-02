@@ -74,12 +74,15 @@ struct HomeView: View {
             model.pendingOpenSessionId = nil
             openSession(sessionId)
         }
+        .onChange(of: path) { _, path in
+            if !usesSplitNavigation { listModel.selectedSessionId = path.last }
+        }
         .onChange(of: session.sessionRemoval) { _, removal in
             guard let removal else { return }
             if usesSplitNavigation {
                 tabletNavigation.remove(removal.sessionId)
             } else if let index = path.firstIndex(of: removal.sessionId) {
-                // Deleted or archived elsewhere: leave the emptied chat.
+                // Explicitly removed elsewhere: leave the emptied chat.
                 path.removeSubrange(index...)
             }
         }
@@ -162,6 +165,7 @@ struct HomeView: View {
     }
 
     private func openSession(_ sessionId: String) {
+        listModel.selectedSessionId = sessionId
         if usesSplitNavigation {
             tabletNavigation.open(sessionId)
         } else if path.last != sessionId {

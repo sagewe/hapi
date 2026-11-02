@@ -1,6 +1,36 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Archived Sessions Are Hidden" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已归档会话已隐藏"
+          }
+        }
+      }
+    },
+    "Include Archived Sessions in Search" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索包含已归档会话"
+          }
+        }
+      }
+    },
+    "Show Archived Sessions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示已归档会话"
+          }
+        }
+      }
+    },
     "Diagram" : {
       "extractionState" : "manual",
       "localizations" : {

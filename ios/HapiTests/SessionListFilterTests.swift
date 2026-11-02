@@ -145,7 +145,7 @@ final class SessionListFilterTests: XCTestCase {
         ])
         let machines = HomeFilterTestMachines()
         let seen = LastSeenStore()
-        let model = SessionListModel(sessionStore: sessions, machineStore: machines, lastSeenStore: seen, hubUrl: "test")
+        let model = SessionListModel(sessionStore: sessions, machineStore: machines, lastSeenStore: seen, hubUrl: "test", preferences: UserDefaults(suiteName: UUID().uuidString)!)
         await model.refresh()
         XCTAssertEqual(sessions.refreshCount, 1)
         XCTAssertEqual(machines.refreshCount, 1)
@@ -176,7 +176,7 @@ final class SessionListFilterTests: XCTestCase {
         let lastSeen = LastSeenStore()
         await lastSeen.markSeen(sessionId: "seen", revision: 10)
         let model = SessionListModel(sessionStore: sessions, machineStore: HomeFilterTestMachines(),
-                                     lastSeenStore: lastSeen, hubUrl: "test")
+                                     lastSeenStore: lastSeen, hubUrl: "test", preferences: UserDefaults(suiteName: UUID().uuidString)!)
         XCTAssertEqual(model.unreadCount, 1)
 
         model.setUnreadOnly(true)
@@ -210,6 +210,51 @@ final class SessionListFilterTests: XCTestCase {
         XCTAssertEqual(SessionListModel.pinnedCount(of: model.rows), 1)
         model.searchQuery = "   "
         XCTAssertEqual(model.rows.count, 3)
+    }
+
+    func testArchivesAreHiddenButInactiveSessionsRemainAndSelectionIsKept() {
+        var archived = HomeFilterTestData.summary("old", machine: "mac")
+        archived.active = false
+        archived.metadata?.lifecycleState = "archived"
+        archived.globalPinned = true
+        var offline = HomeFilterTestData.summary("offline", machine: "mac")
+        offline.active = false
+        let sessions = HomeFilterTestSessions([archived, offline])
+        let model = HomeFilterTestData.model(sessions: sessions)
+        XCTAssertEqual(model.rows.map(\.id), ["offline"])
+        XCTAssertEqual(sessions.sessions.count, 2, "Filtering must not remove cached history")
+        model.selectedSessionId = "old"
+        XCTAssertEqual(model.rows.count, 2)
+        model.selectedSessionId = nil
+        model.searchQuery = "Review old"
+        XCTAssertTrue(model.rows.isEmpty)
+        XCTAssertTrue(model.hasArchivedSearchMatches)
+        model.setShowArchivedSessions(true)
+        XCTAssertEqual(model.rows.map(\.id), ["old"])
+        XCTAssertFalse(model.hasArchivedSearchMatches)
+        sessions.sessions[0].metadata?.lifecycleState = "running"
+        model.setShowArchivedSessions(false)
+        XCTAssertEqual(model.rows.map(\.id), ["old"], "Reopened session returns without clearing the filter")
+    }
+
+    func testArchivePreferencePersistsPerHubAndClearFiltersPreservesIt() {
+        let suite = "hapi-archive-tests-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        func model(_ hub: String) -> SessionListModel {
+            SessionListModel(sessionStore: HomeFilterTestSessions(), machineStore: HomeFilterTestMachines(),
+                lastSeenStore: LastSeenStore(), hubUrl: hub, preferences: preferences)
+        }
+        let first = model("first")
+        XCTAssertFalse(first.showArchivedSessions)
+        first.setShowArchivedSessions(true)
+        first.setUnreadOnly(true)
+        first.clearFilters()
+        XCTAssertTrue(first.showArchivedSessions)
+        XCTAssertTrue(model("first").showArchivedSessions)
+        XCTAssertFalse(model("second").showArchivedSessions)
+        first.setShowArchivedSessions(false)
+        XCTAssertFalse(model("first").showArchivedSessions)
     }
 
     func testConnectionNoticeHasOneMessageAndHealthyStateIsEmpty() {
@@ -278,7 +323,7 @@ final class HomeFilterTestMachines: MachineListStoring {
 @MainActor
 enum HomeFilterTestData {
     static func model(sessions: HomeFilterTestSessions, machines: HomeFilterTestMachines = HomeFilterTestMachines()) -> SessionListModel {
-        SessionListModel(sessionStore: sessions, machineStore: machines, lastSeenStore: LastSeenStore(), hubUrl: "test")
+        SessionListModel(sessionStore: sessions, machineStore: machines, lastSeenStore: LastSeenStore(), hubUrl: "test", preferences: UserDefaults(suiteName: UUID().uuidString)!)
     }
 
     static func summary(_ id: String, machine: String?) -> SessionSummary {

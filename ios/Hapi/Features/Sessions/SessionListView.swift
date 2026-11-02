@@ -17,7 +17,7 @@ import SwiftUI
 ///   Disconnected titles/icons are secondary, without dimming attention;
 /// - long-press context menu → rename, pin (none/project/global), then
 ///   archive for active sessions or reopen/delete for inactive ones (web
-///   `SessionActionMenu`), with optimistic store updates; failures land in
+///   `SessionActionMenu`), with confirmed archive refresh; failures land in
 ///   an alert.
 struct SessionListView: View {
     @Environment(\.hapiTheme) private var theme
@@ -36,6 +36,13 @@ struct SessionListView: View {
             sessionList(now: context.date)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
+            if model.hasArchivedSearchMatches {
+                Button("Include Archived Sessions in Search") { model.setShowArchivedSessions(true) }
+                    .font(.subheadline)
+                    .padding(12)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("home.search-archived")
+            }
             if let summary = model.filterSummary {
                 SessionFilterSummary(summary: summary, onClear: model.clearFilters)
             }
@@ -266,6 +273,12 @@ struct SessionListView: View {
                 Label("No matching sessions", systemImage: "line.3.horizontal.decrease.circle")
             } description: {
                 Text("Clear the filters to see every session.")
+            }
+        } else if model.hasHiddenArchivedSessions {
+            ContentUnavailableView {
+                Label("Archived Sessions Are Hidden", systemImage: "archivebox")
+            } actions: {
+                Button("Show Archived Sessions") { model.setShowArchivedSessions(true) }
             }
         } else {
             ContentUnavailableView {

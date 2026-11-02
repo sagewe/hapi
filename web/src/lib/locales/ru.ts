@@ -1,4 +1,7 @@
 export default {
+  'sessions.showArchived': 'Показывать архивные сессии',
+  'sessions.showArchived.description': 'Архивные сессии скрыты по умолчанию. Неактивные сессии остаются видимыми.',
+  'sessions.searchArchived': 'Включить архивные сессии в поиск',
   // Состояния загрузки
   'loading': 'Загрузка…',
   'authorizing': 'Авторизация…',

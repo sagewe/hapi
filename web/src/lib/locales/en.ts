@@ -1,4 +1,7 @@
 export default {
+  'sessions.showArchived': 'Show archived sessions',
+  'sessions.showArchived.description': 'Archived sessions are hidden by default. Inactive sessions remain visible.',
+  'sessions.searchArchived': 'Include archived sessions in search',
   // Loading states
   'loading': 'Loading…',
   'authorizing': 'Authorizing…',

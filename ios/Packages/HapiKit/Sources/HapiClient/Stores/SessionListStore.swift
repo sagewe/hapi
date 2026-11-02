@@ -28,7 +28,7 @@ public protocol SessionListStoring: AnyObject {
     /// `PUT /sessions/:id/pin`, optimistic.
     func setPinMode(sessionId: String, mode: SessionPinMode) async throws
 
-    /// `POST /sessions/:id/archive`, optimistic removal.
+    /// `POST /sessions/:id/archive`, confirmed refresh preserving history.
     func archiveSession(sessionId: String) async throws
 
     /// `PATCH /sessions/:id` rename, optimistic `metadata.name`; rolls
@@ -251,20 +251,12 @@ public final class SessionListStore: SessionListStoring {
     }
 
     public func archiveSession(sessionId: String) async throws {
-        let removed = sessions.first { $0.id == sessionId }
-        let filtered = sessions.filter { $0.id != sessionId }
-        if filtered.count != sessions.count {
-            setSessions(filtered)
-        }
-        do {
-            try await api.archiveSession(id: sessionId)
-            onSessionRemoved?(sessionId)
-        } catch {
-            if let removed, !sessions.contains(where: { $0.id == sessionId }) {
-                setSessions(sortSessionSummaries(sessions + [removed]))
-            }
-            throw error
-        }
+        // Archiving preserves history. Do not issue a removal notification:
+        // that closes an open chat and prevents "Show Archived" from working.
+        // Wait for the server to confirm cleanup before hiding anything.
+        try await api.archiveSession(id: sessionId)
+        do { try await refresh() }
+        catch { scheduleRefresh() } // SSE / the next refresh repairs a stale snapshot.
     }
 
     // MARK: - Rename / delete / reopen
@@ -324,11 +316,13 @@ public final class SessionListStore: SessionListStoring {
         if let index = sessions.firstIndex(where: { $0.id == response.sessionId }) {
             var list = sessions
             list[index].active = true
+            if list[index].metadata?.lifecycleState == "archived" { list[index].metadata?.lifecycleState = nil }
             list[index].activeAt = max(list[index].activeAt, now)
             setSessions(sortSessionSummaries(list))
         }
         updateDetailLocal(response.sessionId) { detail in
             detail.active = true
+            if detail.metadata?.lifecycleState == "archived" { detail.metadata?.lifecycleState = nil }
             detail.activeAt = max(detail.activeAt, now)
         }
         // A superseding spawn is not in the list yet.

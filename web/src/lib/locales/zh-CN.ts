@@ -1,4 +1,7 @@
 export default {
+  'sessions.showArchived': '显示已归档会话',
+  'sessions.showArchived.description': '默认隐藏已归档会话，其他不活跃会话仍会显示。',
+  'sessions.searchArchived': '搜索包含已归档会话',
   // Loading states
   'loading': '加载中…',
   'authorizing': '认证中…',

@@ -6,7 +6,7 @@ import Testing
 /// Transcribes the Android reference suite (`SessionStoreTest.kt`): REST
 /// refresh, the full-session / strict-patch / REST-fallback event paths with
 /// their divergent version gates, keep-alive identity preservation,
-/// optimistic pin/archive, and the cold-start snapshot.
+/// optimistic pin, confirmed archive, and the cold-start snapshot.
 @MainActor
 @Suite("SessionListStore")
 struct SessionListStoreTests {
@@ -326,7 +326,7 @@ struct SessionListStoreTests {
         }
     }
 
-    @Test func archiveRemovesOptimisticallyAndRestoresOnFailure() async throws {
+    @Test func archiveRetainsHistoryAndLeavesSnapshotUntouchedOnFailure() async throws {
         let (performer, store) = try makeStore()
         await performer.enqueue(json: try sessionsResponseJSON(
             storeSummary("s1", updatedAt: 900),
@@ -335,8 +335,12 @@ struct SessionListStoreTests {
         try await store.refresh()
 
         await performer.enqueue(json: "{\"ok\":true}")
+        var archived = storeSummary("s2", updatedAt: 100)
+        archived.metadata = SessionSummaryMetadata(path: "/repo", lifecycleState: "archived")
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s1", updatedAt: 900), archived))
         try await store.archiveSession(sessionId: "s2")
-        #expect(store.sessions.map(\.id) == ["s1"])
+        #expect(store.sessions.map(\.id) == ["s1", "s2"])
+        #expect(store.sessions.last?.metadata?.lifecycleState == "archived")
 
         await performer.enqueue(status: 409, json: "{\"error\":\"session_inactive\"}")
         var thrown = false
@@ -346,7 +350,7 @@ struct SessionListStoreTests {
             thrown = true
         }
         #expect(thrown, "failed archive must rethrow")
-        #expect(store.sessions.map(\.id) == ["s1"], "failed archive restores the row")
+        #expect(store.sessions.map(\.id) == ["s1", "s2"], "failed archive leaves history unchanged")
     }
 
     // MARK: - Rename / delete / reopen
@@ -415,11 +419,16 @@ struct SessionListStoreTests {
         try await store.refresh()
         #expect(store.sessions.map(\.id) == ["live", "old"])
 
+        var archived = storeSummary("old", updatedAt: 900)
+        archived.metadata = SessionSummaryMetadata(path: "/repo", lifecycleState: "archived")
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("live", active: true, updatedAt: 100), archived))
+        try await store.refresh()
         await performer.enqueue(json: #"{"ok":true,"sessionId":"old","resumed":true}"#)
         let response = try await store.reopenSession(sessionId: "old")
         #expect(response.sessionId == "old")
         #expect(store.sessions.map(\.id) == ["live", "old"], "reconnecting alone does not promote a row")
         #expect(store.sessions.last?.active == true)
+        #expect(store.sessions.last?.metadata?.lifecycleState == nil)
     }
 
     @Test func reopenWithASupersedingIdRefetchesTheList() async throws {
@@ -471,17 +480,18 @@ struct SessionListStoreTests {
         #expect(store.sessions.contains { $0.id == "s1" })
 
         await performer.enqueue(json: #"{"ok":true}"#)
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s1"), storeSummary("s2")))
         try await store.archiveSession(sessionId: "s1")
-        #expect(removals == ["s1"])
+        #expect(removals.isEmpty)
         await performer.enqueue(json: try sessionsResponseJSON())
         try await store.refresh()
-        #expect(removals == ["s1"], "A refreshed list is not an explicit removal event")
+        #expect(removals.isEmpty, "A refreshed list is not an explicit removal event")
 
         // Removal still arrives when the ID is absent (new session/notification
         // raced the list), including the same ID replayed on both SSE pipes.
         store.applySessionEvent(try sessionRemovedEvent("s2"))
         store.applySessionEvent(try sessionRemovedEvent("s2"))
-        #expect(removals == ["s1", "s2", "s2"])
+        #expect(removals == ["s2", "s2"])
     }
 
     @Test func summariesRoundTripThroughTheSnapshotIntoAColdStore() async throws {

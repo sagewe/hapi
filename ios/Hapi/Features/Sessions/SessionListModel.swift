@@ -105,6 +105,14 @@ final class SessionListModel {
     private let machineStore: any MachineListStoring
     private let lastSeenStore: LastSeenStore
     private let hubUrl: String
+    private let preferences: UserDefaults
+    private var archivePreferenceKey: String { "hapi.showArchivedSessions." + hubUrl }
+    private(set) var showArchivedSessions = false
+
+    func setShowArchivedSessions(_ enabled: Bool) {
+        showArchivedSessions = enabled
+        preferences.set(enabled, forKey: archivePreferenceKey)
+    }
     /// Reopen follows a superseding id with the composer draft (web
     /// `transferComposerDraftThenNavigate`).
     private let drafts: (any ChatDrafts)?
@@ -136,13 +144,16 @@ final class SessionListModel {
         machineStore: any MachineListStoring,
         lastSeenStore: LastSeenStore,
         hubUrl: String,
-        drafts: (any ChatDrafts)? = nil
+        drafts: (any ChatDrafts)? = nil,
+        preferences: UserDefaults = .standard
     ) {
         self.sessionStore = sessionStore
         self.machineStore = machineStore
         self.lastSeenStore = lastSeenStore
         self.hubUrl = hubUrl
         self.drafts = drafts
+        self.preferences = preferences
+        self.showArchivedSessions = preferences.bool(forKey: "hapi.showArchivedSessions." + hubUrl)
     }
 
     // MARK: - Derived state
@@ -201,6 +212,10 @@ final class SessionListModel {
     /// The menu also holds the unread lens and Mark All as Read.
     var showsFilterMenu: Bool {
         !sessionStore.sessions.isEmpty || filters.unreadOnly
+    }
+
+    var hasHiddenArchivedSessions: Bool {
+        !showArchivedSessions && sessionStore.sessions.contains { $0.metadata?.lifecycleState == "archived" }
     }
 
     var showsMachineFilter: Bool {
@@ -279,10 +294,18 @@ final class SessionListModel {
 
     /// Machine filter → unread lens → text search (relevance order, pin
     /// sections kept so the Pinned header still applies).
-    var rows: [SessionRowUI] {
+    var hasArchivedSearchMatches: Bool {
+        isSearching && !showArchivedSessions
+            && filteredSessions(includeArchived: true).contains {
+                $0.metadata?.lifecycleState == "archived" && $0.id != selectedSessionId
+            }
+    }
+
+    private func filteredSessions(includeArchived: Bool) -> [SessionSummary] {
         let readState = lastSeenStore.state
         let activeFilter = activeMachineFilter
         var visible = sessionStore.sessions.filter { summary in
+            guard includeArchived || summary.metadata?.lifecycleState != "archived" || summary.id == selectedSessionId else { return false }
             guard let activeFilter else { return true }
             return (summary.metadata?.machineId ?? unknownMachineFilterId) == activeFilter
         }
@@ -300,7 +323,12 @@ final class SessionListModel {
                 visible = SessionListSearch.rank(visible, by: index)
             }
         }
-        return visible.map { summary in
+        return visible
+    }
+
+    var rows: [SessionRowUI] {
+        let readState = lastSeenStore.state
+        return filteredSessions(includeArchived: showArchivedSessions).map { summary in
             SessionRowUI(
                 summary: summary,
                 title: Self.sessionTitle(summary),
@@ -371,7 +399,7 @@ final class SessionListModel {
         }
     }
 
-    /// `POST /sessions/:id/archive` with store-side optimistic removal;
+    /// `POST /sessions/:id/archive` with server-confirmed list refresh;
     /// failures surface on `actionError`.
     func archiveSession(sessionId: String) {
         let store = sessionStore

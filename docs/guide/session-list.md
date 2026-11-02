@@ -78,6 +78,15 @@ matching rows.
 - **Machine** filters can be applied when more than one machine is present.
   The selection is remembered locally in the browser and falls back to All
   when that machine is no longer available.
+- **Show archived sessions** is off by default. Only an explicit archived
+  lifecycle is hidden; inactive/disconnected sessions stay visible. Use the
+  archive-box toggle in the list toolbar (or its More menu), or Settings →
+  Display, to include archives. The preference is remembered in this browser
+  and follows changes from other tabs. The selected session stays visible.
+  Search respects this preference and offers **Include archived sessions in
+  search** when matching hidden history exists within the current filters.
+  Reopening a session returns it to the default list. This filter does not
+  delete history or change `@` suggestions, notifications, or direct links.
 - **Active sessions only** hides inactive sessions but keeps the selected
   session visible.
 - **Session preview limit** controls how many rows are initially visible within

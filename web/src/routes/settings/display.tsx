@@ -5,6 +5,7 @@ import { getColorThemeOptions, getColorThemePreview, useColorTheme, type ColorTh
 import { getFontScaleOptions, useFontScale } from '@/hooks/useFontScale'
 import { getTerminalFontSizeOptions, useTerminalFontSize } from '@/hooks/useTerminalFontSize'
 import { getSessionListStatusModeOptions, useSessionListStatusMode } from '@/hooks/useSessionListStatusMode'
+import { useShowArchivedSessions } from '@/hooks/useShowArchivedSessions'
 import { useShowActiveSessionsOnly } from '@/hooks/useShowActiveSessionsOnly'
 import { usePinInProgressSessions } from '@/hooks/usePinInProgressSessions'
 import { MAX_SESSION_PREVIEW_LIMIT, MIN_SESSION_PREVIEW_LIMIT, normalizeSessionPreviewLimit, useSessionPreviewLimit } from '@/hooks/useSessionPreviewLimit'
@@ -138,6 +139,7 @@ export default function SettingsDisplayPage() {
     const { fontScale, setFontScale } = useFontScale()
     const { terminalFontSize, setTerminalFontSize } = useTerminalFontSize()
     const { sessionListStatusMode, setSessionListStatusMode } = useSessionListStatusMode()
+    const { showArchivedSessions, setShowArchivedSessions } = useShowArchivedSessions()
     const { showActiveSessionsOnly, setShowActiveSessionsOnly } = useShowActiveSessionsOnly()
     const { pinInProgressSessions, setPinInProgressSessions } = usePinInProgressSessions()
     const { appBadgeEnabled, setAppBadgeEnabled } = useAppBadgePreference()
@@ -178,6 +180,7 @@ export default function SettingsDisplayPage() {
 
             <SettingsSection title={t('settings.display.sessions')}>
                 <SessionPreviewLimitControl />
+                <SettingsSwitch label={t('sessions.showArchived')} description={t('sessions.showArchived.description')} checked={showArchivedSessions} onChange={setShowArchivedSessions} />
                 <SettingsSwitch label={t('settings.display.activeSessionsOnly')} description={t('settings.display.activeSessionsOnly.desc')} checked={showActiveSessionsOnly} onChange={setShowActiveSessionsOnly} />
                 <SettingsSwitch label={t('settings.display.pinInProgressSessions')} description={t('settings.display.pinInProgressSessions.desc')} checked={pinInProgressSessions} onChange={setPinInProgressSessions} />
                 <SettingsSwitch label={t('settings.display.appBadge')} description={t('settings.display.appBadge.desc')} checked={appBadgeEnabled} onChange={setAppBadgeEnabled} />

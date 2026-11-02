@@ -7,6 +7,21 @@ web-generated golden fixtures in `shared/fixtures/`.
 End users: install HAPI from the [App Store](https://apps.apple.com/app/id6805699104).
 This README covers development builds.
 
+## Archived session visibility
+
+Archived sessions are hidden from the home list by default. Filters → Show
+Archived Sessions includes them; this display preference is saved per Hub on
+the device, separately from the transient machine/unread filters. Inactive
+sessions without an archived lifecycle stay visible, and the currently open
+session remains accessible. Search offers Include Archived Sessions in Search
+when hidden history matches the current query and filters. The all-archived
+empty state also provides a recovery button.
+
+Archiving waits for server confirmation and refreshes summaries without removing
+history or closing the selected chat. Reopening clears the cached archive marker
+before the next SSE update. Direct references and notification navigation remain
+available regardless of this list preference.
+
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,
@@ -433,7 +448,7 @@ neither window geometry nor sidebar filters may clear them. Reopening the
 selected session preserves its file page. A different/superseding session resets
 the entire detail stack, but a late superseding callback cannot replace a chat
 the user has since selected. Only explicit removal events or successful
-archive/delete operations clear the current selection (on iPhone they pop that
+delete operations clear the current selection (on iPhone they pop that
 chat), never optimistic list removal/rollback.
 
 The detail's identity is hub/session-based, so resizing preserves the existing
