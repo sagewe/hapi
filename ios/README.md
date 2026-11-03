@@ -52,6 +52,33 @@ normalizer. It does not embed attachment binaries. The existing large-export
 confirmation and hard size limit remain in force; confirmation retains the
 chosen format. Files receives a `.md` document with Markdown content type.
 
+## Remote terminal
+
+The chat menu opens Terminal for an active session whose terminal capability is
+not disabled. This is a separate shell in the session directory, not the agent's
+PTY. The bundled xterm 6 renderer and Socket.IO client use the existing
+`/terminal` namespace with a fresh native JWT. Only the paired Hub is permitted
+by the page's CSP; web navigation is blocked, and credentials stay in memory.
+
+Command mode uses the native editor (including IME) and sends on explicit tap;
+Direct Input uses xterm's keyboard handling. A horizontal key row provides
+Escape, Tab, control keys, arrows, Home/End and Enter. Selection can be copied.
+Backgrounding detaches the socket; resuming reuses the terminal ID and replays
+Hub scrollback once. Disconnected input is dropped, never queued for reconnect.
+Closing the view detaches it; the CLI's existing idle timeout owns shell cleanup.
+A shell exit shows Reconnect, which creates a fresh terminal.
+
+Native transport uses WebSocket directly: live WKWebView tests found intermittent
+post-reconnect input loss with the web's polling-to-WebSocket upgrade sequence.
+The JWT is refreshed through AuthManager as needed; an authentication rejection
+gets one refresh attempt before requiring manual retry. No Hub changes needed.
+
+Run `RemoteTerminalTests` for offline renderer, CSP and command formatting tests.
+The opt-in live test uses `TEST_RUNNER_HAPI_TERMINAL_SMOKE_CONFIG` pointing to a
+private JSON file with origin, short-lived token and active sessionID. It opens
+an independent shell, prints a Chinese marker, reconnects/resizes, and exits.
+Never commit that file. Phone keyboard/selection usability still needs acceptance.
+
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,

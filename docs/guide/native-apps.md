@@ -148,9 +148,9 @@ send it automatically. See [Voice input and assistant](./voice-assistant.md).
 
 ### Features available through the web
 
-Use the web app for the remote terminal, Work Graph, realtime dictation and
+Use the web app for Work Graph, realtime dictation and
 voice assistant. These have no native
-UI. iOS also provides a `$` skills picker, manual unread marking and a title-lock toggle in Rename. On iOS, the chat's … menu forks the current conversation, rewinds or forks
+UI. iOS provides a separate remote shell from the chat menu for active, terminal-capable sessions. iOS also provides a `$` skills picker, manual unread marking and a title-lock toggle in Rename. On iOS, the chat's … menu forks the current conversation, rewinds or forks
 at a user message with a native history point, and exports the session as
 JSON or Markdown; Android has no fork, rewind or export UI. Session history actions also
 depend on the agent's capabilities.

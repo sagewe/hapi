@@ -19,6 +19,7 @@ struct ChatView: View {
     @State private var configOpen = false
     /// Files browser push (toolbar folder, A-M4a).
     @State private var filesOpen = false
+    @State private var terminalOpen = false
     /// File viewer push for `hapi-file://` chat citations (A-M4a).
     @State private var viewerRoute: FileViewerRoute?
     /// Full inventory; the compact drawer lives with the composer below.
@@ -131,6 +132,10 @@ struct ChatView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
+                        Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
+                            .disabled(!model.header.active)
+                    }
                     Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
                     Button {
                         filesOpen = true
@@ -231,6 +236,7 @@ struct ChatView: View {
                 initiallyEditing: scratchlistStartsEditing
             )
         }
+        .fullScreenCover(isPresented: $terminalOpen) { RemoteTerminalView(api: session.api, sessionID: sessionId) }
         .sheet(isPresented: $renameOpen) {
             if let row = model.titleEditorRow {
                 SessionTitleEditor(row: row) { name, locked in try await model.saveTitle(name: name, locked: locked) }
