@@ -79,10 +79,12 @@ private struct ExportLimits: Decodable {
 }
 
 enum SessionExportFormatting {
-    private struct Payload: Decodable {
+    struct Payload: Decodable {
         struct Session: Decodable {
             struct Metadata: Decodable {
                 struct Summary: Decodable { let text: String? }
+                let host: String?
+                let flavor: String?
                 let name: String?
                 let summary: Summary?
                 let path: String?
@@ -90,6 +92,13 @@ enum SessionExportFormatting {
             let id: String
             let metadata: Metadata?
         }
+        struct Note: Decodable {
+            struct Attachment: Decodable { let filename: String; let mimeType: String; let size: Int }
+            let createdAt: Int
+            let text: String
+            let attachments: [Attachment]?
+        }
+        let scratchlist: [Note]?
         let exportedAt: Int
         let session: Session
         let messages: [JSONValue]
@@ -145,5 +154,83 @@ enum SessionExportFormatting {
         formatter.dateFormat = "yyyy-MM-dd"
         let date = formatter.string(from: Date(timeIntervalSince1970: Double(payload.exportedAt) / 1000))
         return "\(String(slug.prefix(80)))-\(payload.session.id.prefix(8))-\(date).json"
+    }
+}
+
+extension SessionExportFile {
+    /// Readable view of the same full export payload as JSON (web markdown.ts).
+    public func markdown(eventLabel: (AgentEvent) -> String = { $0.type }) throws -> SessionExportFile {
+        let payload = try HapiJSON.decoder.decode(SessionExportFormatting.Payload.self, from: data)
+        let meta = payload.session.metadata
+        let title = [meta?.name, meta?.summary?.text].compactMap { $0 }.first { !$0.isEmpty }
+            ?? meta?.path?.split(separator: "/").last.map(String.init) ?? String(payload.session.id.prefix(8))
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func date(_ ms: Int) -> String { formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000)) }
+        func quote(_ value: String) -> String {
+            value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n")
+        }
+        func json(_ value: JSONValue?) -> String {
+            guard let value else { return "undefined" }
+            if case .string(let string) = value { return string }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            guard let encoded = try? encoder.encode(value) else { return "" }
+            return String(decoding: encoded, as: UTF8.self)
+        }
+        func short(_ value: String, _ limit: Int) -> String {
+            let line = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
+        }
+        var front = ["---", "title: \"\(quote(title))\"", "sessionId: \"\(quote(payload.session.id))\"", "exportedAt: \"\(date(payload.exportedAt))\"", "messageCount: \(payload.messages.count)", "scratchlistCount: \(payload.scratchlist?.count ?? 0)"]
+        for (key, value) in [("path", meta?.path), ("host", meta?.host), ("agent", meta?.flavor)] {
+            if let value, !value.isEmpty { front.append("\(key): \"\(quote(value))\"") }
+        }
+        front.append("---")
+        var sections = [front.joined(separator: "\n"), "# " + title, "Session: `\(payload.session.id)`", "Exported: \(date(payload.exportedAt))"]
+        if let notes = payload.scratchlist, !notes.isEmpty {
+            sections.append("## Scratchlist")
+            for note in notes {
+                let attachments = (note.attachments ?? []).map { "- Attachment: \($0.filename) (\($0.mimeType), \($0.size) bytes)" }.joined(separator: "\n")
+                sections.append("### Note\n\n_Time: \(date(note.createdAt))_\n\n" + note.text + (attachments.isEmpty ? "" : "\n\n" + attachments))
+            }
+        }
+        for raw in payload.messages {
+            guard let message = try? HapiJSON.decoder.decode(DecryptedMessage.self, from: HapiJSON.encoder.encode(raw)),
+                  let normalized = normalizeDecryptedMessage(message) else { continue }
+            let role: String
+            let text: String
+            switch normalized.content {
+            case .user(let value, let files):
+                role = "User"
+                let attachments = (files ?? []).map { "- Attachment: \($0.filename) (\($0.mimeType), \($0.size) bytes)" }.joined(separator: "\n")
+                text = value + (attachments.isEmpty ? "" : "\n\n" + attachments)
+            case .event(let event): role = "Event"; text = eventLabel(event)
+            case .agent(let blocks):
+                role = "Assistant"
+                text = blocks.compactMap { block -> String? in
+                    switch block {
+                    case .text(let value): return value.text
+                    case .reasoning(let value): return "> Reasoning: " + value.text
+                    case .summary(let value): return "> Summary: " + value
+                    case .toolCall(let value):
+                        let input = value.input == nil || value.input == .null ? "" : json(value.input)
+                        return "- Tool: " + value.name + (input.isEmpty ? "" : " — " + short(input, 160))
+                    case .toolResult(let value):
+                        let content = json(value.content)
+                        return "- " + (value.isError ? "Tool error" : "Tool result") + (content.isEmpty ? "" : ": " + short(content, 240))
+                    case .generatedImage(let value): return "- Generated image: " + value.fileName
+                    case .codexReview(let review, _, _): return "- Codex review: \(review.overallCorrectness ?? "review") (\(review.findings.count) findings)"
+                    case .sidechain: return nil
+                    }
+                }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.joined(separator: "\n\n")
+            }
+            if role != "Assistant" || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sections.append("## \(role)\n\n_Time: \(date(normalized.createdAt))_\n\n" + text)
+            }
+        }
+        let name = (filename as NSString).deletingPathExtension + ".md"
+        return SessionExportFile(filename: name, data: Data((sections.joined(separator: "\n\n") + "\n").utf8), messageCount: messageCount)
     }
 }

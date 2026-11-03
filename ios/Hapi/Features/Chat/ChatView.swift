@@ -26,6 +26,7 @@ struct ChatView: View {
     @State private var scratchlistEntry: ScratchlistEntry?
     @State private var scratchlistStartsEditing = false
     @State private var renameOpen = false
+    @State private var exportFormatOpen = false
     @State private var deleteOpen = false
     @State private var forkConfirmOpen = false
     @State private var historyOpen = false
@@ -166,7 +167,7 @@ struct ChatView: View {
                         }
                     }
                     Button {
-                        model.exportConversation()
+                        exportFormatOpen = true
                     } label: {
                         Label("Export Conversation…", systemImage: "square.and.arrow.up")
                     }
@@ -280,13 +281,18 @@ struct ChatView: View {
         } message: { prompt in
             Text(Self.exportPromptMessage(prompt))
         }
+        .confirmationDialog("Export Conversation", isPresented: $exportFormatOpen, titleVisibility: .visible) {
+            Button("Markdown") { model.exportConversation(format: .markdown) }
+            Button("JSON") { model.exportConversation(format: .json) }
+            Button("Cancel", role: .cancel) {}
+        }
         .fileExporter(
             isPresented: Binding(
                 get: { model.exportDocument != nil },
                 set: { if !$0 { model.exportDocument = nil } }
             ),
             document: model.exportDocument,
-            contentType: .json,
+            contentType: model.exportDocument?.contentType ?? .json,
             defaultFilename: model.exportDocument?.file.filename
         ) { result in
             model.exportFinished(result)

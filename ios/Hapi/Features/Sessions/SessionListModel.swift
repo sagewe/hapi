@@ -86,11 +86,13 @@ struct MachineFilterUI: Identifiable, Equatable {
 
 /// Transient, per-home filters. Add future dimensions here, not to navigation.
 struct SessionListFilters: Equatable, Hashable {
+    var dateStart: Date?
+    var dateEnd: Date?
     var machineId: String?
     /// Web "unread only" lens: hide sessions already read in this namespace.
     var unreadOnly = false
 
-    var isActive: Bool { machineId != nil || unreadOnly }
+    var isActive: Bool { machineId != nil || unreadOnly || dateStart != nil }
 }
 
 /// Session-list presentation state over the `HubSession` stores — the iOS
@@ -218,7 +220,7 @@ final class SessionListModel {
 
     /// The menu also holds the unread lens and Mark All as Read.
     var showsFilterMenu: Bool {
-        !sessionStore.sessions.isEmpty || filters.unreadOnly || activeOnly
+        !sessionStore.sessions.isEmpty || filters.isActive || activeOnly
     }
 
     var hasHiddenArchivedSessions: Bool {
@@ -230,7 +232,7 @@ final class SessionListModel {
     }
 
     var hasActiveFilters: Bool {
-        activeMachineFilter != nil || filters.unreadOnly || activeOnly
+        activeMachineFilter != nil || filters.unreadOnly || activeOnly || filters.dateStart != nil
     }
 
     var isSearching: Bool {
@@ -249,6 +251,9 @@ final class SessionListModel {
 
     var filterSummary: String? {
         var parts: [String] = []
+        if let start = filters.dateStart, let end = filters.dateEnd {
+            parts.append(start.formatted(date: .abbreviated, time: .omitted) + " – " + end.formatted(date: .abbreviated, time: .omitted))
+        }
         if activeOnly { parts.append(String(localized: "Active Only")) }
         if filters.unreadOnly {
             parts.append(String(localized: "Unread only"))
@@ -269,6 +274,19 @@ final class SessionListModel {
 
     func saveTitle(_ row: SessionRowUI, name: String?, locked: Bool) async throws {
         try await sessionStore.updateTitle(sessionId: row.id, name: name, locked: locked)
+    }
+
+    func setDateRange(start: Date?, end: Date?) {
+        guard let start, let end else { filters.dateStart = nil; filters.dateEnd = nil; return }
+        filters.dateStart = min(start, end)
+        filters.dateEnd = max(start, end)
+    }
+
+    static func matchesDate(_ timestamp: Int, start: Date?, end: Date?, calendar: Calendar = .current) -> Bool {
+        guard let start, let end,
+              let upper = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end)) else { return true }
+        let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+        return date >= calendar.startOfDay(for: start) && date < upper
     }
 
     func setUnreadOnly(_ enabled: Bool) {
@@ -325,6 +343,7 @@ final class SessionListModel {
         let readState = lastSeenStore.state
         let activeFilter = activeMachineFilter
         var visible = sessionStore.sessions.filter { summary in
+            guard Self.matchesDate(summary.updatedAt, start: filters.dateStart, end: filters.dateEnd) else { return false }
             guard !activeOnly || summary.active || summary.id == selectedSessionId else { return false }
             guard includeArchived || summary.metadata?.lifecycleState != "archived" || summary.id == selectedSessionId else { return false }
             guard let activeFilter else { return true }

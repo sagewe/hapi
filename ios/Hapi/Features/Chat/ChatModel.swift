@@ -101,6 +101,8 @@ final class ChatModel {
         case tooLarge(count: Int, estimatedBytes: Int, maxBytes: Int)
     }
 
+    enum ExportFormat { case json, markdown }
+    private var exportFormat: ExportFormat = .json
     private(set) var isExporting = false
     var exportPrompt: ExportPrompt?
     /// Set when the export is ready; drives the Files save panel.
@@ -108,8 +110,10 @@ final class ChatModel {
 
     /// `GET /export` (web JSON download); a large export asks first and is
     /// retried with `force`.
-    func exportConversation(force: Bool = false) {
+    func exportConversation(force: Bool = false, format: ExportFormat? = nil) {
         guard !isExporting else { return }
+        if let format { exportFormat = format }
+        let selectedFormat = exportFormat
         isExporting = true
         Task { [weak self] in
             guard let self else { return }
@@ -117,7 +121,7 @@ final class ChatModel {
             do {
                 switch try await self.hub.api.exportSession(sessionId: self.sessionId, force: force) {
                 case .file(let file):
-                    self.exportDocument = SessionExportDocument(file: file)
+                    self.exportDocument = SessionExportDocument(file: selectedFormat == .markdown ? try file.markdown { eventPresentation($0).text } : file)
                 case .warning(let count, let limit, let estimatedBytes):
                     self.exportPrompt = .warning(count: count, limit: limit, estimatedBytes: estimatedBytes)
                 case .tooLarge(let count, let estimatedBytes, let maxBytes):
@@ -736,7 +740,8 @@ final class ChatModel {
 
 /// The export as a Files document (`fileExporter`); never read back.
 struct SessionExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.json] }
+    static var readableContentTypes: [UTType] { [.json, UTType(filenameExtension: "md") ?? .plainText] }
+    var contentType: UTType { file.filename.hasSuffix(".md") ? (UTType(filenameExtension: "md") ?? .plainText) : .json }
 
     let file: SessionExportFile
 

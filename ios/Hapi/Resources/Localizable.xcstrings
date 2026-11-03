@@ -1,6 +1,86 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Date Range" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日期范围"
+          }
+        }
+      }
+    },
+    "Clear Date Range" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除日期范围"
+          }
+        }
+      }
+    },
+    "Start Date" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始日期"
+          }
+        }
+      }
+    },
+    "End Date" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "结束日期"
+          }
+        }
+      }
+    },
+    "Apply" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用"
+          }
+        }
+      }
+    },
+    "Export Conversation" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出会话"
+          }
+        }
+      }
+    },
+    "Markdown" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown"
+          }
+        }
+      }
+    },
+    "JSON" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "JSON"
+          }
+        }
+      }
+    },
     "Mark as Unread" : {
       "localizations" : {
         "zh-Hans" : {

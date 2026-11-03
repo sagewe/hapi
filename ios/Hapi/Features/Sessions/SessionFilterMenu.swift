@@ -8,6 +8,7 @@ struct SessionFilterMenu: View {
     @Environment(\.hapiTheme) private var theme
     let model: SessionListModel
     @State private var confirmMarkAllRead = false
+    @State private var datesOpen = false
 
     var body: some View {
         Menu {
@@ -24,6 +25,10 @@ struct SessionFilterMenu: View {
                     Label("Unread Only", systemImage: "circle.inset.filled")
                 }
                 .accessibilityIdentifier("home.filters.unread")
+            }
+            Button("Date Range", systemImage: "calendar") { datesOpen = true }
+            if model.filters.dateStart != nil {
+                Button("Clear Date Range") { model.setDateRange(start: nil, end: nil) }
             }
             if model.showsMachineFilter {
                 machineSection
@@ -49,6 +54,7 @@ struct SessionFilterMenu: View {
         .tint(model.hasActiveFilters ? theme.accent : .primary)
         .accessibilityValue(model.filterSummary ?? String(localized: "No filters"))
         .accessibilityIdentifier("home.filters")
+        .sheet(isPresented: $datesOpen) { SessionDateRangeSheet(model: model) }
         .alert("Mark All as Read?", isPresented: $confirmMarkAllRead) {
             Button("Mark as Read") { model.markAllRead() }
             Button("Cancel", role: .cancel) {}
@@ -116,5 +122,32 @@ struct SessionFilterSummary: View {
         .padding(.leading, 16)
         .padding(.trailing, 6)
         .background(.bar)
+    }
+}
+
+private struct SessionDateRangeSheet: View {
+    let model: SessionListModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var start: Date
+    @State private var end: Date
+    init(model: SessionListModel) {
+        self.model = model
+        _start = State(initialValue: model.filters.dateStart ?? Date())
+        _end = State(initialValue: model.filters.dateEnd ?? Date())
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Start Date", selection: $start, displayedComponents: .date)
+                DatePicker("End Date", selection: $end, displayedComponents: .date)
+                Button("Clear Date Range") { model.setDateRange(start: nil, end: nil); dismiss() }
+            }
+            .navigationTitle("Date Range")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Apply") { model.setDateRange(start: start, end: end); dismiss() } }
+            }
+        }
     }
 }

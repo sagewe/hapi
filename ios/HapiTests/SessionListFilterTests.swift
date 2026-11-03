@@ -279,6 +279,41 @@ final class SessionListFilterTests: XCTestCase {
         XCTAssertEqual(model.rows.count, 2)
     }
 
+    func testDateRangeIncludesEndDayAcrossDaylightSaving() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let start = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8))!
+        let next = calendar.date(byAdding: .day, value: 1, to: start)!
+        XCTAssertEqual(next.timeIntervalSince(start), 23 * 3600)
+        let lower = Int(start.timeIntervalSince1970 * 1000)
+        let upper = Int(next.timeIntervalSince1970 * 1000)
+        XCTAssertFalse(SessionListModel.matchesDate(lower - 1, start: start, end: start, calendar: calendar))
+        XCTAssertTrue(SessionListModel.matchesDate(lower, start: start, end: start, calendar: calendar))
+        XCTAssertTrue(SessionListModel.matchesDate(upper - 1, start: start, end: start, calendar: calendar))
+        XCTAssertFalse(SessionListModel.matchesDate(upper, start: start, end: start, calendar: calendar))
+    }
+
+    func testDateFilterUsesUpdatedAtAndComposesWithMachineAndSearch() {
+        let today = Calendar.current.startOfDay(for: Date())
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        var old = HomeFilterTestData.summary("old", machine: "mac")
+        old.updatedAt = Int(today.timeIntervalSince1970 * 1000) - 1
+        var current = HomeFilterTestData.summary("current", machine: "mac")
+        current.updatedAt = Int(today.timeIntervalSince1970 * 1000)
+        var other = HomeFilterTestData.summary("other", machine: "other")
+        other.updatedAt = current.updatedAt
+        let model = HomeFilterTestData.model(sessions: HomeFilterTestSessions([old, current, other]))
+        model.setDateRange(start: tomorrow, end: today)
+        XCTAssertEqual(model.filters.dateStart, today)
+        XCTAssertEqual(model.rows.map(\.id), ["current", "other"])
+        model.selectMachine("mac")
+        model.searchQuery = "current"
+        XCTAssertEqual(model.rows.map(\.id), ["current"])
+        model.clearFilters()
+        XCTAssertNil(model.filters.dateStart)
+        XCTAssertNil(model.filters.dateEnd)
+    }
+
     func testConnectionNoticeHasOneMessageAndHealthyStateIsEmpty() {
         XCTAssertNil(SessionConnectionNotice(state: .connected, showsCachedSessions: false).message)
         XCTAssertEqual(SessionConnectionNotice(state: .backoff(attempt: 2), showsCachedSessions: false).message, "Reconnecting…")

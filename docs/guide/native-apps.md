@@ -119,7 +119,7 @@ sessions, then `updatedAt` descending. Ties preserve their incoming order. The
 Web sidebar may apply additional directory grouping and client-side search
 ranking; it also exposes text, date-range and unread-only session-list filters.
 Both native apps offer machine filtering and relevance-ranked text search.
-Android adds a date range; iOS adds an unread-only lens and **Mark All as
+Both offer a date range; iOS adds an unread-only lens and **Mark All as
 Read**. Android and iOS README files describe their platform-specific filter
 presentation and session-row differences.
 
@@ -149,10 +149,10 @@ send it automatically. See [Voice input and assistant](./voice-assistant.md).
 ### Features available through the web
 
 Use the web app for the remote terminal, Work Graph, realtime dictation and
-voice assistant and Markdown export. These have no native
+voice assistant. These have no native
 UI. iOS also provides a `$` skills picker, manual unread marking and a title-lock toggle in Rename. On iOS, the chat's … menu forks the current conversation, rewinds or forks
 at a user message with a native history point, and exports the session as
-JSON; Android has no fork, rewind or export UI. Session history actions also
+JSON or Markdown; Android has no fork, rewind or export UI. Session history actions also
 depend on the agent's capabilities.
 Both apps display existing scheduled messages. On iOS, the composer's clock
 schedules a text-only send up to 7 days ahead (relative presets or a specific

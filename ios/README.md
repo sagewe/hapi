@@ -36,6 +36,22 @@ recent picks remembered per Hub. Selection inserts `$name` without sending,
 preserving surrounding text. IME composition and Scratchlist suppress the
 picker. Catalog requests occur on opening, with loading, empty and retry states.
 
+## Date filtering and Markdown export
+
+The session filter menu offers a local date range applied to `updatedAt`.
+Both dates are included; the upper bound is the start of the following calendar
+day, including daylight-saving transitions. Reversed dates are normalized.
+The native date form applies on Apply; Cancel keeps the current filter. Clear
+Date Range affects only dates; Clear Filters also clears machine/unread/active
+filters. Date scope applies to search, including the archived-search shortcut.
+
+Export Conversation offers Markdown or JSON from the same full Hub export.
+Markdown preserves user/assistant text, event labels, attachment metadata,
+Scratchlist entries and concise tool summaries, using the native message
+normalizer. It does not embed attachment binaries. The existing large-export
+confirmation and hard size limit remain in force; confirmation retains the
+chosen format. Files receives a `.md` document with Markdown content type.
+
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,
@@ -44,7 +60,7 @@ settings and encrypted APNs notifications. It pairs with multiple hubs and
 keeps one active. The chat's … menu also forks the conversation, rewinds or
 forks at a loaded user message with a native history point (a separate sheet,
 so transcript rows are untouched), and exports the session as JSON through the
-Files save panel (Markdown export stays web-only). Session lists support machine filtering, pinning, rename and
+Files save panel as JSON or Markdown. Session lists support machine filtering, pinning, rename and
 archive (active) or reopen/delete (inactive), from the row's context menu or the
 chat's … menu; sending to an inactive session or reopening it can resume it and
 migrate the draft/navigation when the returned session ID changes.
