@@ -1,3 +1,5 @@
+import { bodyLimit } from 'hono/body-limit'
+import { PreviewTargetSchema, PreviewLeaseSchema } from '@hapi/protocol'
 import { compareSessionSummaries } from '@hapi/protocol'
 import {
     SessionReadStateRequestSchema,
@@ -931,6 +933,32 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
 
         engine.setSessionPinMode(sessionResult.sessionId, parsed.data.mode)
         return c.json({ ok: true })
+    })
+
+    app.post('/sessions/:id/preview', bodyLimit({ maxSize: 4096 }), async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const result = requireSessionFromParam(c, engine)
+        if (result instanceof Response) return result
+        const machineId = result.session.metadata?.machineId
+        if (!machineId || !engine.getMachineByNamespace(machineId, c.get('namespace'))?.active) return c.json({ error: 'Session machine is offline' }, 409)
+        const target = PreviewTargetSchema.safeParse(await c.req.json().catch(() => null))
+        if (!target.success) return c.json({ error: 'Expected a loopback host and port 1024–65535' }, 400)
+        c.header('Cache-Control', 'no-store')
+        try {
+            const lease = PreviewLeaseSchema.parse(await engine.openPreview(machineId, { ...target.data, sessionId: result.sessionId }))
+            return c.json(lease)
+        } catch { return c.json({ error: 'Cannot start preview; check Runner version, relay configuration and local web service' }, 502) }
+    })
+    app.delete('/sessions/:id/preview/:previewId', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const result = requireSessionFromParam(c, engine)
+        if (result instanceof Response) return result
+        const machineId = result.session.metadata?.machineId
+        if (!machineId || !engine.getMachineByNamespace(machineId, c.get('namespace'))) return c.json({ error: 'Session machine unavailable' }, 409)
+        try { await engine.closePreview(machineId, { sessionId: result.sessionId, id: c.req.param('previewId') }); return c.json({ ok: true }) }
+        catch { return c.json({ error: 'Could not close preview; it will expire automatically' }, 502) }
     })
 
     app.delete('/sessions/:id', async (c) => {

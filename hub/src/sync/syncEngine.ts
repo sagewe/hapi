@@ -4673,6 +4673,13 @@ export class SyncEngine {
         return await this.rpcGateway.getAgentAvailability(machineId)
     }
 
+    async openPreview(machineId: string, input: unknown): Promise<unknown> {
+        return this.rpcGateway.openPreview(machineId, input)
+    }
+    async closePreview(machineId: string, input: unknown): Promise<unknown> {
+        return this.rpcGateway.closePreview(machineId, input)
+    }
+
     async listMachineDirectory(machineId: string, path: string, includeHidden?: boolean): Promise<RpcListDirectoryResponse> {
         return await this.rpcGateway.listMachineDirectory(machineId, path, includeHidden)
     }

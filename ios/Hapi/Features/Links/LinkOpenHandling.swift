@@ -20,6 +20,7 @@ import SwiftUI
 struct LinkOpenHandling: ViewModifier {
     /// Routes workspace-file citations to a real destination; nil shows the
     /// informational alert (the root fallback outside any session).
+    var openPreview: ((URL) -> Void)?
     var openWorkspaceFile: ((FilePathLink) -> Void)?
 
     @State private var safariURL: IdentifiedURL?
@@ -88,6 +89,7 @@ struct LinkOpenHandling: ViewModifier {
 
     @MainActor
     private func handle(_ url: URL) {
+        if WebPreviewTarget.isLocal(url), let openPreview { openPreview(url); return }
         if let fileLink = FilePathLink(url: url) {
             if let openWorkspaceFile {
                 openWorkspaceFile(fileLink)
@@ -122,8 +124,8 @@ extension View {
     /// surfaces) for this subtree. Pass `openWorkspaceFile` to route
     /// `hapi-file://` citations into a real viewer instead of the fallback
     /// alert.
-    func handlesHapiLinks(openWorkspaceFile: ((FilePathLink) -> Void)? = nil) -> some View {
-        modifier(LinkOpenHandling(openWorkspaceFile: openWorkspaceFile))
+    func handlesHapiLinks(openPreview: ((URL) -> Void)? = nil, openWorkspaceFile: ((FilePathLink) -> Void)? = nil) -> some View {
+        modifier(LinkOpenHandling(openPreview: openPreview, openWorkspaceFile: openWorkspaceFile))
     }
 }
 

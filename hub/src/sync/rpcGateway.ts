@@ -343,6 +343,15 @@ export class RpcGateway {
         }
     }
 
+    async openPreview(machineId: string, input: unknown): Promise<unknown> {
+        return this.machineRpc(machineId, RPC_METHODS.OpenPreview, input, 100_000)
+    }
+    async closePreview(machineId: string, input: unknown): Promise<unknown> {
+        const result = await this.machineRpc(machineId, RPC_METHODS.ClosePreview, input)
+        if (!result || typeof result !== 'object' || (result as { ok?: unknown }).ok !== true) throw new Error('Preview close failed')
+        return result
+    }
+
     async listMachineDirectory(machineId: string, path: string, includeHidden?: boolean): Promise<RpcListDirectoryResponse> {
         const result = await this.machineRpc(machineId, RPC_METHODS.ListMachineDirectory, { path, includeHidden }) as RpcListDirectoryResponse | unknown
         if (!result || typeof result !== 'object') {

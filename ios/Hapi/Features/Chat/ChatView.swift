@@ -20,6 +20,9 @@ struct ChatView: View {
     /// Files browser push (toolbar folder, A-M4a).
     @State private var filesOpen = false
     @State private var terminalOpen = false
+    @State private var webPreview: WebPreviewTarget?
+    @State private var previewPortOpen = false
+    @State private var previewPort = "5173"
     /// File viewer push for `hapi-file://` chat citations (A-M4a).
     @State private var viewerRoute: FileViewerRoute?
     /// Full inventory; the compact drawer lives with the composer below.
@@ -132,6 +135,7 @@ struct ChatView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
                     if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
                         Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
                             .disabled(!model.header.active)
@@ -218,7 +222,7 @@ struct ChatView: View {
         // Chat markdown citations open the real viewer in full mode with the
         // cited line as a hint chip (replaces the root placeholder alert for
         // this subtree; the destinations above inherit the handler too).
-        .handlesHapiLinks { link in
+        .handlesHapiLinks(openPreview: { url in webPreview = WebPreviewTarget(url: url) }) { link in
             viewerRoute = FileViewerRoute(
                 sessionId: sessionId,
                 path: link.path,
@@ -236,6 +240,13 @@ struct ChatView: View {
                 initiallyEditing: scratchlistStartsEditing
             )
         }
+        .alert("Web Preview", isPresented: $previewPortOpen) {
+            TextField("Port", text: $previewPort).keyboardType(.numberPad)
+            Button("Open") { if let port = Int(previewPort), let url = URL(string: "http://localhost:\(port)/") { webPreview = WebPreviewTarget(url: url) } }
+                .disabled(Int(previewPort).map { !(1024...65535).contains($0) } ?? true)
+            Button("Cancel", role: .cancel) {}
+        }
+        .fullScreenCover(item: $webPreview) { target in WebPreviewView(api: session.api, sessionId: sessionId, target: target.url) }
         .fullScreenCover(isPresented: $terminalOpen) { RemoteTerminalView(api: session.api, sessionID: sessionId) }
         .sheet(isPresented: $renameOpen) {
             if let row = model.titleEditorRow {

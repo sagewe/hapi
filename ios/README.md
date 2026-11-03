@@ -79,6 +79,15 @@ private JSON file with origin, short-lived token and active sessionID. It opens
 an independent shell, prints a Chinese marker, reconnects/resizes, and exits.
 Never commit that file. Phone keyboard/selection usability still needs acceptance.
 
+## Remote web previews
+
+HTTP localhost links inside a chat can open a protected preview on that session's
+machine. The chat menu also accepts a development port. iOS uses native
+nonpersistent WebKit, automatic preview-only authentication, back/forward and
+refresh; the original path/query/fragment is preserved. See
+[Web preview setup and boundaries](../docs/guide/web-preview.md) for the required
+Hub/Runner upgrade, relay configuration, lifecycle and verification.
+
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,

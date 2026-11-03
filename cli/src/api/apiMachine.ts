@@ -1,3 +1,4 @@
+import { PreviewManager } from '../preview/PreviewManager'
 /**
  * WebSocket client for machine/runner communication with hapi-hub
  */
@@ -119,6 +120,7 @@ function formatWorkspaceRoots(paths?: string[]): string {
 }
 
 export class ApiMachineClient {
+    private readonly previews = new PreviewManager()
     private socket!: Socket<ServerToClientEvents, ClientToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
     private keepAliveStartTimeout: ReturnType<typeof setTimeout> | null = null
@@ -140,6 +142,8 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         })
 
+        this.rpcHandlerManager.registerHandler(RPC_METHODS.OpenPreview, raw => this.previews.open(raw))
+        this.rpcHandlerManager.registerHandler(RPC_METHODS.ClosePreview, async raw => this.previews.close(raw))
         registerCommonHandlers(this.rpcHandlerManager, getInvokedCwd())
         registerWorkspaceFileHandlers(this.rpcHandlerManager, {
             resolveForCheck: (path) => this.pathPolicy.resolveForCheck(path),
@@ -762,6 +766,7 @@ export class ApiMachineClient {
     }
 
     shutdown(): void {
+        this.previews.shutdown()
         this.stopKeepAlive()
         // The listener holds this client, and the socket is about to close.
         setAgyCatalogChangeListener(null)

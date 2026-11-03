@@ -1,4 +1,6 @@
 export const RPC_METHODS = {
+    OpenPreview: 'open-web-preview',
+    ClosePreview: 'close-web-preview',
     Permission: 'permission',
     Abort: 'abort',
     Switch: 'switch',
