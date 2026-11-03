@@ -66,6 +66,8 @@ struct ChatComposerView: View {
         let slashSuggestions = interactor.slashSuggestions
         let mentionQuery = !scratchlistMode && textFocused
             ? SessionMentions.query(in: interactor.composerText, selection: textSelection, composing: composing) : nil
+        let skillQuery = scratchlistMode ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: composing)
+        let skillMatches = skillQuery.map { SkillSuggestions.matches(interactor.skills, query: $0.text, recent: interactor.recentSkills) } ?? []
         let mentions = mentionQuery.map { interactor.sessionMentionSuggestions(query: $0.text) { id in
                 id.map { mentionMachineLabels[$0] ?? String($0.prefix(8)) } ?? ""
             } } ?? []
@@ -78,6 +80,39 @@ struct ChatComposerView: View {
                     textFocused = true
                 }
                 .padding(.bottom, 6)
+            }
+            if let skillQuery {
+                VStack(alignment: .leading, spacing: 0) {
+                    if interactor.skillsLoading { ProgressView().padding(8) }
+                    if let error = interactor.skillsError {
+                        HStack {
+                            Text(error).font(.caption)
+                            Button("Retry") { Task { await interactor.loadSkills() } }
+                        }.padding(8)
+                    }
+                    if !interactor.skillsLoading && interactor.skillsError == nil && skillMatches.isEmpty {
+                        Text("No matching skills").foregroundStyle(.secondary).padding(12)
+                    }
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(skillMatches, id: \.name) { skill in
+                                Button {
+                                    guard !composing else { return }
+                                    let result = SkillSuggestions.insert(skill.name, text: interactor.composerText, query: skillQuery)
+                                    interactor.setComposerText(result.0)
+                                    textSelection = result.1
+                                    interactor.recordSkill(skill.name)
+                                    textFocused = true
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("$" + skill.name)
+                                        if let description = skill.description, !description.isEmpty { Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }.frame(height: min(CGFloat(skillMatches.count) * 64, 220))
+                }.background(composerSurfaceColor, in: RoundedRectangle(cornerRadius: 12))
             }
             if !slashSuggestions.isEmpty {
                 SlashCommandList(commands: slashSuggestions, surface: composerSurfaceColor) { command in
@@ -132,6 +167,19 @@ struct ChatComposerView: View {
                 .padding(.bottom, 4)
                 HStack(spacing: 2) {
                     addAttachmentButton
+                    if !scratchlistMode {
+                        Button {
+                            guard !composing else { return }
+                            let source = interactor.composerText as NSString
+                            let range = textSelection.location <= source.length && NSMaxRange(textSelection) <= source.length ? textSelection : NSRange(location: source.length, length: 0)
+                            let needsSpace = range.location > 0 && !CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(source.character(at: range.location - 1)) ?? " ")
+                            let value = needsSpace ? " $" : "$"
+                            interactor.setComposerText(source.replacingCharacters(in: range, with: value))
+                            textSelection = NSRange(location: range.location + value.utf16.count, length: 0)
+                            textFocused = true
+                        } label: { Image(systemName: "sparkles").frame(width: 44, height: 44) }
+                        .accessibilityLabel("Skills")
+                    }
                     if interactor.scratchlist != nil { scratchlistButton }
                     if !scratchlistMode { scheduleButton(hasAttachments: !attachments.isEmpty) }
                     Spacer()
@@ -164,6 +212,7 @@ struct ChatComposerView: View {
         // keyboard is down; above a keyboard the normal gap applies.
         .padding(.bottom, hugsBottomEdge && !textFocused ? -8 : 8)
         .animation(.snappy, value: hugsBottomEdge && !textFocused)
+        .task(id: skillQuery != nil) { if skillQuery != nil { await interactor.loadSkills() } }
         .onAppear {
             textSelection = NSRange(location: interactor.composerText.utf16.count, length: 0)
         }

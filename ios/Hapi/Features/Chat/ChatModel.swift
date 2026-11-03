@@ -362,6 +362,21 @@ final class ChatModel {
 
     // MARK: - Actions
 
+    var titleEditorRow: SessionRowUI? {
+        guard let detail = hub.sessionStore.detail(for: sessionId) else { return nil }
+        return SessionRowUI(summary: SummaryPatching.toSessionSummary(detail), title: header.title, project: "", flavor: detail.metadata?.flavor, unread: false)
+    }
+    func saveTitle(name: String?, locked: Bool) async throws {
+        try await hub.sessionStore.updateTitle(sessionId: sessionId, name: name, locked: locked)
+    }
+    func markUnread() {
+        let observed = hub.sessionStore.detail(for: sessionId)?.readState
+        Task {
+            await hub.lastSeenStore.markUnread(sessionId: sessionId, serverState: observed)
+            if let error = hub.lastSeenStore.persistenceError { showNotice(error) }
+        }
+    }
+
     func resetDisplayedReadReceipt() { displayedReadRevision = nil }
 
     /// Called by the laid-out transcript, with the revision belonging to its rows.

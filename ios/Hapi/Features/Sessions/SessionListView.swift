@@ -26,7 +26,6 @@ struct SessionListView: View {
     let onOpenSession: (String) -> Void
 
     @State private var renameTarget: SessionRowUI?
-    @State private var renameText = ""
     @State private var deleteTarget: SessionRowUI?
 
     var body: some View {
@@ -79,24 +78,10 @@ struct SessionListView: View {
         } message: {
             Text(model.actionError ?? "")
         }
-        .alert(
-            "Rename Session",
-            isPresented: Binding(
-                get: { renameTarget != nil },
-                set: { if !$0 { renameTarget = nil } }
-            ),
-            presenting: renameTarget
-        ) { row in
-            TextField("Session name", text: $renameText)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                // An untouched title must not freeze an agent-generated one.
-                if name != row.title {
-                    model.renameSession(sessionId: row.id, name: name)
-                }
+        .sheet(item: $renameTarget) { row in
+            SessionTitleEditor(row: row) { name, locked in
+                try await model.saveTitle(row, name: name, locked: locked)
             }
-            .disabled(!SessionNameRules.isValid(renameText))
         }
         .alert(
             "Delete Session",
@@ -199,8 +184,10 @@ struct SessionListView: View {
     @ViewBuilder
     private func contextMenuActions(_ row: SessionRowUI) -> some View {
         let summary = row.summary
+        Button { model.markUnread(summary) } label: {
+            Label("Mark as Unread", systemImage: "circle.badge")
+        }
         Button {
-            renameText = row.title
             renameTarget = row
         } label: {
             Label("Rename…", systemImage: "pencil")
@@ -441,5 +428,53 @@ struct FilterChip: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+struct SessionTitleEditor: View {
+    let row: SessionRowUI
+    let save: (String?, Bool) async throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var locked: Bool
+    @State private var originalName: String
+    @State private var originalLock: Bool
+    @State private var busy = false
+    @State private var error: String?
+
+    init(row: SessionRowUI, save: @escaping (String?, Bool) async throws -> Void) {
+        self.row = row; self.save = save
+        _originalName = State(initialValue: row.title)
+        _originalLock = State(initialValue: row.summary.metadata?.titleLocked == true)
+        _name = State(initialValue: row.title)
+        _locked = State(initialValue: row.summary.metadata?.titleLocked == true)
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Session name", text: $name)
+                Toggle("Lock Title", isOn: $locked)
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+            .disabled(busy)
+            .navigationTitle("Rename Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if value == originalName && locked == originalLock { dismiss(); return }
+                        busy = true
+                        Task {
+                            defer { busy = false }
+                            do { try await save(value == originalName ? nil : value, locked); dismiss() }
+                            catch { self.error = error.localizedDescription }
+                        }
+                    }.disabled(busy || !SessionNameRules.isValid(name))
+                }
+            }
+            .interactiveDismissDisabled(busy)
+        }
     }
 }

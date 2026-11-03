@@ -303,6 +303,34 @@ public final class ChatInteractor {
 
     /// Slash-command dropdown rows: non-empty only while the composer is a
     /// lone `/token`; metadata names merged with the RPC list (RPC wins).
+    public private(set) var skills: [SkillSummary] = []
+    public private(set) var skillsLoading = false
+    public private(set) var skillsError: String?
+    @ObservationIgnored private var skillsLoadID: UUID?
+    private var skillRecentKey: String { "hapi.recentSkills." + api.baseURL.absoluteString }
+    public var recentSkills: [String: Double] { UserDefaults.standard.dictionary(forKey: skillRecentKey) as? [String: Double] ?? [:] }
+
+    public func loadSkills() async {
+        let identity = UUID()
+        skillsLoadID = identity
+        skillsLoading = true
+        skillsError = nil
+        defer { if skillsLoadID == identity { skillsLoading = false } }
+        do {
+            let response = try await api.skills(sessionId: sessionId)
+            try Task.checkCancellation()
+            guard skillsLoadID == identity else { return }
+            guard response.success else { throw NSError(domain: "Skills", code: 1, userInfo: [NSLocalizedDescriptionKey: response.error ?? String(localized: "Couldn't load skills")]) }
+            skills = response.skills ?? []
+        } catch is CancellationError {} catch { if skillsLoadID == identity { skillsError = error.localizedDescription } }
+    }
+
+    public func recordSkill(_ name: String) {
+        var recent = recentSkills
+        recent[name] = Date().timeIntervalSince1970
+        UserDefaults.standard.set(recent, forKey: skillRecentKey)
+    }
+
     public var slashSuggestions: [SlashCommand] {
         guard composerDestination == .chat,
               let query = SlashCommandSuggestions.query(of: composerText) else { return [] }

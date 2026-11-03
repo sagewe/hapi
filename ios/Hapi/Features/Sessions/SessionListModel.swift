@@ -260,6 +260,17 @@ final class SessionListModel {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    func markUnread(_ summary: SessionSummary) {
+        Task {
+            await lastSeenStore.markUnread(sessionId: summary.id, serverState: summary.readState)
+            if let error = lastSeenStore.persistenceError { actionError = error }
+        }
+    }
+
+    func saveTitle(_ row: SessionRowUI, name: String?, locked: Bool) async throws {
+        try await sessionStore.updateTitle(sessionId: row.id, name: name, locked: locked)
+    }
+
     func setUnreadOnly(_ enabled: Bool) {
         filters.unreadOnly = enabled
     }

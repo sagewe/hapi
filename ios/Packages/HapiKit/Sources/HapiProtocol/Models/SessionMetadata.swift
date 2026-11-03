@@ -103,6 +103,7 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
     /// Hostname of the machine running the CLI (required on the wire).
     public var host: String
     /// User-assigned session name.
+    public var titleLocked: Bool?
     public var name: String?
     public var os: String?
     public var summary: SessionMetadataSummary?
@@ -144,6 +145,7 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
     public init(
         path: String,
         host: String,
+        titleLocked: Bool? = nil,
         name: String? = nil,
         os: String? = nil,
         summary: SessionMetadataSummary? = nil,
@@ -172,6 +174,7 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
     ) {
         self.path = path
         self.host = host
+        self.titleLocked = titleLocked
         self.name = name
         self.os = os
         self.summary = summary

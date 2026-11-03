@@ -6,6 +6,20 @@ import Testing
 @MainActor
 @Suite("LastSeenStore")
 struct LastSeenStoreTests {
+    @Test func manualUnreadSurvivesRestartAndCanBeReadAgain() async {
+        let directory = makeTempDirectory()
+        let store = LastSeenStore(snapshotDirectory: directory)
+        let row = storeSummary("s1")
+        await store.markUnread(sessionId: "s1", serverState: SessionReadState(version: 8))
+        #expect(LastSeenStore.isUnread(row, state: store.state))
+        let cold = LastSeenStore(snapshotDirectory: directory)
+        #expect(cold.state.pending["s1"]?.request.type == "unread")
+        #expect(cold.state.pending["s1"]?.request.expectedVersion == 8)
+        await cold.markSeen(sessionId: "s1", revision: 0)
+        #expect(!LastSeenStore.isUnread(row, state: cold.state))
+        #expect(cold.state.pending["s1"]?.request.type == "read")
+    }
+
     @Test func markSeenPersistsRevisionAndOutboxBeforeReturning() async {
         let directory = makeTempDirectory()
         let store = LastSeenStore(snapshotDirectory: directory, namespace: "alice")
@@ -68,6 +82,28 @@ struct LastSeenStoreTests {
         #expect(reloaded.state.pending.isEmpty)
         #expect(reloaded.state.server["s1"]?.readRevision == 3)
         cold.shutdown()
+    }
+
+    @Test func immediateReadAfterUnreadUsesAcknowledgedVersion() async {
+        let store = LastSeenStore()
+        let received = ReadStateRequests()
+        await store.configure(namespace: "default") { id, request in
+            await received.append(id, request)
+            if request.type == "unread" { try await Task.sleep(for: .milliseconds(50)) }
+            return SessionReadState(readRevision: request.readRevision ?? 0, manualUnread: request.type == "unread", version: request.expectedVersion + 1)
+        }
+        await store.markUnread(sessionId: "s1")
+        for _ in 0..<100 {
+            if await !received.requests.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        await store.markSeen(sessionId: "s1", revision: 1)
+        for _ in 0..<200 where !store.state.pending.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+        let requests = await received.requests
+        #expect(requests.count == 2)
+        #expect(requests.last?.expectedVersion == 1)
+        #expect(store.state.server["s1"]?.manualUnread == false)
+        store.shutdown()
     }
 
     @Test func persistenceFailureDoesNotClaimRead() async throws {

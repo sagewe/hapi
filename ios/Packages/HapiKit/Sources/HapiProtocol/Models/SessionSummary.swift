@@ -49,6 +49,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
         }
     }
 
+    public var titleLocked: Bool?
     public var name: String?
     public var path: String
     public var machineId: String?
@@ -61,6 +62,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
     public var hapiMcpUrl: String?
 
     public init(
+        titleLocked: Bool? = nil,
         name: String? = nil,
         path: String,
         machineId: String? = nil,
@@ -71,6 +73,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
         lifecycleState: String? = nil,
         hapiMcpUrl: String? = nil
     ) {
+        self.titleLocked = titleLocked
         self.name = name
         self.path = path
         self.machineId = machineId

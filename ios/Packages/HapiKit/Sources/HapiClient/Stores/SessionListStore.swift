@@ -33,6 +33,7 @@ public protocol SessionListStoring: AnyObject {
 
     /// `PATCH /sessions/:id` rename, optimistic `metadata.name`; rolls
     /// forward to server truth on failure.
+    func updateTitle(sessionId: String, name: String?, locked: Bool) async throws
     func renameSession(sessionId: String, name: String) async throws
 
     /// `DELETE /sessions/:id`, optimistic removal; 409 while active
@@ -42,6 +43,12 @@ public protocol SessionListStoring: AnyObject {
     /// `POST /sessions/:id/reopen` — the returned id may differ (superseding
     /// spawn); 422 when required metadata is gone.
     func reopenSession(sessionId: String) async throws -> ReopenSessionResponse
+}
+
+extension SessionListStoring {
+    public func updateTitle(sessionId: String, name: String?, locked: Bool) async throws {
+        throw URLError(.unsupportedURL)
+    }
 }
 
 /// Session list + detail cache for one hub, fed by the global SSE pipe
@@ -260,6 +267,21 @@ public final class SessionListStore: SessionListStoring {
     }
 
     // MARK: - Rename / delete / reopen
+
+    public func updateTitle(sessionId: String, name: String?, locked: Bool) async throws {
+        try await api.renameSession(id: sessionId, name: name, titleLocked: locked)
+        if let index = sessions.firstIndex(where: { $0.id == sessionId }) {
+            var list = sessions
+            if let name { list[index].metadata?.name = name }
+            list[index].metadata?.titleLocked = locked
+            setSessions(list)
+        }
+        updateDetailLocal(sessionId) { detail in
+            if let name { detail.metadata?.name = name }
+            detail.metadata?.titleLocked = locked
+        }
+        scheduleRefresh()
+    }
 
     public func renameSession(sessionId: String, name: String) async throws {
         // Optimistic `metadata.name` on both caches. A row without metadata

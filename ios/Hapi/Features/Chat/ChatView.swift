@@ -26,7 +26,6 @@ struct ChatView: View {
     @State private var scratchlistEntry: ScratchlistEntry?
     @State private var scratchlistStartsEditing = false
     @State private var renameOpen = false
-    @State private var renameText = ""
     @State private var deleteOpen = false
     @State private var forkConfirmOpen = false
     @State private var historyOpen = false
@@ -131,6 +130,7 @@ struct ChatView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
                     Button {
                         filesOpen = true
                     } label: {
@@ -173,7 +173,6 @@ struct ChatView: View {
                     .disabled(model.isExporting)
                     Divider()
                     Button {
-                        renameText = model.header.title
                         renameOpen = true
                     } label: {
                         Label("Rename…", systemImage: "pencil")
@@ -231,17 +230,10 @@ struct ChatView: View {
                 initiallyEditing: scratchlistStartsEditing
             )
         }
-        .alert("Rename Session", isPresented: $renameOpen) {
-            TextField("Session name", text: $renameText)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
-                let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-                // An untouched title must not freeze an agent-generated one.
-                if name != model.header.title {
-                    model.interactor.renameSession(name)
-                }
+        .sheet(isPresented: $renameOpen) {
+            if let row = model.titleEditorRow {
+                SessionTitleEditor(row: row) { name, locked in try await model.saveTitle(name: name, locked: locked) }
             }
-            .disabled(!SessionNameRules.isValid(renameText))
         }
         .alert("Delete Session", isPresented: $deleteOpen) {
             Button("Delete", role: .destructive) {

@@ -121,14 +121,15 @@ extension APIClient {
     }
 
     /// `PATCH /api/sessions/:id` — rename (1–255 chars).
-    public func renameSession(id: String, name: String) async throws {
+    public func renameSession(id: String, name: String? = nil, titleLocked: Bool? = nil) async throws {
         struct RenameSessionRequest: Encodable {
-            let name: String
+            let name: String?
+            let titleLocked: Bool?
         }
         try await requestVoid(
             .patch,
             "/api/sessions/\(encodePathComponent(id))",
-            body: RenameSessionRequest(name: name)
+            body: RenameSessionRequest(name: name, titleLocked: titleLocked)
         )
     }
 

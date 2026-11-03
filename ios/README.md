@@ -22,6 +22,20 @@ history or closing the selected chat. Reopening clears the cached archive marker
 before the next SSE update. Direct references and notification navigation remain
 available regardless of this list preference.
 
+## Unread, title lock and Skills
+
+Session rows and the chat menu offer Mark as Unread. Changes use the Hub's
+versioned read-state API, with a durable offline outbox and namespace isolation.
+Rename opens a native sheet with a title-lock toggle; Save commits both edits,
+Cancel leaves them unchanged, and lock-only changes do not rewrite the title.
+Incoming metadata does not reset the editing draft.
+
+Type `$` at the caret or tap the composer's Skills button to open the skills
+catalog. Names follow the web's exact/prefix/substring/fuzzy ranking, with
+recent picks remembered per Hub. Selection inserts `$name` without sending,
+preserving surrounding text. IME composition and Scratchlist suppress the
+picker. Catalog requests occur on opening, with loading, empty and retry states.
+
 ## Current capabilities
 
 The app provides sessions/chat, approvals and questions, new sessions,

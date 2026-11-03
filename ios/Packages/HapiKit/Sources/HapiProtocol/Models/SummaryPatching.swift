@@ -149,6 +149,7 @@ public enum SummaryPatching {
     public static func toSessionSummaryMetadata(_ metadata: SessionMetadata?) -> SessionSummaryMetadata? {
         guard let metadata else { return nil }
         return SessionSummaryMetadata(
+            titleLocked: metadata.titleLocked,
             name: metadata.name,
             path: metadata.path,
             machineId: metadata.machineId,
@@ -269,6 +270,7 @@ public enum SummaryPatching {
         _ next: SessionSummaryMetadata?
     ) -> Bool {
         guard let current, let next else { return current == nil && next == nil }
+        if current.titleLocked != next.titleLocked { return false }
         if current.name != next.name { return false }
         if current.path != next.path { return false }
         if current.machineId != next.machineId { return false }

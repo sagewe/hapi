@@ -113,7 +113,7 @@ public final class LastSeenStore {
         await commit { current in
             let server = SessionReadState.merge(current.server[sessionId], serverState) ?? SessionReadState()
             let seen = max(current.lastSeen[sessionId] ?? 0, server.readRevision)
-            let manual = server.manualUnread && current.pending[sessionId]?.request.expectedVersion != server.version
+            let manual = current.pending[sessionId]?.request.type == "unread" || (server.manualUnread && current.pending[sessionId]?.request.expectedVersion != server.version)
             guard seen < revision || manual else { return current }
             var next = current
             next.lastSeen[sessionId] = max(seen, revision)
@@ -121,6 +121,18 @@ public final class LastSeenStore {
             next.pending[sessionId] = PendingRead(id: UUID(), request: SessionReadStateRequest(
                 readRevision: max(seen, revision), expectedVersion: serverState?.version ?? server.version
             ))
+            return next
+        }
+        sync()
+    }
+
+    public func markUnread(sessionId: String, serverState: SessionReadState? = nil) async {
+        guard !closed, namespace != nil, !sessionId.isEmpty else { return }
+        await commit { current in
+            let server = SessionReadState.merge(current.server[sessionId], serverState) ?? SessionReadState()
+            var next = current
+            next.server[sessionId] = server
+            next.pending[sessionId] = PendingRead(id: UUID(), request: SessionReadStateRequest(type: "unread", expectedVersion: server.version))
             return next
         }
         sync()
@@ -148,7 +160,17 @@ public final class LastSeenStore {
                     await self.commit(namespace: identity) { current in
                         var next = current
                         next.server[id] = SessionReadState.merge(current.server[id], response)
-                        if next.pending[id]?.id == pending.id { next.pending[id] = nil }
+                        if next.pending[id]?.id == pending.id {
+                            next.pending[id] = nil
+                        } else if var queued = next.pending[id],
+                                  queued.request.expectedVersion == pending.request.expectedVersion,
+                                  next.server[id]?.version == response.version {
+                            // Our own acknowledged mutation advanced the CAS version.
+                            // Preserve a newer local choice without rebasing over a
+                            // newer authoritative change from another client.
+                            queued.request.expectedVersion = response.version
+                            next.pending[id] = queued
+                        }
                         return next
                     }
                     if self.persistenceError != nil { try await Task.sleep(for: .seconds(5)) }
@@ -177,7 +199,8 @@ public final class LastSeenStore {
 
     public static func isUnread(_ summary: SessionSummary, state: LastSeenState) -> Bool {
         let server = SessionReadState.merge(state.server[summary.id], summary.readState) ?? SessionReadState()
-        let manual = server.manualUnread && state.pending[summary.id]?.request.expectedVersion != server.version
+        let pending = state.pending[summary.id]?.request
+        let manual = pending?.type == "unread" || (server.manualUnread && pending?.expectedVersion != server.version)
         return manual || (!(summary.active && summary.thinking)
             && (summary.contentRevision ?? 0) > max(server.readRevision, state.lastSeen[summary.id] ?? 0))
     }

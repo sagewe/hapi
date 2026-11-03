@@ -24,6 +24,44 @@ struct SessionListStoreTests {
         return (performer, store)
     }
 
+    @Test func skillPickerPreservesSuffixAndRejectsIME() {
+        let text = "你好 $dep trailing"
+        let selection = NSRange(location: ("你好 $dep" as NSString).length, length: 0)
+        let query = SkillSuggestions.query(in: text, selection: selection)!
+        let inserted = SkillSuggestions.insert("deploy", text: text, query: query)
+        #expect(inserted.0 == "你好 $deploy trailing")
+        #expect(SkillSuggestions.query(in: text, selection: selection, composing: true) == nil)
+        let skills = [SkillSummary(name: "rebuild"), SkillSummary(name: "deploy")]
+        #expect(SkillSuggestions.matches(skills, query: "depl").first?.name == "deploy")
+    }
+
+    @Test func titleLockSurvivesMetadataProjectionAndDecoding() throws {
+        var detail = SessionMetadata(path: "/repo", host: "test")
+        detail.titleLocked = true
+        let summary = SummaryPatching.toSessionSummaryMetadata(detail)
+        #expect(summary?.titleLocked == true)
+        let data = try HapiJSON.encoder.encode(detail)
+        #expect(try HapiJSON.decoder.decode(SessionMetadata.self, from: data).titleLocked == true)
+    }
+
+    @Test func lockOnlyRequestDoesNotRewriteTitle() async throws {
+        let (performer, store) = try makeStore()
+        var row = storeSummary("s1")
+        row.metadata = SessionSummaryMetadata(name: "Agent title", path: "/repo")
+        await performer.enqueue(json: try sessionsResponseJSON(row))
+        try await store.refresh()
+        await performer.enqueue(json: "{}")
+        try await store.updateTitle(sessionId: "s1", name: nil, locked: true)
+        let requests = await performer.requests
+        let request = try #require(requests.first { $0.httpMethod == "PATCH" })
+        let payload = try #require(request.httpBody)
+        let object = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        #expect(object["name"] == nil)
+        #expect(object["titleLocked"] as? Bool == true)
+        #expect(store.sessions.first?.metadata?.name == "Agent title")
+        #expect(store.sessions.first?.metadata?.titleLocked == true)
+    }
+
     // MARK: - refresh
 
     @Test func refreshReplacesTheListWithTheSortedServerResponse() async throws {
