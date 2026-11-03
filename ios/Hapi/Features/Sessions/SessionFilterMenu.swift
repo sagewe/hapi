@@ -12,6 +12,10 @@ struct SessionFilterMenu: View {
     var body: some View {
         Menu {
             Section {
+                Toggle(isOn: Binding(get: { model.activeOnly }, set: { model.setActiveOnly($0) })) {
+                    Label("Active Only", systemImage: "bolt.circle")
+                }
+                .accessibilityIdentifier("home.filters.active")
                 Toggle(isOn: Binding(get: { model.showArchivedSessions }, set: { model.setShowArchivedSessions($0) })) {
                     Label("Show Archived Sessions", systemImage: "archivebox")
                 }

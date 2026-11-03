@@ -257,6 +257,28 @@ final class SessionListFilterTests: XCTestCase {
         XCTAssertFalse(model("first").showArchivedSessions)
     }
 
+    func testActiveOnlyPreservesSelectionAndPersistsPerHub() {
+        var offline = HomeFilterTestData.summary("offline", machine: "mac")
+        offline.active = false
+        let sessions = HomeFilterTestSessions([HomeFilterTestData.summary("active", machine: "mac"), offline])
+        let suite = "hapi-active-tests-" + UUID().uuidString
+        let prefs = UserDefaults(suiteName: suite)!
+        defer { prefs.removePersistentDomain(forName: suite) }
+        func make(_ hub: String) -> SessionListModel {
+            SessionListModel(sessionStore: sessions, machineStore: HomeFilterTestMachines(), lastSeenStore: LastSeenStore(), hubUrl: hub, preferences: prefs)
+        }
+        let model = make("first")
+        model.setActiveOnly(true)
+        XCTAssertEqual(model.rows.map(\.id), ["active"])
+        model.selectedSessionId = "offline"
+        XCTAssertEqual(model.rows.count, 2)
+        XCTAssertTrue(make("first").activeOnly)
+        XCTAssertFalse(make("second").activeOnly)
+        model.clearFilters()
+        XCTAssertFalse(make("first").activeOnly)
+        XCTAssertEqual(model.rows.count, 2)
+    }
+
     func testConnectionNoticeHasOneMessageAndHealthyStateIsEmpty() {
         XCTAssertNil(SessionConnectionNotice(state: .connected, showsCachedSessions: false).message)
         XCTAssertEqual(SessionConnectionNotice(state: .backoff(attempt: 2), showsCachedSessions: false).message, "Reconnecting…")

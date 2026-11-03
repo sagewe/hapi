@@ -394,7 +394,7 @@
 				CODE_SIGN_ENTITLEMENTS = Hapi/Hapi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = Y64389SULV;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hapi/Info.plist;
@@ -426,7 +426,7 @@
 				CODE_SIGN_ENTITLEMENTS = Hapi/Hapi.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = Y64389SULV;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hapi/Info.plist;
@@ -456,7 +456,7 @@
 				CODE_SIGN_ENTITLEMENTS = HapiNotificationService/HapiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = Y64389SULV;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HapiNotificationService/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = HapiNotificationService;
@@ -482,7 +482,7 @@
 				CODE_SIGN_ENTITLEMENTS = HapiNotificationService/HapiNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = Y64389SULV;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = HapiNotificationService/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = HapiNotificationService;

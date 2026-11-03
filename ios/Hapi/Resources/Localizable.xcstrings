@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Active Only" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仅显示活跃会话"
+          }
+        }
+      }
+    },
     "Archived Sessions Are Hidden" : {
       "localizations" : {
         "zh-Hans" : {

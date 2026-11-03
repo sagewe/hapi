@@ -108,6 +108,12 @@ final class SessionListModel {
     private let preferences: UserDefaults
     private var archivePreferenceKey: String { "hapi.showArchivedSessions." + hubUrl }
     private(set) var showArchivedSessions = false
+    private(set) var activeOnly = false
+
+    func setActiveOnly(_ enabled: Bool) {
+        activeOnly = enabled
+        preferences.set(enabled, forKey: "hapi.activeOnly." + hubUrl)
+    }
 
     func setShowArchivedSessions(_ enabled: Bool) {
         showArchivedSessions = enabled
@@ -154,6 +160,7 @@ final class SessionListModel {
         self.drafts = drafts
         self.preferences = preferences
         self.showArchivedSessions = preferences.bool(forKey: "hapi.showArchivedSessions." + hubUrl)
+        self.activeOnly = preferences.bool(forKey: "hapi.activeOnly." + hubUrl)
     }
 
     // MARK: - Derived state
@@ -211,7 +218,7 @@ final class SessionListModel {
 
     /// The menu also holds the unread lens and Mark All as Read.
     var showsFilterMenu: Bool {
-        !sessionStore.sessions.isEmpty || filters.unreadOnly
+        !sessionStore.sessions.isEmpty || filters.unreadOnly || activeOnly
     }
 
     var hasHiddenArchivedSessions: Bool {
@@ -223,7 +230,7 @@ final class SessionListModel {
     }
 
     var hasActiveFilters: Bool {
-        activeMachineFilter != nil || filters.unreadOnly
+        activeMachineFilter != nil || filters.unreadOnly || activeOnly
     }
 
     var isSearching: Bool {
@@ -242,6 +249,7 @@ final class SessionListModel {
 
     var filterSummary: String? {
         var parts: [String] = []
+        if activeOnly { parts.append(String(localized: "Active Only")) }
         if filters.unreadOnly {
             parts.append(String(localized: "Unread only"))
         }
@@ -283,6 +291,7 @@ final class SessionListModel {
 
     func clearFilters() {
         filters = SessionListFilters()
+        setActiveOnly(false)
     }
 
     /// Clear the stored pick as well, so a vanished group cannot resurrect it.
@@ -305,6 +314,7 @@ final class SessionListModel {
         let readState = lastSeenStore.state
         let activeFilter = activeMachineFilter
         var visible = sessionStore.sessions.filter { summary in
+            guard !activeOnly || summary.active || summary.id == selectedSessionId else { return false }
             guard includeArchived || summary.metadata?.lifecycleState != "archived" || summary.id == selectedSessionId else { return false }
             guard let activeFilter else { return true }
             return (summary.metadata?.machineId ?? unknownMachineFilterId) == activeFilter
