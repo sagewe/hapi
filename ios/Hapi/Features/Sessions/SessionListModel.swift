@@ -65,8 +65,8 @@ enum SessionRowStatus: Equatable {
         }
     }
 
-    /// Unfilled attention symbols; running uses the native loading indicator.
-    /// Status wording/count remain available to VoiceOver in either case.
+    /// Unfilled attention symbols; running is a pulsing badge on the agent
+    /// icon. Status wording/count remain available to VoiceOver in either case.
     var symbolName: String? {
         switch self {
         case .needsReply: return "bubble.left"
@@ -134,6 +134,8 @@ final class SessionListModel {
     private(set) var isRefreshing = false
     /// Last refresh failed — show the offline state over snapshot data.
     private(set) var isOffline = false
+    /// Last successful list fetch, for the offline notice's "updated …".
+    private(set) var lastRefreshedAt: Date?
     private(set) var hasRefreshedOnce = false
     @ObservationIgnored private var hasAttemptedRefresh = false
     /// Transient row-action failure for an alert.
@@ -296,8 +298,9 @@ final class SessionListModel {
     /// Content not yet read by a client in this namespace.
     var unreadCount: Int {
         let readState = lastSeenStore.state
+        let followedTails = lastSeenStore.followedTails
         return sessionStore.sessions.filter {
-            LastSeenStore.isUnread($0, state: readState)
+            LastSeenStore.isUnread($0, state: readState, followedTails: followedTails)
         }.count
     }
 
@@ -309,6 +312,16 @@ final class SessionListModel {
                 await lastSeenStore.markSeen(sessionId: summary.id,
                     revision: summary.contentRevision ?? 0, serverState: summary.readState)
             }
+            if let error = lastSeenStore.persistenceError { actionError = error }
+        }
+    }
+
+    /// Swipe action: mark the observed head of one session as read.
+    func markRead(sessionId: String) {
+        guard let summary = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
+        Task {
+            await lastSeenStore.markSeen(sessionId: summary.id,
+                revision: summary.contentRevision ?? 0, serverState: summary.readState)
             if let error = lastSeenStore.persistenceError { actionError = error }
         }
     }
@@ -341,6 +354,7 @@ final class SessionListModel {
 
     private func filteredSessions(includeArchived: Bool) -> [SessionSummary] {
         let readState = lastSeenStore.state
+        let followedTails = lastSeenStore.followedTails
         let activeFilter = activeMachineFilter
         var visible = sessionStore.sessions.filter { summary in
             guard Self.matchesDate(summary.updatedAt, start: filters.dateStart, end: filters.dateEnd) else { return false }
@@ -352,7 +366,7 @@ final class SessionListModel {
         if filters.unreadOnly {
             visible = visible.filter { summary in
                 summary.id == selectedSessionId
-                    || LastSeenStore.isUnread(summary, state: readState)
+                    || LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
             }
         }
         if isSearching {
@@ -368,13 +382,14 @@ final class SessionListModel {
 
     var rows: [SessionRowUI] {
         let readState = lastSeenStore.state
+        let followedTails = lastSeenStore.followedTails
         return filteredSessions(includeArchived: showArchivedSessions).map { summary in
             SessionRowUI(
                 summary: summary,
                 title: Self.sessionTitle(summary),
                 project: Self.projectLabel(summary),
                 flavor: summary.metadata?.flavor,
-                unread: LastSeenStore.isUnread(summary, state: readState)
+                unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
             )
         }
     }
@@ -415,6 +430,7 @@ final class SessionListModel {
             try await sessionStore.refresh()
             reconcileFilters()
             isOffline = false
+            lastRefreshedAt = Date()
             hasRefreshedOnce = true
             do { try await machineStore.refresh() }
             catch { actionError = error.localizedDescription }

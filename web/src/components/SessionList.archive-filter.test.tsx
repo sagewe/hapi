@@ -72,12 +72,15 @@ function renderSessionList(sessions: SessionSummary[], machinesById?: Record<str
 }
 
 function archiveToggle() {
-    let button = screen.queryAllByRole('button', { name: 'Show archived sessions' }).find(button => !button.closest('[inert]'))
-    if (!button) {
+    const recovery = screen.queryAllByRole('button', { name: 'Show archived sessions' }).find(button => !button.closest('[inert]'))
+    if (recovery) return recovery
+    let menu = screen.queryAllByRole('button', { name: 'Sort and filter' }).find(button => !button.closest('[inert]'))
+    if (!menu) {
         fireEvent.click(screen.getByTestId('session-list-header-overflow'))
-        button = screen.getByRole('button', { name: 'Show archived sessions' })
+        menu = screen.getByRole('button', { name: 'Sort and filter' })
     }
-    return button
+    fireEvent.click(menu)
+    return screen.getByRole('menuitemcheckbox', { name: 'Show archived sessions' })
 }
 
 describe('archived session visibility', () => {

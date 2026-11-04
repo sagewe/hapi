@@ -17,12 +17,15 @@ public struct ComposerState: Equatable, Sendable {
     public let canStop: Bool
     /// The running agent accepts mid-turn instructions.
     public let canSteer: Bool
+    /// Direct deliveryMode is supported by Pi/agy; other agents steer queued rows.
+    public let canSendAndSteer: Bool
 
-    public init(text: String, isSending: Bool, canStop: Bool, canSteer: Bool) {
+    public init(text: String, isSending: Bool, canStop: Bool, canSteer: Bool, canSendAndSteer: Bool) {
         self.text = text
         self.isSending = isSending
         self.canStop = canStop
         self.canSteer = canSteer
+        self.canSendAndSteer = canSendAndSteer
     }
 }
 

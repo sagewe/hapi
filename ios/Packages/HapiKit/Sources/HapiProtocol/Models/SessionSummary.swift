@@ -51,6 +51,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
 
     public var titleLocked: Bool?
     public var name: String?
+    public var promptTitle: String?
     public var path: String
     public var machineId: String?
     public var summary: Summary?
@@ -64,6 +65,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
     public init(
         titleLocked: Bool? = nil,
         name: String? = nil,
+        promptTitle: String? = nil,
         path: String,
         machineId: String? = nil,
         summary: Summary? = nil,
@@ -75,6 +77,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
     ) {
         self.titleLocked = titleLocked
         self.name = name
+        self.promptTitle = promptTitle
         self.path = path
         self.machineId = machineId
         self.summary = summary
@@ -92,9 +95,10 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
 /// hub-derived: badges must use `pendingRequestsCount` (authoritative total),
 /// never `pendingRequests.count` (capped at 5, oldest first).
 public struct SessionSummary: Codable, Equatable, Sendable {
-    public var hasConversationContent: Bool?
     public var contentRevision: Int?
     public var readState: SessionReadState?
+    /// Hub-computed eligibility for session references; empty stubs are excluded.
+    public var hasConversationContent: Bool?
     /// Server-side cap on `pendingRequests` entries
     /// (`PENDING_REQUEST_SUMMARY_CAP`, `shared/src/sessionSummary.ts`).
     public static let pendingRequestSummaryCap = 5
@@ -127,9 +131,9 @@ public struct SessionSummary: Codable, Equatable, Sendable {
     public var effort: String?
 
     public init(
-        hasConversationContent: Bool? = nil,
         contentRevision: Int? = nil,
         readState: SessionReadState? = nil,
+        hasConversationContent: Bool? = nil,
         id: String,
         active: Bool,
         thinking: Bool,
@@ -155,9 +159,9 @@ public struct SessionSummary: Codable, Equatable, Sendable {
         effort: String? = nil
     ) {
         self.id = id
-        self.hasConversationContent = hasConversationContent
         self.contentRevision = contentRevision
         self.readState = readState
+        self.hasConversationContent = hasConversationContent
         self.active = active
         self.thinking = thinking
         self.activeAt = activeAt
