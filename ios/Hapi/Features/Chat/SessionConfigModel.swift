@@ -6,10 +6,23 @@ import Observation
 /// truth, including optimistic updates, capability gates and server reloads.
 @MainActor @Observable
 final class SessionConfigModel {
-    let interactor: ChatInteractor
+    enum QuotaLoadState: Equatable {
+        case idle
+        case disabled
+        case loading
+        case loaded(UsageQueryResult)
+        case failed(String)
+    }
 
-    init(interactor: ChatInteractor) {
+    let interactor: ChatInteractor
+    let api: APIClient?
+    let machineId: String?
+    private(set) var quotaState: QuotaLoadState = .idle
+
+    init(interactor: ChatInteractor, api: APIClient? = nil, machineId: String? = nil) {
         self.interactor = interactor
+        self.api = api
+        self.machineId = machineId
     }
 
     var config: SessionConfigState { interactor.config }
@@ -18,6 +31,8 @@ final class SessionConfigModel {
     var showsModel: Bool { config.modelOptions != nil || config.modelOptionsLoading }
     var showsEffort: Bool { config.effortOptions?.isEmpty == false }
     var showsCollaborationMode: Bool { config.flavor == "codex" }
+    var quotaAgent: UsageQueryAgent? { UsageQueryAgent.from(flavor: config.flavor) }
+    var showsQuota: Bool { api != nil && machineId != nil && quotaAgent != nil }
     var hasSettings: Bool { !config.permissionModes.isEmpty || showsModel || showsEffort || showsCollaborationMode }
 
     var permission: PermissionMode { config.permissionMode ?? .default }
@@ -86,5 +101,29 @@ final class SessionConfigModel {
 
     func loadModels() {
         interactor.loadModelOptions()
+    }
+
+    func loadQuota(force: Bool = false) {
+        guard let api, let machineId, let agent = quotaAgent else { return }
+        if case .loading = quotaState { return }
+        if !force, case .loaded = quotaState { return }
+        quotaState = .loading
+        Task {
+            do {
+                if !force {
+                    let settings = try await api.machineUsageQuerySettings(machineId: machineId, agent: agent)
+                    if !settings.enabled {
+                        quotaState = .disabled
+                        return
+                    }
+                }
+                let result = try await api.queryMachineUsage(machineId: machineId, agent: agent, force: force)
+                quotaState = .loaded(result)
+            } catch is CancellationError {
+                // Dismissed mid-flight
+            } catch {
+                quotaState = .failed(error.localizedDescription)
+            }
+        }
     }
 }

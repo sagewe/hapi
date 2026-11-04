@@ -7,9 +7,13 @@ import {
 } from '@hapi/protocol'
 import type { PermissionModeTone } from '@hapi/protocol'
 import * as Popover from '@radix-ui/react-popover'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { AgentState, CodexCollaborationMode, PermissionMode } from '@/types/api'
 import type { ConversationStatus } from '@/realtime/types'
+import type { ApiClient } from '@/api/client'
+import type { UsageQueryAgent, UsageQueryResult } from '@hapi/protocol/usageQuery'
+import { useQuery } from '@tanstack/react-query'
+import { queryKeys } from '@/lib/query-keys'
 import { getContextBudgetTokens } from '@/chat/modelConfig'
 import {
     formatReasoningLabel,
@@ -191,6 +195,112 @@ export function shouldShowCodexFastBadge(
     return agentFlavor === 'codex' && isFastServiceTier(serviceTier)
 }
 
+function formatUsageResetCountdown(timestamp: number | null, now: number): string {
+    if (timestamp === null) return '—'
+    const totalMinutes = Math.max(0, Math.floor((timestamp - now) / 60_000))
+    const days = Math.floor(totalMinutes / 1_440)
+    const hours = Math.floor((totalMinutes % 1_440) / 60)
+    const minutes = totalMinutes % 60
+    if (days > 0) return `${days}d ${hours}h`
+    if (hours > 0) return `${hours}h ${minutes}m`
+    return `${minutes}m`
+}
+
+function UsageQueryDetails(props: {
+    api?: ApiClient
+    machineId?: string | null
+    agentFlavor?: string | null
+    open: boolean
+    now: number
+    hasContextHeader?: boolean
+    t: (key: string) => string
+}) {
+    const agent = props.agentFlavor === 'claude' || props.agentFlavor === 'codex' || props.agentFlavor === 'kimi' || props.agentFlavor === 'agy'
+        ? props.agentFlavor as UsageQueryAgent
+        : null
+    const settingsQuery = useQuery({
+        queryKey: props.machineId && agent
+            ? queryKeys.machineUsageQuery(props.machineId, agent)
+            : ['machine-usage-query', 'none', agent ?? 'none'],
+        queryFn: async () => await props.api!.getMachineUsageQuerySettings(props.machineId!, agent!),
+        enabled: props.open && Boolean(props.api && props.machineId && agent),
+        staleTime: 30_000,
+        retry: false
+    })
+    const usageQuery = useQuery({
+        queryKey: props.machineId && agent
+            ? queryKeys.machineUsageQueryResult(props.machineId, agent)
+            : ['machine-usage-query-result', 'none', agent ?? 'none'],
+        queryFn: async () => await props.api!.queryMachineUsage(props.machineId!, agent!),
+        enabled: props.open && Boolean(props.api && props.machineId && agent && settingsQuery.data?.enabled),
+        // Ask the Runner whenever the popover mounts; the Runner, not the
+        // browser, owns the five-minute upstream cache and 30-second retry
+        // cooldown. This also lets a failed result retry after the cooldown
+        // instead of being hidden by React Query's success cache.
+        staleTime: 0,
+        refetchOnWindowFocus: false,
+        retry: false
+    })
+
+    const dividerClass = props.hasContextHeader !== false ? 'border-t border-[var(--app-divider)] pt-1' : ''
+    const wrapperClass = props.hasContextHeader !== false ? 'mt-1 border-t border-[var(--app-divider)] pt-2' : ''
+
+    if (!agent || !props.machineId || !props.api) return null
+    if (settingsQuery.isLoading) return <div className={`${dividerClass} text-[var(--app-hint)]`}>{props.t('settings.usageQuery.loadingQuota')}</div>
+    if (settingsQuery.error) return <div className={`${dividerClass} text-[var(--app-hint)]`}>{props.t('settings.usageQuery.quotaUnavailable')}</div>
+    if (!settingsQuery.data?.enabled) return null
+    if (usageQuery.isLoading) return <div className={`${dividerClass} text-[var(--app-hint)]`}>{props.t('settings.usageQuery.loadingWindows')}</div>
+    if (usageQuery.error) return <div className={`${dividerClass} text-red-500`}>{props.t('settings.usageQuery.quotaFailed')}</div>
+
+    const result = usageQuery.data
+    if (!result) return null
+    const groups = result.groups && result.groups.length > 0 ? result.groups : null
+    const rows: Array<[string, UsageQueryResult['fiveHour'] | UsageQueryResult['sevenDay']]> = [
+        ['5H', result.fiveHour],
+        ['7D', result.sevenDay]
+    ]
+    return (
+        <div className={wrapperClass}>
+            <div className="mb-1">{props.t('settings.usageQuery.quota')}</div>
+            {groups ? (
+                <div className="flex flex-col gap-2">
+                    {groups.map((group) => {
+                        const groupRows: Array<[string, UsageQueryResult['fiveHour'] | UsageQueryResult['sevenDay']]> = [
+                            ['5H', group.fiveHour],
+                            ['7D', group.sevenDay]
+                        ]
+                        return (
+                            <div key={group.id}>
+                                <div className="mb-0.5 text-[11px] text-[var(--app-hint)]">{group.name}</div>
+                                <div className="grid grid-cols-[max-content_1fr_max-content] gap-x-3 gap-y-1 tabular-nums">
+                                    {groupRows.map(([label, window]) => (
+                                        <div key={`${group.id}-${label}`} className="contents">
+                                            <span>{label}</span>
+                                            <span className="text-right">{window ? `${Math.round(window.usedPercent)}%` : '—'}</span>
+                                            <span className="text-left">{window ? formatUsageResetCountdown(window.resetsAt, props.now) : '—'}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            ) : (
+                <div className="grid grid-cols-[max-content_1fr_max-content] gap-x-3 gap-y-1 tabular-nums">
+                    {rows.map(([label, window]) => (
+                        <div key={label} className="contents">
+                            <span>{label}</span>
+                            <span className="text-right">{window ? `${Math.round(window.usedPercent)}%` : '—'}</span>
+                            <span className="text-left">{window ? formatUsageResetCountdown(window.resetsAt, props.now) : '—'}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {result.status === 'error' && result.error ? <div className="mt-1 text-red-500">{result.error}</div> : null}
+        </div>
+    )
+}
+
 export function StatusBar(props: {
     active: boolean
     thinking: boolean
@@ -215,9 +325,19 @@ export function StatusBar(props: {
     copilotAgentMode?: import('@hapi/protocol').CopilotAgentMode
     agentFlavor?: string | null
     voiceStatus?: ConversationStatus
+    usageQueryApi?: ApiClient
+    usageQueryMachineId?: string | null
 }) {
     const { t } = useTranslation()
     const { preferences: headerMetadata } = useSessionHeaderMetadata()
+    const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
+    const [usageNow, setUsageNow] = useState(() => Date.now())
+    useEffect(() => {
+        if (!contextPopoverOpen) return
+        setUsageNow(Date.now())
+        const timer = window.setInterval(() => setUsageNow(Date.now()), 60_000)
+        return () => window.clearInterval(timer)
+    }, [contextPopoverOpen])
     const connectionStatus = useMemo(
         () => getConnectionStatus(props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount ?? 0, t),
         [props.active, props.thinking, props.agentState, props.voiceStatus, props.backgroundTaskCount, t]
@@ -302,29 +422,36 @@ export function StatusBar(props: {
                         {connectionStatus.text}
                     </span>
                 </div>
-                {contextUsageLabel ? (
-                    <Popover.Root>
+                {contextUsageLabel || (props.usageQueryApi && props.usageQueryMachineId
+                    && (props.agentFlavor === 'claude' || props.agentFlavor === 'codex' || props.agentFlavor === 'kimi' || props.agentFlavor === 'agy')) ? (
+                    <Popover.Root open={contextPopoverOpen} onOpenChange={setContextPopoverOpen}>
                         <Popover.Trigger asChild>
                             <button
                                 type="button"
                                 aria-label={t('misc.contextDetails')}
                                 className={`min-w-0 cursor-pointer whitespace-nowrap rounded-sm bg-transparent p-0 text-[10px] leading-4 outline-none focus-visible:ring-1 focus-visible:ring-[var(--app-link)] ${contextWarning?.color ?? 'text-[var(--app-hint)]'}`}
                             >
-                                <span className="sm:hidden">{compactContextUsageLabel}</span>
-                                <span className="hidden items-center gap-2 sm:inline-flex">
-                                    {contextUsedPercentage !== null ? (
-                                        <span
-                                            aria-hidden="true"
-                                            className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-[var(--app-link-muted)]"
-                                        >
-                                            <span
-                                                className="block h-full rounded-full bg-current"
-                                                style={{ width: `${contextUsedPercentage}%` }}
-                                            />
+                                {contextUsageLabel ? (
+                                    <>
+                                        <span className="sm:hidden">{compactContextUsageLabel}</span>
+                                        <span className="hidden items-center gap-2 sm:inline-flex">
+                                            {contextUsedPercentage !== null ? (
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-[var(--app-link-muted)]"
+                                                >
+                                                    <span
+                                                        className="block h-full rounded-full bg-current"
+                                                        style={{ width: `${contextUsedPercentage}%` }}
+                                                    />
+                                                </span>
+                                            ) : null}
+                                            <span>{contextUsageLabel}</span>
                                         </span>
-                                    ) : null}
-                                    <span>{contextUsageLabel}</span>
-                                </span>
+                                    </>
+                                ) : (
+                                    <span>{t('settings.usageQuery.quotaChip')}</span>
+                                )}
                             </button>
                         </Popover.Trigger>
                         <Popover.Portal>
@@ -336,27 +463,43 @@ export function StatusBar(props: {
                                 className="z-50 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-3 py-2 shadow-lg"
                             >
                                 <div className="flex max-w-[min(22rem,calc(100vw-1rem))] flex-col gap-1 text-xs leading-tight text-[var(--app-fg)]">
-                                    {contextUsageDetails?.cacheRead ? (
-                                        <span className="break-words">
-                                            {t('misc.contextCache', { value: contextUsageDetails.cacheRead })}
-                                        </span>
+                                    {contextUsageDetails ? (
+                                        <>
+                                            {contextUsageDetails.cacheRead ? (
+                                                <span className="break-words">
+                                                    {t('misc.contextCache', { value: contextUsageDetails.cacheRead })}
+                                                </span>
+                                            ) : null}
+                                            <span className="break-words">
+                                                {contextUsageDetails.usedPercentage === null
+                                                    ? t('misc.contextUsedTokens', { value: contextUsageDetails.used })
+                                                    : t('misc.contextUsed', {
+                                                        value: contextUsageDetails.used,
+                                                        percent: contextUsageDetails.usedPercentage
+                                                    })}
+                                            </span>
+                                            {contextUsageDetails.remaining && contextUsageDetails.remainingPercentage !== null ? (
+                                                <span className="break-words">
+                                                    {t('misc.contextRemaining', {
+                                                        value: contextUsageDetails.remaining,
+                                                        percent: contextUsageDetails.remainingPercentage
+                                                    })}
+                                                </span>
+                                            ) : null}
+                                        </>
                                     ) : null}
-                                    <span className="break-words">
-                                        {contextUsageDetails?.usedPercentage === null
-                                            ? t('misc.contextUsedTokens', { value: contextUsageDetails.used })
-                                            : t('misc.contextUsed', {
-                                                value: contextUsageDetails?.used ?? '',
-                                                percent: contextUsageDetails?.usedPercentage ?? 0
-                                            })}
-                                    </span>
-                                    {contextUsageDetails?.remaining && contextUsageDetails.remainingPercentage !== null ? (
-                                        <span className="break-words">
-                                            {t('misc.contextRemaining', {
-                                                value: contextUsageDetails.remaining,
-                                                percent: contextUsageDetails.remainingPercentage
-                                            })}
-                                        </span>
-                                    ) : null}
+                                    {props.usageQueryApi && props.usageQueryMachineId
+                                        && (props.agentFlavor === 'claude' || props.agentFlavor === 'codex' || props.agentFlavor === 'kimi' || props.agentFlavor === 'agy') ? (
+                                            <UsageQueryDetails
+                                                api={props.usageQueryApi}
+                                                machineId={props.usageQueryMachineId}
+                                                agentFlavor={props.agentFlavor}
+                                                open={contextPopoverOpen}
+                                                now={usageNow}
+                                                hasContextHeader={Boolean(contextUsageDetails)}
+                                                t={t}
+                                            />
+                                        ) : null}
                                 </div>
                             </Popover.Content>
                         </Popover.Portal>

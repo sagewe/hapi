@@ -226,6 +226,25 @@ final class SessionConfigTests: XCTestCase {
         harness.store.updateDetailLocal("config") { $0.metadata?.capabilities = nil }
         XCTAssertTrue(harness.model.config.controlledByUser)
     }
+
+    func testSubscriptionQuotaLoadsForCodexAndAgy() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "agy")
+        let quotaModel = SessionConfigModel(interactor: harness.interactor, api: harness.api, machineId: "machine-1")
+        XCTAssertTrue(quotaModel.showsQuota)
+        XCTAssertEqual(quotaModel.quotaAgent, .agy)
+        quotaModel.loadQuota()
+        try await configEventually {
+            if case .loaded = quotaModel.quotaState { return true }
+            return false
+        }
+        guard case .loaded(let result) = quotaModel.quotaState else {
+            return XCTFail("Expected loaded quota result")
+        }
+        XCTAssertEqual(result.agent, .agy)
+        XCTAssertEqual(result.groups?.count, 2)
+        XCTAssertEqual(result.fiveHour?.usedPercentInt, 20)
+        XCTAssertEqual(result.fiveHour?.remainingPercentInt, 80)
+    }
 }
 
 /// Real app model, interactor, store and API over fake HTTP. No hub connection,
@@ -233,6 +252,7 @@ final class SessionConfigTests: XCTestCase {
 @MainActor
 final class SessionConfigTestHarness {
     let http: SessionConfigTestHTTP
+    let api: APIClient
     let store: SessionListStore
     let interactor: ChatInteractor
     let model: SessionConfigModel
@@ -255,6 +275,7 @@ final class SessionConfigTestHarness {
         ))
         let auth = AuthManager(baseURL: baseURL, credentialStore: credentials, performer: http)
         let api = APIClient(baseURL: baseURL, authManager: auth, performer: http)
+        self.api = api
         store = SessionListStore(api: api)
         try await store.loadSessionDetail("config")
         interactor = ChatInteractor(
@@ -300,7 +321,43 @@ actor SessionConfigTestHTTP: HTTPPerforming {
         let path = url.path
         let data: Data
         var status = 200
-        if request.httpMethod == "POST" {
+        if path.hasSuffix("/usage-query/query") {
+            let result = UsageQueryResult(
+                agent: .agy,
+                templateId: "agy-subscription",
+                status: "ok",
+                fiveHour: UsageQueryWindow(usedPercent: 20, resetsAt: 1_760_000_000_000),
+                sevenDay: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_500_000_000),
+                groups: [
+                    UsageQueryGroup(
+                        id: "gemini",
+                        name: "Gemini Models",
+                        fiveHour: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_000_000_000)
+                    ),
+                    UsageQueryGroup(
+                        id: "claude_gpt",
+                        name: "Claude and GPT models",
+                        fiveHour: UsageQueryWindow(usedPercent: 20, resetsAt: 1_760_000_000_000),
+                        sevenDay: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_500_000_000)
+                    )
+                ],
+                queriedAt: 1_760_000_000_000,
+                stale: false
+            )
+            data = try HapiJSON.encoder.encode(result)
+        } else if path.hasSuffix("/usage-query/settings") {
+            let settings = UsageQuerySettingsResponse(
+                agent: .agy,
+                enabled: true,
+                templateId: "agy-subscription",
+                template: UsageQueryPresetTemplate.all[1].template,
+                credentials: UsageQueryCredentials(
+                    baseUrl: UsageQueryCredentialStatus(configured: true, source: "builtin"),
+                    apiKey: UsageQueryCredentialStatus(configured: true, source: "file")
+                )
+            )
+            data = try HapiJSON.encoder.encode(settings)
+        } else if request.httpMethod == "POST" {
             posts.append(Post(path: path, body: request.httpBody.map { String(decoding: $0, as: UTF8.self) }))
             if postsHeld { await withCheckedContinuation { postWaiters.append($0) } }
             status = changesRejected ? 409 : 200

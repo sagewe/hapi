@@ -43,6 +43,13 @@ struct ChatView: View {
     private let session: HubSession
     private let sessionId: String
 
+    private var currentMachineId: String? {
+        if let machineId = session.sessionStore.detail(for: sessionId)?.metadata?.machineId {
+            return machineId
+        }
+        return session.sessionStore.sessions.first(where: { $0.id == sessionId })?.metadata?.machineId
+    }
+
     /// The iPhone Duo outer screen: 678pt tall, so chrome is kept minimal.
     private var isFoldedOuterScreen: Bool {
         FoldableDevice.shared.hasHinge && horizontalSizeClass == .compact
@@ -138,7 +145,12 @@ struct ChatView: View {
             // switches, everything else behind one menu.
             ToolbarItem(placement: .topBarTrailing) {
                 SessionConfigButton(isPresented: $configOpen) {
-                    SessionConfigView(interactor: model.interactor, notice: model.notice)
+                    SessionConfigView(
+                        interactor: model.interactor,
+                        notice: model.notice,
+                        api: session.api,
+                        machineId: currentMachineId
+                    )
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {

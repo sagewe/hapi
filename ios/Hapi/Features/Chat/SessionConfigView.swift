@@ -50,8 +50,8 @@ struct SessionConfigView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    init(interactor: ChatInteractor, notice: String? = nil) {
-        self.init(model: SessionConfigModel(interactor: interactor), notice: notice)
+    init(interactor: ChatInteractor, notice: String? = nil, api: APIClient? = nil, machineId: String? = nil) {
+        self.init(model: SessionConfigModel(interactor: interactor, api: api, machineId: machineId), notice: notice)
     }
 
     init(model: SessionConfigModel, notice: String? = nil) {
@@ -74,7 +74,10 @@ struct SessionConfigView: View {
                 set: { detent = $0 }
             )
         )
-        .onAppear { model.loadModels() }
+        .onAppear {
+            model.loadModels()
+            model.loadQuota()
+        }
     }
 
     private var settingsForm: some View {
@@ -103,8 +106,115 @@ struct SessionConfigView: View {
                 }
                 .disabled(model.isApplying)
             }
-            if !model.hasSettings {
+            if model.showsQuota {
+                quotaSection
+            }
+            if !model.hasSettings && !model.showsQuota {
                 statusNotice("No settings available for this session.")
+            }
+        }
+    }
+
+    private var quotaSection: some View {
+        Section {
+            switch model.quotaState {
+            case .idle, .loading:
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading quota…")
+                        .foregroundStyle(.secondary)
+                }
+            case .disabled:
+                Button {
+                    model.loadQuota(force: true)
+                } label: {
+                    Label("Query Subscription Quota", systemImage: "gauge.with.dots.needle.33percent")
+                }
+            case .failed(let error):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("Retry") {
+                        model.loadQuota(force: true)
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+            case .loaded(let result):
+                if result.status != "ok", let err = result.error {
+                    Text(verbatim: err)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if let groups = result.groups, !groups.isEmpty {
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(verbatim: group.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            quotaWindowRow(label: "5H", window: group.fiveHour)
+                            if group.sevenDay != nil {
+                                quotaWindowRow(label: "7D", window: group.sevenDay)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                } else {
+                    quotaWindowRow(label: "5H", window: result.fiveHour)
+                    quotaWindowRow(label: "7D", window: result.sevenDay)
+                }
+                Button {
+                    model.loadQuota(force: true)
+                } label: {
+                    HStack {
+                        Label("Refresh Quota", systemImage: "arrow.clockwise")
+                        Spacer()
+                        if result.stale {
+                            Text("Cached")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                .font(.footnote)
+            }
+        } header: {
+            HStack {
+                Text("Subscription Quota")
+                if case .loaded(let result) = model.quotaState, let plan = result.planType, !plan.isEmpty {
+                    Spacer()
+                    Text(verbatim: plan.uppercased())
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func quotaWindowRow(label: String, window: UsageQueryWindow?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(verbatim: label)
+                    .font(.caption.monospaced().weight(.semibold))
+                Spacer()
+                if let window {
+                    Text(verbatim: "\(window.usedPercentInt)% used · \(window.remainingPercentInt)% left")
+                        .font(.caption.monospacedDigit())
+                    if window.resetsAt != nil {
+                        Text(verbatim: "· ↻ \(window.formatResetCountdown())")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("—")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let window {
+                let used = window.usedPercentInt
+                ProgressView(value: Double(used), total: 100)
+                    .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
             }
         }
     }

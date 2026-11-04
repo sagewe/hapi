@@ -282,6 +282,11 @@ struct SettingsView: View {
                 detailRow(title: "Usage", detail: "Token usage across agents and models")
             }
             NavigationLink {
+                UsageQuerySettingsView(api: session.api)
+            } label: {
+                detailRow(title: "Quota Queries", detail: "5-hour and 7-day subscription quota templates")
+            }
+            NavigationLink {
                 StorageView(api: session.api)
             } label: {
                 detailRow(title: "Storage", detail: "Hub database size on disk")
@@ -394,5 +399,251 @@ struct DashboardCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+/// Machine-scoped subscription quota query settings and live template tester.
+struct UsageQuerySettingsView: View {
+    let api: APIClient
+
+    @State private var machines: [Machine] = []
+    @State private var selectedMachineId: String = ""
+    @State private var selectedAgent: UsageQueryAgent = .codex
+    @State private var isLoading = false
+    @State private var isSaving = false
+    @State private var isTesting = false
+    @State private var enabled = false
+    @State private var templateId: String = UsageQueryPresetTemplate.all[0].id
+    @State private var template: JSONValue = UsageQueryPresetTemplate.all[0].template
+    @State private var credentials: UsageQueryCredentials?
+    @State private var testResult: UsageQueryResult?
+    @State private var statusMessage: String?
+    @State private var errorMessage: String?
+
+    private var onlineMachines: [Machine] {
+        machines.filter(\.active)
+    }
+
+    var body: some View {
+        Form {
+            Section("Target") {
+                if onlineMachines.isEmpty {
+                    Text(isLoading ? "Loading machines…" : "No online machines available.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("Machine", selection: $selectedMachineId) {
+                        ForEach(onlineMachines, id: \.id) { machine in
+                            Text(verbatim: machine.metadata?.displayName ?? machine.metadata?.host ?? machine.id)
+                                .tag(machine.id)
+                        }
+                    }
+                }
+                Picker("Agent", selection: $selectedAgent) {
+                    ForEach(UsageQueryAgent.allCases, id: \.self) { agent in
+                        Text(verbatim: agent.displayName).tag(agent)
+                    }
+                }
+            }
+
+            if !selectedMachineId.isEmpty {
+                Section("Configuration") {
+                    Toggle("Enable quota query", isOn: $enabled)
+                    if let cred = credentials?.apiKey {
+                        LabeledContent(
+                            "Credentials",
+                            value: cred.configured ? "Configured (\(cred.source))" : "Missing"
+                        )
+                    }
+                    Menu {
+                        ForEach(UsageQueryPresetTemplate.all) { preset in
+                            Button(preset.name) {
+                                templateId = preset.id
+                                template = preset.template
+                            }
+                        }
+                    } label: {
+                        LabeledContent("Preset Template", value: templateId)
+                    }
+                }
+
+                Section {
+                    Button {
+                        Task { await saveSettings() }
+                    } label: {
+                        if isSaving {
+                            ProgressView("Saving…")
+                        } else {
+                            Label("Save Settings", systemImage: "checkmark.circle")
+                        }
+                    }
+                    .disabled(isSaving || isLoading)
+
+                    Button {
+                        Task { await runTest() }
+                    } label: {
+                        if isTesting {
+                            ProgressView("Testing…")
+                        } else {
+                            Label("Test Quota Query", systemImage: "bolt.horizontal.circle")
+                        }
+                    }
+                    .disabled(isTesting || isLoading)
+                }
+
+                if let statusMessage {
+                    Section {
+                        Text(verbatim: statusMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                if let errorMessage {
+                    Section {
+                        Text(verbatim: errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                if let result = testResult {
+                    Section("Query Result") {
+                        LabeledContent("Status", value: result.status.uppercased())
+                        if let plan = result.planType {
+                            LabeledContent("Plan", value: plan.uppercased())
+                        }
+                        if let err = result.error {
+                            Text(verbatim: err)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        if let groups = result.groups, !groups.isEmpty {
+                            ForEach(groups) { group in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(verbatim: group.name)
+                                        .font(.caption.weight(.semibold))
+                                    windowSummary(label: "5H", window: group.fiveHour)
+                                    if group.sevenDay != nil {
+                                        windowSummary(label: "7D", window: group.sevenDay)
+                                    }
+                                }
+                            }
+                        } else {
+                            windowSummary(label: "5H", window: result.fiveHour)
+                            windowSummary(label: "7D", window: result.sevenDay)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Quota Queries")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await loadMachines()
+        }
+        .onChange(of: selectedMachineId) {
+            Task { await loadSettings() }
+        }
+        .onChange(of: selectedAgent) {
+            Task { await loadSettings() }
+        }
+    }
+
+    private func windowSummary(label: String, window: UsageQueryWindow?) -> some View {
+        HStack {
+            Text(verbatim: label)
+                .font(.caption.monospaced().weight(.semibold))
+            Spacer()
+            if let window {
+                Text(verbatim: "\(window.usedPercentInt)% used · \(window.remainingPercentInt)% left")
+                    .font(.caption.monospacedDigit())
+                if window.resetsAt != nil {
+                    Text(verbatim: "· ↻ \(window.formatResetCountdown())")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("—")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func loadMachines() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            machines = try await api.listMachines()
+            if selectedMachineId.isEmpty, let first = onlineMachines.first {
+                selectedMachineId = first.id
+            } else if !selectedMachineId.isEmpty {
+                await loadSettings()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSettings() async {
+        guard !selectedMachineId.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        statusMessage = nil
+        testResult = nil
+        defer { isLoading = false }
+        do {
+            let response = try await api.machineUsageQuerySettings(
+                machineId: selectedMachineId,
+                agent: selectedAgent
+            )
+            enabled = response.enabled
+            templateId = response.templateId
+            template = response.template
+            credentials = response.credentials
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveSettings() async {
+        guard !selectedMachineId.isEmpty else { return }
+        isSaving = true
+        errorMessage = nil
+        statusMessage = nil
+        defer { isSaving = false }
+        do {
+            let response = try await api.saveMachineUsageQuerySettings(
+                machineId: selectedMachineId,
+                agent: selectedAgent,
+                enabled: enabled,
+                templateId: templateId,
+                template: template
+            )
+            enabled = response.enabled
+            templateId = response.templateId
+            template = response.template
+            credentials = response.credentials
+            statusMessage = "Quota settings saved."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func runTest() async {
+        guard !selectedMachineId.isEmpty else { return }
+        isTesting = true
+        errorMessage = nil
+        statusMessage = nil
+        defer { isTesting = false }
+        do {
+            testResult = try await api.testMachineUsageQuery(
+                machineId: selectedMachineId,
+                agent: selectedAgent,
+                template: template
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
