@@ -32,6 +32,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         private readonly createBackend = createAgyAcpBackend) {
         super(process.env.DEBUG ? session.logPath : undefined);
         session.setKillHandler(() => this.stop());
+        session.steerQueuedMessage = (localId) => this.steer({ localId });
     }
 
     protected createDisplay(context: RemoteLauncherDisplayContext): React.ReactElement {
@@ -238,6 +239,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     }
 
     protected async cleanup(): Promise<void> {
+        this.session.steerQueuedMessage = null;
         this.steering(false);
         this.clearAbortHandlers(this.session.client.rpcHandlerManager);
         this.session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage,

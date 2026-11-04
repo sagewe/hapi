@@ -73,6 +73,23 @@ describe('runAgy model and effort config', () => {
         mocks.listModels.mockResolvedValue({ success: true, availableModels: catalog })
     })
 
+    it('dispatches live steer intent after enqueueing, while ordinary messages remain queued', async () => {
+        const steer = vi.fn(async (localId: string) => ({ steered: localId === 'steer-id' }))
+        mocks.loop.mockImplementation(async ({ messageQueue, onSessionReady }) => {
+            onSessionReady({
+                setPermissionMode() {}, setModel() {}, setEffort() {}, pushKeepAlive() {},
+                steerQueuedMessage: steer
+            })
+            const send = mocks.onUserMessage.mock.calls[0]![0]
+            send({ content: { text: 'ordinary' }, meta: { deliveryMode: 'queue' } }, 'queued-id')
+            expect(steer).not.toHaveBeenCalled()
+            send({ content: { text: 'pivot' }, meta: { deliveryMode: 'steer' } }, 'steer-id')
+            expect(steer).toHaveBeenCalledWith('steer-id')
+            expect(messageQueue.takeByLocalId('steer-id')).not.toBeNull()
+        })
+        await runAgy({ workingDirectory: '/tmp' })
+    })
+
     it.each([false, true])('normalizes launch/resume selection (existing=%s)', async (existing) => {
         await runAgy({
             model: 'gemini-4-argon-medium', effort: 'high', workingDirectory: '/tmp',

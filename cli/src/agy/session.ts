@@ -13,6 +13,8 @@ type LocalLaunchFailure = {
 /** Antigravity remote session. Native ACP owns new/resumed processes; the
  * retained headless adapter is historical and does not advertise steering. */
 export class AgySession extends AgentSessionBase<AgyMode> {
+    /** Live-only explicit send intent; reconnect/backfill always queues. */
+    steerQueuedMessage: ((localId: string) => Promise<{ steered: boolean; error?: string }>) | null = null;
     readonly startedBy: 'runner' | 'terminal';
     localLaunchFailure: LocalLaunchFailure | null = null;
     /** Set by the headless driver; lets the CLI cancel a batch held in retry backoff. */

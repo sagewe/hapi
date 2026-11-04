@@ -1261,11 +1261,11 @@ describe('MessageService.sendMessage deliveryMode', () => {
         expect(gateChecks).toBe(0)
     })
 
-    it('persists Pi steer provenance but downgrades every deferred CLI delivery to queue', async () => {
+    it.each(['pi', 'agy'] as const)('persists %s live steer provenance but downgrades every deferred CLI delivery to queue', async (flavor) => {
         const store = makeStore()
         const session = store.sessions.getOrCreateSession(
             'delivery-mode-pi',
-            { path: '/tmp/delivery-mode-pi', host: 'localhost', flavor: 'pi' },
+            { path: '/tmp/delivery-mode-pi', host: 'localhost', flavor, ...(flavor === 'agy' ? { agySessionProtocol: 'acp' } : {}) },
             null,
             'default'
         )

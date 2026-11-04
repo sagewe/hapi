@@ -170,6 +170,14 @@ export async function runAgy(opts: {
                 effort: sessionEffort,
             };
             messageQueue.push(formattedText, mode, localId);
+            // Capture the live turn immediately, before any async work. The
+            // driver rechecks its generation after persisting dispatch state.
+            // Deferred/replayed messages have already been downgraded to queue
+            // by the hub, so they cannot steer an unrelated later turn.
+            if (message.meta?.deliveryMode === 'steer' && localId) {
+                const steer = sessionWrapperRef.current?.steerQueuedMessage?.(localId);
+                void steer?.catch((error: unknown) => logger.debug('[agy-acp] live steer failed', error));
+            }
         });
 
         await agyLoop({
