@@ -141,7 +141,7 @@ struct SessionConfigView: View {
                     .font(.caption.weight(.semibold))
                 }
             case .loaded(let result):
-                if result.status != "ok", let err = result.error {
+                if result.status != "success", let err = result.error {
                     Text(verbatim: err)
                         .font(.caption)
                         .foregroundStyle(.orange)

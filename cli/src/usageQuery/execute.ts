@@ -657,10 +657,9 @@ export async function executeUsageQueryTemplate(
     const now = options.now ?? Date.now()
 
     if (template.adapter === 'codex-native') {
-        const raw = options.codexQueryImpl
-            ? await options.codexQueryImpl({ timeoutMs })
+        const { fiveHour, sevenDay, planType } = options.codexQueryImpl
+            ? normalizeCodexRateLimits(await options.codexQueryImpl({ timeoutMs }))
             : await queryCodexNativeRateLimits(timeoutMs)
-        const { fiveHour, sevenDay, planType } = normalizeCodexRateLimits(raw)
         if (!fiveHour && !sevenDay) {
             throw new UsageQueryExecutionError('Usage response contained no configured quota windows')
         }

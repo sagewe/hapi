@@ -325,7 +325,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
             let result = UsageQueryResult(
                 agent: .agy,
                 templateId: "agy-subscription",
-                status: "ok",
+                status: "success",
                 fiveHour: UsageQueryWindow(usedPercent: 20, resetsAt: 1_760_000_000_000),
                 sevenDay: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_500_000_000),
                 groups: [
