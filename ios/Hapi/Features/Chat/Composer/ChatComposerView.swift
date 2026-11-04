@@ -183,7 +183,7 @@ struct ChatComposerView: View {
                     if interactor.scratchlist != nil { scratchlistButton }
                     if !scratchlistMode { scheduleButton(hasAttachments: !attachments.isEmpty) }
                     Spacer()
-                    if scratchlistMode, composer.canSteer {
+                    if scratchlistMode, composer.canStop {
                         Button { interactor.abortSession() } label: {
                             Image(systemName: "stop.fill").foregroundStyle(.red).frame(width: 44, height: 44)
                         }.accessibilityLabel("Stop the current turn")
@@ -526,7 +526,7 @@ struct ChatComposerView: View {
             : (hasText || attachmentsReady) && !attachmentsBusy && !composer.isSending
         let action: ComposerPrimaryAction = if composer.isSending {
             .sending
-        } else if composer.canSteer && !hasDraft {
+        } else if composer.canStop && !hasDraft {
             .stop
         } else {
             .send(enabled: canSubmit)

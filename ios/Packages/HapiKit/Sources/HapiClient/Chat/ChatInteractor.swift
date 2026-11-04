@@ -244,7 +244,8 @@ public final class ChatInteractor {
         return ComposerState(
             text: composerText,
             isSending: isSending,
-            canSteer: live.thinking && live.active
+            canStop: live.active && live.thinking,
+            canSteer: canSteerIntoCurrentTurn
         )
     }
 
@@ -627,7 +628,7 @@ public final class ChatInteractor {
     /// first in submission order, then scheduled by fire time.
     public var queuedRows: [QueuedMessageRow] {
         guard let windowState else { return [] }
-        let thinking = currentSessionState().thinking
+        let canSteer = canSteerIntoCurrentTurn
         let queued = windowState.messages.filter { $0.isQueuedForInvocation }
         let sorted = queued.enumerated().sorted { lhs, rhs in
             let lhsScheduled = lhs.element.scheduledAt != nil
@@ -648,7 +649,7 @@ public final class ChatInteractor {
                 attachmentNames: preview.attachmentNames,
                 scheduledAt: row.scheduledAt,
                 canAct: canAct,
-                canSteer: canAct && thinking && row.scheduledAt == nil && row.status != .indeterminate,
+                canSteer: canAct && canSteer && row.scheduledAt == nil && row.status != .indeterminate,
                 indeterminate: row.status == .indeterminate
             )
         }
@@ -1304,6 +1305,25 @@ public final class ChatInteractor {
     private func currentFlavor() -> String? {
         sessionStore.detail(for: sessionId)?.metadata?.flavor
             ?? sessionStore.sessions.first { $0.id == sessionId }?.metadata?.flavor
+    }
+
+    /// Matches the web session-aware gate. A stale/legacy agent must never
+    /// advertise an operation which its runner cannot perform.
+    private var canSteerIntoCurrentTurn: Bool {
+        guard let detail = sessionStore.detail(for: sessionId), detail.active,
+              detail.agentState?.controlledByUser != true else { return false }
+        let metadata = detail.metadata
+        switch metadata?.flavor {
+        case "pi": return detail.thinking
+        case "codex": return detail.agentState?.steeringActive == true
+        case "agy":
+            return metadata?.agySessionProtocol == "acp" && detail.agentState?.steeringActive == true
+        case "cursor":
+            let legacy = metadata?.cursorSessionProtocol == "stream-json"
+                || (metadata?.cursorSessionProtocol == nil && metadata?.cursorSessionId != nil)
+            return !legacy && detail.agentState?.steeringActive == true
+        default: return false
+        }
     }
 
     private struct SessionLiveState {

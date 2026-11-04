@@ -764,8 +764,27 @@ struct ChatInteractorTests {
         #expect(cancels == 1)
     }
 
+    @Test func steerRequiresAdvertisedAgentProtocolAndActiveTurn() async throws {
+        for (flavor, proto, active, expected) in [
+            ("agy", "acp", true, true), ("agy", "stream-json", true, false),
+            ("agy", "", true, false), ("agy", "acp", false, false),
+            ("claude", "", true, false), ("codex", "", true, true)
+        ] {
+            var detail = chatDetail(flavor: flavor, thinking: true, agentState: AgentState(steeringActive: active))
+            detail.metadata?.agySessionProtocol = proto.isEmpty ? nil : proto
+            let harness = try await ChatInteractionHarness(detail: detail)
+            #expect(harness.interactor.composer.canSteer == expected)
+            #expect(harness.interactor.composer.canStop)
+            await harness.window().ingestSSEMessages([
+                WindowMessage(wire: queuedServerRow(id: "steer-row", localId: "steer-local", text: "follow-up"))
+            ])
+            #expect(await eventually { !harness.interactor.queuedRows.isEmpty })
+            #expect(harness.interactor.queuedRows.first?.canSteer == expected)
+        }
+    }
+
     @Test func steerPostsAndAnInvokedAnswerReconcilesAMissedConsume() async throws {
-        let harness = try await ChatInteractionHarness(detail: chatDetail(thinking: true))
+        let harness = try await ChatInteractionHarness(detail: chatDetail(flavor: "codex", thinking: true, agentState: AgentState(steeringActive: true)))
         await harness.window().ingestSSEMessages([
             WindowMessage(wire: queuedServerRow(id: "srv-2", localId: "l-2", text: "steer me"))
         ])

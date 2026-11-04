@@ -188,3 +188,12 @@ describe('isSteeringSupportedForSession', () => {
         expect(isSteeringSupportedForSession(null)).toBe(false)
     })
 })
+
+
+describe('Antigravity steering protocol', () => {
+    it('requires an explicitly advertised ACP session', () => {
+        expect(isSteeringSupportedForSession({ flavor: 'agy', agySessionProtocol: 'acp' })).toBe(true)
+        expect(isSteeringSupportedForSession({ flavor: 'agy', agySessionProtocol: 'stream-json' })).toBe(false)
+        expect(isSteeringSupportedForSession({ flavor: 'agy' })).toBe(false)
+    })
+})

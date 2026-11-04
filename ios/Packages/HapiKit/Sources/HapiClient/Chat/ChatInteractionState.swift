@@ -13,12 +13,15 @@ public struct ComposerState: Equatable, Sendable {
     /// A send (or its inactive-session resume) is in flight — spinner on the
     /// send button.
     public let isSending: Bool
-    /// A turn is active: long-press send offers Steer; an empty draft shows Stop.
+    /// Independent of steering support: any active turn can be stopped.
+    public let canStop: Bool
+    /// The running agent accepts mid-turn instructions.
     public let canSteer: Bool
 
-    public init(text: String, isSending: Bool, canSteer: Bool) {
+    public init(text: String, isSending: Bool, canStop: Bool, canSteer: Bool) {
         self.text = text
         self.isSending = isSending
+        self.canStop = canStop
         self.canSteer = canSteer
     }
 }

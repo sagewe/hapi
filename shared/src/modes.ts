@@ -195,9 +195,11 @@ export function getCodexCollaborationModeOptions(): CodexCollaborationModeOption
  *   stream-json Cursor sessions are NOT steerable — gate with
  *   {@link isSteeringSupportedForSession}.
  *
+ * - Antigravity: native agy ACP concurrent session/prompt (stream-json cannot steer).
+ *
  * Claude / others: not supported (no reachable soft-steer path) — UI hides Steer.
  */
-export const STEERING_SUPPORTED_FLAVORS = ['codex', 'cursor', 'pi'] as const
+export const STEERING_SUPPORTED_FLAVORS = ['codex', 'cursor', 'pi', 'agy'] as const
 
 export function isSteeringSupportedForFlavor(flavor?: string | null): boolean {
     return (STEERING_SUPPORTED_FLAVORS as readonly string[]).includes(flavor ?? '')
@@ -215,7 +217,9 @@ export function isSteeringSupportedForSession(metadata?: {
     flavor?: string | null
     cursorSessionId?: string | null
     cursorSessionProtocol?: 'acp' | 'stream-json' | null
+    agySessionProtocol?: 'acp' | 'stream-json' | null
 } | null): boolean {
+    if (metadata?.flavor === 'agy') return metadata.agySessionProtocol === 'acp'
     if (metadata?.flavor === 'codex' || metadata?.flavor === 'pi') {
         return true
     }

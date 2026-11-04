@@ -83,6 +83,7 @@ export const MetadataSchema = z.object({
     opencodeSessionId: z.string().optional(),
     grokSessionId: z.string().optional(),
     agySessionId: z.string().optional(),
+    agySessionProtocol: z.enum(['acp', 'stream-json']).optional(),
     cursorSessionId: z.string().optional(),
     cursorSessionProtocol: z.enum(['acp', 'stream-json']).optional(),
     // Drives the web `CursorMigrationBanner`:

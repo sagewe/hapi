@@ -63,11 +63,33 @@ describe('SyncEngine.steerQueuedMessage', () => {
 
             expect(result).toEqual({
                 status: 'failed',
-                error: 'Steering is only supported for Pi, Codex, and Cursor ACP sessions',
+                error: 'Steering is only supported for Pi, Codex, Cursor ACP, and Antigravity ACP sessions',
                 localId: null
             })
         } finally {
             engine.stop()
         }
+    })
+})
+
+
+describe('Antigravity ACP steer gate', () => {
+    it('accepts ACP and rejects the legacy stream-json protocol', async () => {
+        const { store, engine } = createEngine()
+        try {
+            for (const protocol of ['acp', 'stream-json'] as const) {
+                const session = engine.getOrCreateSession(
+                    `agy-${protocol}`, { path: '/tmp', host: 'localhost', flavor: 'agy', agySessionProtocol: protocol },
+                    { requests: {}, completedRequests: {} }, 'default'
+                )
+                const message = store.messages.addMessage(session.id, { text: 'pivot' }, `local-${protocol}`, Date.now() + 1000)
+                const result = await engine.steerQueuedMessage(session.id, message.id)
+                // A scheduled row proves ACP passed the flavor gate without
+                // dispatching a real RPC. Legacy must fail before row lookup.
+                expect(result).toMatchObject(protocol === 'acp'
+                    ? { error: 'Scheduled messages cannot be steered', localId: `local-${protocol}` }
+                    : { localId: null })
+            }
+        } finally { engine.stop() }
     })
 })

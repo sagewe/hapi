@@ -133,7 +133,9 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
     public var opencodeSessionId: String?
     public var grokSessionId: String?
     public var agySessionId: String?
+    public var agySessionProtocol: String?
     public var cursorSessionId: String?
+    public var cursorSessionProtocol: String?
     public var kimiSessionId: String?
     public var copilotSessionId: String?
     public var piSessionId: String?
@@ -165,7 +167,9 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
         opencodeSessionId: String? = nil,
         grokSessionId: String? = nil,
         agySessionId: String? = nil,
+        agySessionProtocol: String? = nil,
         cursorSessionId: String? = nil,
+        cursorSessionProtocol: String? = nil,
         kimiSessionId: String? = nil,
         copilotSessionId: String? = nil,
         piSessionId: String? = nil,
@@ -194,7 +198,9 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
         self.opencodeSessionId = opencodeSessionId
         self.grokSessionId = grokSessionId
         self.agySessionId = agySessionId
+        self.agySessionProtocol = agySessionProtocol
         self.cursorSessionId = cursorSessionId
+        self.cursorSessionProtocol = cursorSessionProtocol
         self.kimiSessionId = kimiSessionId
         self.copilotSessionId = copilotSessionId
         self.piSessionId = piSessionId

@@ -108,6 +108,12 @@ export class AcpSdkBackend implements AgentBackend {
     private promptRequestInFlight = false;
     /** Concurrent session/prompt requests (main prompt + soft steers). */
     private activePromptRequests = 0;
+    // Antigravity attaches a watcher to each concurrent prompt. Only the
+    // foreground owner drains its shared stream and emits the final usage.
+    private readonly agySteerCompletions = new Set<Promise<string | null>>();
+    private agySteerUsage: AcpPromptUsage | null = null;
+    private agyConcurrentPromptSeen = false;
+    private agyLastReply: string | null = null;
     /** Foreground prompt only; soft steers are excluded after Abort. */
     private foregroundPromptRequests = 0;
     /** Bumped by abortSoftSteers; stale finishes from cancelled requests are dropped. */
@@ -674,6 +680,9 @@ export class AcpSdkBackend implements AgentBackend {
         this.lastForwardedUsageUpdate = null;
         this.promptUsageCallback = onUpdate;
         this.childEmitSink = onUpdate;
+        this.agySteerUsage = null;
+        this.agyConcurrentPromptSeen = false;
+        this.agyLastReply = null;
         let stopReason: string | null = null;
         let promptUsage: AcpPromptUsage | null = null;
 
@@ -694,6 +703,10 @@ export class AcpSdkBackend implements AgentBackend {
             stopReason = isObject(response) ? asString(response.stopReason) : null;
             promptUsage = this.extractPromptUsage(response);
         } finally {
+            if (this.options.flavor === 'agy') {
+                await Promise.allSettled([...this.agySteerCompletions]);
+                promptUsage ??= this.agySteerUsage;
+            }
             await this.waitForSessionUpdateQuiet(
                 AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
                 AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS
@@ -815,6 +828,7 @@ export class AcpSdkBackend implements AgentBackend {
         }
 
         const transport = this.transport;
+        if (this.options.flavor === 'agy') this.agyConcurrentPromptSeen = true;
         const promptRequestEpoch = this.beginPromptRequest();
         const request = transport.sendRequestWithDispatch('session/prompt', {
             sessionId,
@@ -823,22 +837,31 @@ export class AcpSdkBackend implements AgentBackend {
         const completed = (async () => {
             try {
                 const response = await request.completed;
+                if (this.options.flavor === 'agy') {
+                    this.agySteerUsage = this.extractPromptUsage(response) ?? this.agySteerUsage;
+                }
                 return isObject(response) ? asString(response.stopReason) : null;
             } finally {
                 try {
-                    await this.waitForSessionUpdateQuiet(
-                        AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
-                        AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS
-                    );
-                    this.messageHandler?.drainBuffers();
-                    await this.drainLateBuffers();
-                    this.messageHandler?.drainBuffers();
+                    if (this.options.flavor !== 'agy') {
+                        await this.waitForSessionUpdateQuiet(
+                            AcpSdkBackend.UPDATE_QUIET_PERIOD_MS,
+                            AcpSdkBackend.UPDATE_DRAIN_TIMEOUT_MS
+                        );
+                        this.messageHandler?.drainBuffers();
+                        await this.drainLateBuffers();
+                        this.messageHandler?.drainBuffers();
+                    }
                 } finally {
                     this.finishPromptRequest(promptRequestEpoch);
                 }
             }
         })();
 
+        if (this.options.flavor === 'agy') {
+            this.agySteerCompletions.add(completed);
+            void completed.finally(() => this.agySteerCompletions.delete(completed)).catch(() => {});
+        }
         void completed.catch((error) => {
             logger.warn('[ACP] soft-steer session/prompt failed', error);
         });
@@ -1137,6 +1160,19 @@ export class AcpSdkBackend implements AgentBackend {
         }
         this.lastSessionUpdateAt = Date.now();
         const update = params.update;
+        // agy 1.4.12's concurrent prompt watchers can re-emit a whole reply,
+        // with a thought notification between the two copies. Its wire has no
+        // message/step id. Scope this equality check to the concurrent turn and
+        // reset at each user/tool boundary; never dedupe other agents' deltas.
+        if (this.options.flavor === 'agy' && this.agyConcurrentPromptSeen && isObject(update)) {
+            if (update.sessionUpdate === 'user_message_chunk' || update.sessionUpdate === 'tool_call') {
+                this.agyLastReply = null;
+            } else if (update.sessionUpdate === 'agent_message_chunk' && isObject(update.content)) {
+                const text = asString(update.content.text);
+                if (text && text === this.agyLastReply) return;
+                this.agyLastReply = text;
+            }
+        }
         // Title/usage/commands stay synchronous (#1028). Only message-handler
         // work is queued so async image registration preserves event order.
         if (sessionId) {

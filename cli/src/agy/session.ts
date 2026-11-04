@@ -10,12 +10,8 @@ type LocalLaunchFailure = {
     exitReason: LocalLaunchExitReason;
 };
 
-/**
- * Headless agy session using a persistent stream-json stdin/stdout process.
- * The driver reuses matching launch settings and resumes the conversation
- * when the process restarts, mapping NDJSON onto the transcript-entry channel
- * (sendAgySessionMessage), so hub/web rendering is unchanged.
- */
+/** Antigravity remote session. Native ACP owns new/resumed processes; the
+ * retained headless adapter is historical and does not advertise steering. */
 export class AgySession extends AgentSessionBase<AgyMode> {
     readonly startedBy: 'runner' | 'terminal';
     localLaunchFailure: LocalLaunchFailure | null = null;

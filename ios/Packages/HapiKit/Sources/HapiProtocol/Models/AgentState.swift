@@ -93,6 +93,7 @@ public struct AgentStateCompletedRequest: Codable, Equatable, Sendable {
 public struct AgentState: Codable, Equatable, Sendable {
     /// `true` while the terminal owns the session (remote control paused).
     public var controlledByUser: Bool?
+    public var steeringActive: Bool?
     /// Launch mode the session was started in (persisted for reopen/resume).
     public var startingMode: SessionStartingMode?
     /// Current actionable shared Codex proposal's tool-call id. Nil withdraws
@@ -105,12 +106,14 @@ public struct AgentState: Codable, Equatable, Sendable {
 
     public init(
         controlledByUser: Bool? = nil,
+        steeringActive: Bool? = nil,
         startingMode: SessionStartingMode? = nil,
         requests: [String: AgentStateRequest]? = nil,
         completedRequests: [String: AgentStateCompletedRequest]? = nil,
         codexPlanProposalId: String? = nil
     ) {
         self.controlledByUser = controlledByUser
+        self.steeringActive = steeringActive
         self.startingMode = startingMode
         self.codexPlanProposalId = codexPlanProposalId
         self.requests = requests
