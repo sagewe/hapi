@@ -103,6 +103,40 @@ describe('SessionList unread visibility', () => {
     })
 })
 
+describe('SessionList unread visibility setting off', () => {
+    beforeEach(() => {
+        localStorage.clear()
+        localStorage.setItem('hapi-keep-unread-sessions-visible', 'false')
+    })
+
+    it('folds a collapsed project completely, with no unread peek', () => {
+        seedReads({ read: 1000, unread: 1000 })
+        renderSessionList([
+            makeSession({ id: 'read', updatedAt: 1000, metadata: { path: '/work/quiet', name: 'Read row' } }),
+            makeSession({ id: 'unread', updatedAt: 2000, metadata: { path: '/work/quiet', name: 'Unread row' } })
+        ])
+
+        expect(screen.queryByTestId('session-group-unread-peek')).toBeNull()
+        expect(screen.queryByRole('button', { name: /Unread row/ })).toBeNull()
+        expect(screen.queryByRole('button', { name: /Read row/ })).toBeNull()
+    })
+
+    it('applies the preview limit to unread rows', () => {
+        const sessions = Array.from({ length: 10 }, (_, i) => makeSession({
+            id: `s${i}`,
+            active: true,
+            updatedAt: 1000 - i,
+            metadata: { path: '/work/busy', name: `Row ${i}` }
+        }))
+        // The oldest row is the only unread one: it would normally be forced visible.
+        seedReads(Object.fromEntries(sessions.map(s => [s.id, s.id === 's9' ? 0 : 1000])))
+        renderSessionList(sessions)
+
+        expect(screen.queryByRole('button', { name: /Row 9/ })).toBeNull()
+        expect(screen.getByRole('button', { name: /Row 0/ })).toBeInTheDocument()
+    })
+})
+
 describe('SessionList toolbar order', () => {
     beforeEach(() => {
         localStorage.clear()
@@ -163,5 +197,22 @@ describe('personal filters with upstream list controls', () => {
         expect(screen.getByRole('button', { name: /Late result/ })).toBeInTheDocument()
         fireEvent.click(screen.getByRole('menuitem', { name: 'Reset to default' }))
         expect(screen.getByRole('button', { name: /Early result/ })).toBeInTheDocument()
+    })
+
+    it('combines unreadOnly with date and archive filters', () => {
+        const day = (value: number) => new Date(2026, 10, value, 12, 0).getTime()
+        seedReads({ readRecent: day(4), unreadOld: 0, unreadRecent: 0 })
+        renderSessionList([
+            makeSession({ id: 'readRecent', active: true, updatedAt: day(4), metadata: { path: '/work/combo', name: 'Read recent' } }),
+            makeSession({ id: 'unreadOld', active: true, updatedAt: day(2), metadata: { path: '/work/combo', name: 'Unread old' } }),
+            makeSession({ id: 'unreadRecent', active: true, updatedAt: day(4), metadata: { path: '/work/combo', name: 'Unread recent' } })
+        ])
+        fireEvent.click(screen.getByRole('button', { name: 'Sort and filter' }))
+        fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Unread only' }))
+        fireEvent.change(screen.getByLabelText('Select start date'), { target: { value: '2026-11-04' } })
+        fireEvent.change(screen.getByLabelText('Select end date'), { target: { value: '2026-11-04' } })
+        expect(screen.queryByRole('button', { name: /Read recent/ })).toBeNull()
+        expect(screen.queryByRole('button', { name: /Unread old/ })).toBeNull()
+        expect(screen.getByRole('button', { name: /Unread recent/ })).toBeInTheDocument()
     })
 })
