@@ -126,7 +126,7 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> SelectableUITextView {
-        let view = SelectableUITextView(usingTextLayoutManager: false)
+        let view = SelectableUITextView()
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
@@ -197,10 +197,27 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public final class SelectableUITextView: UITextView {
+        private let backingTextStorage: NSTextStorage
         var lastContent: Content?
         var lastLinkColor: UIColor?
         private var cachedUnwrappedSize: CGSize?
         private var cachedWrappedSizes: [Int: CGSize] = [:]
+
+        public init() {
+            let storage = NSTextStorage()
+            let manager = NSLayoutManager()
+            storage.addLayoutManager(manager)
+            let container = NSTextContainer(size: CGSize(width: 10_000, height: 100_000))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            self.backingTextStorage = storage
+            super.init(frame: .zero, textContainer: container)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
 
         func clearSizeCache() {
             cachedUnwrappedSize = nil
