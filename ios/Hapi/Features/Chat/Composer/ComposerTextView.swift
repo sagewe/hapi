@@ -153,7 +153,8 @@ struct ComposerTextView: UIViewRepresentable {
             let relevantModifiers = modifiers.intersection([.shift, .alternate, .command, .control])
             switch keyCode {
             case .keyboardReturnOrEnter, .keypadEnter:
-                if relevantModifiers.isEmpty || relevantModifiers == .command {
+                let bareReturnSends = ShortcutPrefs.shared.bareReturnSends
+                if relevantModifiers == .command || (bareReturnSends && relevantModifiers.isEmpty) {
                     return onReturn?() == true
                 }
                 if relevantModifiers == [.command, .shift] || relevantModifiers == [.command, .alternate] {

@@ -87,6 +87,9 @@ struct SettingsView: View {
             List {
                 hubsSection
                 appearanceSection
+                #if targetEnvironment(macCatalyst)
+                shortcutsSection
+                #endif
                 languageSection
                 notificationsSection
                 if model.isOwner {
@@ -168,6 +171,16 @@ struct SettingsView: View {
                 ForEach(ThemeMode.allCases, id: \.self) { mode in
                     Text(mode.label).tag(mode)
                 }
+            }
+        }
+    }
+
+    private var shortcutsSection: some View {
+        Section("Keyboard") {
+            NavigationLink {
+                KeyboardShortcutsSettingsView()
+            } label: {
+                Label("Keyboard Shortcuts", systemImage: "keyboard")
             }
         }
     }

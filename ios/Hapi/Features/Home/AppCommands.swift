@@ -62,13 +62,14 @@ struct HapiCommands: Commands {
     @FocusedValue(\.homeCommands) private var home
     @FocusedValue(\.chatCommands) private var chat
     @Environment(\.openURL) private var openURL
+    private var shortcuts = ShortcutPrefs.shared
 
     private static let guideURL = URL(string: "https://hapi.run/docs/guide/native-apps")
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Session") { home?.newSession() }
-                .keyboardShortcut("n")
+                .configurableShortcut(.newSession, prefs: shortcuts)
                 .disabled(home == nil)
         }
         CommandGroup(replacing: .appSettings) {
@@ -84,13 +85,13 @@ struct HapiCommands: Commands {
         CommandGroup(replacing: .importExport) {}
         CommandGroup(replacing: .toolbar) {
             Button("Toggle Sidebar") { home?.toggleSidebar?() }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                .configurableShortcut(.toggleSidebar, prefs: shortcuts)
                 .disabled(home?.toggleSidebar == nil)
             Button("Refresh") {
                 home?.refresh?()
                 chat?.refreshChat?()
             }
-            .keyboardShortcut("r")
+            .configurableShortcut(.refresh, prefs: shortcuts)
             .disabled(home?.refresh == nil && chat?.refreshChat == nil)
         }
         CommandGroup(replacing: .help) {
@@ -100,64 +101,64 @@ struct HapiCommands: Commands {
         }
         CommandMenu("Session") {
             Button("Quick Switch Session…") { home?.openQuickSwitcher?() }
-                .keyboardShortcut("k")
+                .configurableShortcut(.quickSwitch, prefs: shortcuts)
                 .disabled(home?.openQuickSwitcher == nil)
             Button("Focus Composer") { chat?.focusComposer?() }
-                .keyboardShortcut("l")
+                .configurableShortcut(.focusComposer, prefs: shortcuts)
                 .disabled(chat?.focusComposer == nil)
             Button("Toggle Scratchlist") { chat?.toggleScratchlist?() }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .configurableShortcut(.toggleScratchlist, prefs: shortcuts)
                 .disabled(chat?.toggleScratchlist == nil)
             Button("Jump to Latest Message") { chat?.jumpToLatest?() }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .shift])
+                .configurableShortcut(.jumpToLatest, prefs: shortcuts)
                 .disabled(chat?.jumpToLatest == nil)
             Button("Find Sessions…") { home?.focusSearch?() }
-                .keyboardShortcut("f")
+                .configurableShortcut(.focusSearch, prefs: shortcuts)
                 .disabled(home?.focusSearch == nil)
             Divider()
             Button("Session Settings…") { chat?.openSessionSettings() }
-                .keyboardShortcut("i")
+                .configurableShortcut(.sessionSettings, prefs: shortcuts)
                 .disabled(chat == nil)
             Button("Session Files") { chat?.openFiles() }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .configurableShortcut(.sessionFiles, prefs: shortcuts)
                 .disabled(chat == nil)
             Button("Remote Terminal") { chat?.openTerminal?() }
-                .keyboardShortcut("t")
+                .configurableShortcut(.remoteTerminal, prefs: shortcuts)
                 .disabled(chat?.openTerminal == nil)
             Button("Web Preview…") { chat?.openWebPreview?() }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .configurableShortcut(.webPreview, prefs: shortcuts)
                 .disabled(chat?.openWebPreview == nil)
             Divider()
             Button("Mark as Unread") { chat?.markUnread?() }
-                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .configurableShortcut(.markUnread, prefs: shortcuts)
                 .disabled(chat?.markUnread == nil)
             Button(chat?.isArchivedOrInactive == true ? "Reopen Session" : "Archive Session") {
                 chat?.archiveOrReopen?()
             }
-            .keyboardShortcut("e")
+            .configurableShortcut(.archiveOrReopen, prefs: shortcuts)
             .disabled(chat?.archiveOrReopen == nil)
             Button("Rename…") { chat?.rename() }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .configurableShortcut(.renameSession, prefs: shortcuts)
                 .disabled(chat == nil)
             Button("Export Conversation…") { chat?.export?() }
-                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .configurableShortcut(.exportConversation, prefs: shortcuts)
                 .disabled(chat?.export == nil)
             Divider()
             Button("Stop") { chat?.stop?() }
-                .keyboardShortcut(".")
+                .configurableShortcut(.stopTurn, prefs: shortcuts)
                 .disabled(chat?.stop == nil)
             Divider()
             Button("Previous Session") { home?.selectAdjacentSession?(-1) }
-                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .configurableShortcut(.previousSession, prefs: shortcuts)
                 .disabled(home?.selectAdjacentSession == nil)
             Button("Next Session") { home?.selectAdjacentSession?(1) }
+                .configurableShortcut(.nextSession, prefs: shortcuts)
+                .disabled(home?.selectAdjacentSession == nil)
+            Button("Previous Session (Arrow)") { home?.selectAdjacentSession?(-1) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(home?.selectAdjacentSession == nil)
+            Button("Next Session (Arrow)") { home?.selectAdjacentSession?(1) }
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-                .disabled(home?.selectAdjacentSession == nil)
-            Button("Previous Session (Bracket)") { home?.selectAdjacentSession?(-1) }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(home?.selectAdjacentSession == nil)
-            Button("Next Session (Bracket)") { home?.selectAdjacentSession?(1) }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
                 .disabled(home?.selectAdjacentSession == nil)
             Divider()
             ForEach(1...9, id: \.self) { number in
