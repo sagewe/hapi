@@ -6,6 +6,35 @@ private extension Notification.Name {
     static let hapiClearOtherTextSelections = Notification.Name("hapi.clearOtherTextSelections")
 }
 
+/// Tracks the most recent non-empty text selection inside any `MacSelectableText`
+/// so `⌘C` works reliably even when `ComposerTextView` holds first responder.
+@MainActor
+public final class MacTextSelectionTracker {
+    public static let shared = MacTextSelectionTracker()
+    public private(set) var selectedText: String?
+    weak var activeView: UITextView?
+
+    private init() {}
+
+    func updateSelection(from textView: UITextView) {
+        let range = textView.selectedRange
+        if range.length > 0,
+           let nsText = textView.text as NSString?,
+           range.location + range.length <= nsText.length {
+            selectedText = nsText.substring(with: range)
+            activeView = textView
+        } else if activeView === textView {
+            selectedText = nil
+            activeView = nil
+        }
+    }
+
+    public func clear() {
+        selectedText = nil
+        activeView = nil
+    }
+}
+
 /// Read-only selectable `UITextView` for Mac Catalyst so mouse pointer I-beam
 /// drag-selection, double/triple-click selection, and ⌘C work natively inside
 /// chat transcripts, code blocks, and user bubbles.
@@ -98,6 +127,8 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public final class SelectableUITextView: UITextView {
+        public override var canBecomeFirstResponder: Bool { true }
+
         override init(frame: CGRect, textContainer: NSTextContainer?) {
             super.init(frame: frame, textContainer: textContainer)
             NotificationCenter.default.addObserver(
@@ -129,7 +160,11 @@ public struct MacSelectableText: UIViewRepresentable {
         }
 
         public func textViewDidChangeSelection(_ textView: UITextView) {
+            MacTextSelectionTracker.shared.updateSelection(from: textView)
             if textView.selectedRange.length > 0 {
+                if !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
                 NotificationCenter.default.post(name: .hapiClearOtherTextSelections, object: textView)
             }
         }

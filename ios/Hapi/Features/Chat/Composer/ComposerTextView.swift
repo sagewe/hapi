@@ -1,3 +1,4 @@
+import HapiUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -120,7 +121,23 @@ struct ComposerTextView: UIViewRepresentable {
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             if action == #selector(paste(_:)), pastesAttachments { return true }
+            if action == #selector(copy(_:)),
+               selectedRange.length == 0,
+               let selected = MacTextSelectionTracker.shared.selectedText,
+               !selected.isEmpty {
+                return true
+            }
             return super.canPerformAction(action, withSender: sender)
+        }
+
+        override func copy(_ sender: Any?) {
+            if selectedRange.length == 0,
+               let selected = MacTextSelectionTracker.shared.selectedText,
+               !selected.isEmpty {
+                UIPasteboard.general.string = selected
+                return
+            }
+            super.copy(sender)
         }
 
         override func paste(_ sender: Any?) {

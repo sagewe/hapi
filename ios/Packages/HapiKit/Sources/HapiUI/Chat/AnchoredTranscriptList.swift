@@ -312,6 +312,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     public override func viewDidLoad() {
         super.viewDidLoad()
         collection.backgroundColor = .clear
+        collection.allowsSelection = false
         collection.keyboardDismissMode = .interactive
         collection.contentInsetAdjustmentBehavior = .never
         collection.alwaysBounceVertical = true

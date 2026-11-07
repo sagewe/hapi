@@ -630,10 +630,17 @@ struct MarkdownListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(model.items.enumerated()), id: \.offset) { index, item in
+                #if targetEnvironment(macCatalyst)
+                HStack(alignment: .top, spacing: 8) {
+                    marker(for: item, index: index)
+                    MarkdownBlockListView(blocks: item.blocks)
+                }
+                #else
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     marker(for: item, index: index)
                     MarkdownBlockListView(blocks: item.blocks)
                 }
+                #endif
             }
         }
     }

@@ -149,17 +149,23 @@ struct HomeView: View {
     }
 
     private var sessionList: some View {
-        VStack(spacing: 0) {
+        let currentSelectedId = usesSplitNavigation ? tabletNavigation.selectedSessionId : path.last
+        return VStack(spacing: 0) {
             if let failedHub = model.authFailureNotice {
                 authFailureBanner(failedHub: failedHub)
             }
             connectionNotice
-            SessionListView(model: listModel, selection: usesSplitNavigation ? Binding(
-                get: { tabletNavigation.selectedSessionId },
-                // Native list deselection (e.g. a filter hides the row) is
-                // not an authoritative removal and must not close the chat.
-                set: { if let id = $0 { openSession(id) } }
-            ) : nil, onOpenSession: openSession)
+            SessionListView(
+                model: listModel,
+                selectedSessionId: currentSelectedId,
+                selection: usesSplitNavigation ? Binding(
+                    get: { tabletNavigation.selectedSessionId },
+                    // Native list deselection (e.g. a filter hides the row) is
+                    // not an authoritative removal and must not close the chat.
+                    set: { if let id = $0 { openSession(id) } }
+                ) : nil,
+                onOpenSession: openSession
+            )
         }
         .task(id: session.connectionState == .connected) {
             connectionStatusRevealed = false

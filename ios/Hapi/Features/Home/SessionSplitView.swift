@@ -15,6 +15,7 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
             columnVisibility: $navigation.columnVisibility,
             preferredCompactColumn: $navigation.preferredCompactColumn
         ) {
+            let _ = navigation.selectedSessionId
             sidebar()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 360)
         } detail: {

@@ -24,6 +24,7 @@ import SwiftUI
 struct SessionListView: View {
     @Environment(\.hapiTheme) private var theme
     let model: SessionListModel
+    var selectedSessionId: String? = nil
     var selection: Binding<String?>? = nil
     let onOpenSession: (String) -> Void
 
@@ -113,11 +114,11 @@ struct SessionListView: View {
     /// stays live; returning refreshes once.
     private var sessionList: some View {
         let rows = frozenRows ?? model.rows
-        let selectedSessionId = selection?.wrappedValue
-        return KeyedContent(key: ListRenderKey(rows: rows, selectedSessionId: selectedSessionId,
+        let effectiveSelectedId = selectedSessionId ?? selection?.wrappedValue ?? model.selectedSessionId
+        return KeyedContent(key: ListRenderKey(rows: rows, selectedSessionId: effectiveSelectedId,
                                                selectable: selection != nil,
                                                theme: theme, filters: model.filters)) {
-            list(rows, selectedSessionId: selectedSessionId)
+            list(rows, selectedSessionId: effectiveSelectedId)
         }
         .equatable()
         .onAppear { frozenRows = nil }
@@ -202,22 +203,32 @@ struct SessionListView: View {
     private func rowCell(_ row: SessionRowUI, isSelected: Bool) -> some View {
         Group {
             if selection != nil {
+                #if targetEnvironment(macCatalyst)
+                Button {
+                    onOpenSession(row.id)
+                } label: {
+                    rowLabel(row, isSelected: isSelected)
+                }
+                .buttonStyle(.plain)
+                .tag(row.id)
+                #else
                 NavigationLink(value: row.id) {
-                    rowLabel(row)
+                    rowLabel(row, isSelected: isSelected)
                 }
                 .tag(row.id)
+                #endif
             } else {
                 Button {
                     onOpenSession(row.id)
                 } label: {
-                    rowLabel(row)
+                    rowLabel(row, isSelected: isSelected)
                 }
                 .buttonStyle(.plain)
             }
         }
         .listRowBackground(
             isSelected
-                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.18))
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.2))
                 : nil
         )
         .listRowInsets(EdgeInsets(top: Self.rowVerticalInset, leading: 16, bottom: Self.rowVerticalInset, trailing: 16))
@@ -305,8 +316,8 @@ struct SessionListView: View {
         }
     }
 
-    private func rowLabel(_ row: SessionRowUI) -> some View {
-        SessionRowView(row: row)
+    private func rowLabel(_ row: SessionRowUI, isSelected: Bool = false) -> some View {
+        SessionRowView(row: row, isSelected: isSelected)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
     }
@@ -442,6 +453,7 @@ struct SessionRowView: View {
     @ScaledMetric(relativeTo: .footnote) private var statusSlotSize: CGFloat = 16
 
     let row: SessionRowUI
+    var isSelected = false
 
     private let iconSpacing: CGFloat = 12
 
@@ -453,6 +465,15 @@ struct SessionRowView: View {
                 detailLine
             }
         }
+        #if targetEnvironment(macCatalyst)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            isSelected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.22))
+                : RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.clear)
+        )
+        #endif
         // Separators start under the text column, as in Mail and Messages.
         .alignmentGuide(.listRowSeparatorLeading) { _ in iconSize + iconSpacing }
         .accessibilityElement(children: .combine)

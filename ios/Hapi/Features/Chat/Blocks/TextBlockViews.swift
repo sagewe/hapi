@@ -129,42 +129,42 @@ struct AgentTextBlockView: View {
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.hapiTheme) private var theme
     @State private var copied = false
-    @State private var hovered = false
 
     var body: some View {
-        CachedMarkdownView(markdown: block.text)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .topTrailing) {
-                #if targetEnvironment(macCatalyst)
-                if hovered || copied {
-                    Button {
-                        pasteboard.copy(block.text)
-                        copied = true
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(1500))
-                            copied = false
-                        }
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .font(.caption)
-                            .foregroundStyle(copied ? theme.success : theme.textSecondary)
-                            .padding(6)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy full message")
-                    .accessibilityLabel(copied ? "Copied" : "Copy message")
-                }
-                #endif
-            }
-            .onHover { isHovered in
-                hovered = isHovered
-            }
-            .contextMenu {
-                Button("Copy Message", systemImage: "doc.on.doc") {
+        VStack(alignment: .leading, spacing: 4) {
+            CachedMarkdownView(markdown: block.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            #if targetEnvironment(macCatalyst)
+            HStack {
+                Spacer(minLength: 0)
+                Button {
                     pasteboard.copy(block.text)
+                    copied = true
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(1500))
+                        copied = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        Text(copied ? "Copied" : "Copy")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(copied ? theme.success : theme.textSecondary.opacity(0.75))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
                 }
+                .buttonStyle(.plain)
+                .help("Copy full message")
+                .accessibilityLabel(copied ? "Copied" : "Copy message")
             }
+            #endif
+        }
+        .contextMenu {
+            Button("Copy Message", systemImage: "doc.on.doc") {
+                pasteboard.copy(block.text)
+            }
+        }
     }
 }
 
