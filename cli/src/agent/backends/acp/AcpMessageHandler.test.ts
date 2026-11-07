@@ -3294,4 +3294,56 @@ describe('AcpMessageHandler idle text flush', () => {
         expect(text[1].id).toEqual(text[0].id);
         expect(text[1].text).toEqual('```js\nconst a = 1;\nconsole.log(a);\n```');
     });
+
+    it('seals an already idle-flushed text segment before subsequent reasoning and tool_call', async () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler((message) => messages.push(message), {
+            textChunkMode: 'dedupe',
+            textIdleFlushMs: 1000
+        });
+
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentMessageChunk,
+            content: { type: 'text', text: 'Earlier segment already shown.' }
+        });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toEqual({
+            type: 'text',
+            text: 'Earlier segment already shown.',
+            id: expect.any(String),
+            streamSnapshot: true,
+            live: true
+        });
+        const streamId = (messages[0] as Extract<AgentMessage, { type: 'text' }>).id;
+
+        // Later in the turn, a new step emits reasoning + tool_call. Because
+        // the earlier text was already idle-flushed, it must be sealed before
+        // the new reasoning block is emitted.
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.agentThoughtChunk,
+            content: { type: 'text', text: 'Next step thought' }
+        });
+        await handler.handleUpdate({
+            sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall,
+            toolCallId: 'call_next',
+            title: 'Read README.md',
+            kind: 'read',
+            rawInput: { Path: 'README.md' },
+            status: 'in_progress'
+        });
+
+        expect(messages.map((m) => m.type)).toEqual(['text', 'text', 'reasoning', 'tool_call']);
+        expect(messages[1]).toEqual({
+            type: 'text',
+            text: 'Earlier segment already shown.',
+            id: streamId,
+            streamSnapshot: true
+        });
+        expect(messages[2]).toEqual({
+            type: 'reasoning',
+            text: 'Next step thought'
+        });
+    });
 });

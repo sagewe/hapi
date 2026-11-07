@@ -826,6 +826,14 @@ export class AcpMessageHandler {
             // should not cause the reasoning to be silently dropped.
             const content = update.content;
             if (isObject(content) && content.type === 'text' && typeof content.text === 'string' && content.text.length > 0) {
+                // If the open text segment has already been surfaced to the
+                // client by an idle flush (textStreamId !== null), seal it at
+                // the boundary before opening a new reasoning trace so the
+                // reasoning message is not wedged between the live text
+                // snapshot and its final boundary emission.
+                if (this.textStreamId !== null) {
+                    this.flushText('boundary');
+                }
                 this.appendReasoningChunk(content.text);
             }
             return;
