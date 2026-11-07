@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { AgyAcpDriver } from './agyAcpDriver';
+import { AgyElicitationAdapter } from './agyElicitationAdapter';
 import type { AgyReactiveWakeupOptions, AgyRawTranscriptStep } from './agyReactiveWakeup';
+import { canonicalizeQuestionToolInput } from '@/agent/utils';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
 import { ACP_INDETERMINATE_SYMBOL } from '@/agent/backends/acp/AcpStdioTransport';
@@ -44,6 +46,7 @@ function harness(reactiveOptions?: AgyReactiveWakeupOptions) {
         initialize: vi.fn(async () => {}), newSession: vi.fn(async () => 'agy-native'),
         loadSession: vi.fn(async ({ sessionId }) => sessionId),
         resumeSession: vi.fn(async ({ sessionId }) => sessionId),
+        registerExtensionRequestHandler: vi.fn(),
         suppressUpdatesDuring: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
         isPromptRequestInFlight: () => active,
         prompt: vi.fn(async (_id, _content, sink) => {
@@ -337,5 +340,212 @@ describe('Antigravity ACP delivery', () => {
         } finally {
             rmSync(brainDir, { recursive: true, force: true });
         }
+    });
+
+    it('does not hang in afterPrompt when a synchronous turn ends on ask_question, allowing the next message to be sent', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-ask-question-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const appendSteps = (steps: AgyRawTranscriptStep[]) => {
+                appendFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+            writeFileSync(transcriptPath, '', 'utf8');
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+
+            // Simulate turn ending on PLANNER_RESPONSE with ask_question tool_call (no MODEL:GENERIC step yet)
+            appendSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'What would you like to do?',
+                    tool_calls: [{
+                        name: 'ask_question',
+                        args: {
+                            questions: [{
+                                question: 'Choose an option',
+                                options: ['(Recommended) Option A', 'Option B'],
+                                is_multi_select: false
+                            }]
+                        }
+                    }]
+                }
+            ]);
+
+            h.turn.resolve();
+
+            // Must emit ready and thinking=false without hanging in drainReactiveLoop
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.session.onThinkingChange).toHaveBeenCalledWith(false);
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('canonicalizes Run ask_question tool calls and bridges elicitation/create to interactive AskUserQuestion answers', async () => {
+        const canonical = canonicalizeQuestionToolInput(
+            {
+                questions: [
+                    {
+                        question: 'Which environment?',
+                        options: ['(Recommended) Staging', 'Production'],
+                        is_multi_select: false
+                    },
+                    {
+                        question: 'Which features?',
+                        options: ['Auth', 'Metrics'],
+                        is_multi_select: true
+                    }
+                ]
+            },
+            'Run ask_question'
+        );
+        expect(canonical).toEqual({
+            name: 'AskUserQuestion',
+            input: {
+                questions: [
+                    {
+                        question: 'Which environment?',
+                        options: [{ label: '(Recommended) Staging' }, { label: 'Production' }],
+                        multiSelect: false,
+                        is_multi_select: false
+                    },
+                    {
+                        question: 'Which features?',
+                        options: [{ label: 'Auth' }, { label: 'Metrics' }],
+                        multiSelect: true,
+                        is_multi_select: true
+                    }
+                ]
+            }
+        });
+
+        let elicitationHandler: ((params: unknown, requestId: string | number | null) => Promise<unknown>) | undefined;
+        let agentState: Record<string, unknown> = { requests: {}, completedRequests: {} };
+        const client = {
+            updateAgentState: vi.fn((updater: (state: unknown) => Record<string, unknown>) => {
+                agentState = updater(agentState);
+            })
+        };
+        const backend = {
+            registerExtensionRequestHandler: vi.fn((method: string, handler: typeof elicitationHandler) => {
+                if (method === 'elicitation/create') {
+                    elicitationHandler = handler;
+                }
+            }),
+            cancelPrompt: vi.fn(async () => {})
+        };
+
+        const adapter = new AgyElicitationAdapter(
+            client as unknown as ConstructorParameters<typeof AgyElicitationAdapter>[0],
+            backend as unknown as AcpSdkBackend
+        );
+        expect(elicitationHandler).toBeDefined();
+
+        const elicitationPromise = elicitationHandler!(
+            {
+                sessionId: 'agy-native',
+                toolCallId: 'call_ask_1',
+                mode: 'form',
+                message: 'Please answer the questions',
+                requestedSchema: {
+                    type: 'object',
+                    properties: {
+                        q1: {
+                            type: 'string',
+                            title: 'Which environment?',
+                            oneOf: [
+                                { const: 'opt_staging', title: '(Recommended) Staging' },
+                                { const: 'opt_prod', title: 'Production' }
+                            ]
+                        },
+                        q1_other: {
+                            type: 'string',
+                            title: 'Other',
+                            description: 'Custom answer if none of the options fit'
+                        },
+                        q2: {
+                            type: 'array',
+                            title: 'Which features?',
+                            items: {
+                                type: 'string',
+                                anyOf: [
+                                    { const: 'feat_auth', title: 'Auth' },
+                                    { const: 'feat_metrics', title: 'Metrics' }
+                                ]
+                            }
+                        },
+                        q2_other: {
+                            type: 'string',
+                            title: 'Other',
+                            description: 'Custom answer if none of the options fit'
+                        }
+                    }
+                }
+            },
+            42
+        );
+
+        expect((agentState.requests as Record<string, unknown>).call_ask_1).toEqual(
+            expect.objectContaining({
+                tool: 'AskUserQuestion',
+                arguments: {
+                    questions: [
+                        {
+                            question: 'Which environment?',
+                            multiSelect: false,
+                            options: [{ label: '(Recommended) Staging' }, { label: 'Production' }]
+                        },
+                        {
+                            question: 'Which features?',
+                            multiSelect: true,
+                            options: [{ label: 'Auth' }, { label: 'Metrics' }]
+                        }
+                    ]
+                }
+            })
+        );
+
+        const handled = await adapter.handlePermissionResponse({
+            id: 'call_ask_1',
+            approved: true,
+            decision: 'approved',
+            answers: {
+                '0': ['Production'],
+                '1': ['Auth', 'Custom tracing']
+            }
+        });
+        expect(handled).toBe(true);
+
+        const result = await elicitationPromise;
+        expect(result).toEqual({
+            action: 'accept',
+            content: {
+                q1: 'opt_prod',
+                q2: ['feat_auth'],
+                q2_other: 'Custom tracing'
+            }
+        });
+        expect((agentState.completedRequests as Record<string, unknown>).call_ask_1).toEqual(
+            expect.objectContaining({
+                tool: 'AskUserQuestion',
+                status: 'approved',
+                answers: {
+                    '0': ['Production'],
+                    '1': ['Auth', 'Custom tracing']
+                }
+            })
+        );
     });
 });

@@ -5,7 +5,12 @@ import { registerGeneratedImageFromAcpBlock } from '@/modules/common/generatedIm
 import type { InlineMediaSource } from '@/modules/common/inlineMediaSource';
 import { asString, isObject } from '@hapi/protocol';
 import { extractNotifySummary } from '@hapi/protocol/messages';
-import { canonicalizeDiffToolInput, deriveToolNameWithSource, isPlaceholderToolName } from '@/agent/utils';
+import {
+    canonicalizeDiffToolInput,
+    canonicalizeQuestionToolInput,
+    deriveToolNameWithSource,
+    isPlaceholderToolName
+} from '@/agent/utils';
 import { parseRateLimitText } from '@/agent/rateLimitParser';
 import { isInternalEventJson } from '@/agent/internalEventFilter';
 import { ACP_SESSION_UPDATE_TYPES } from './constants';
@@ -990,6 +995,15 @@ export class AcpMessageHandler {
         if (canonical) {
             name = canonical.name;
             input = canonical.input;
+        } else {
+            const canonicalQuestion = canonicalizeQuestionToolInput(
+                input,
+                asString(update.title) ?? derivedName.name ?? asString(update.kind)
+            );
+            if (canonicalQuestion) {
+                name = canonicalQuestion.name;
+                input = canonicalQuestion.input ?? input;
+            }
         }
 
         this.toolCalls.set(toolCallId, { name, input });
@@ -1027,6 +1041,15 @@ export class AcpMessageHandler {
             if (canonical) {
                 name = canonical.name;
                 input = canonical.input;
+            } else {
+                const canonicalQuestion = canonicalizeQuestionToolInput(
+                    input,
+                    asString(update.title) ?? derivedName.name ?? existing?.name ?? asString(update.kind)
+                );
+                if (canonicalQuestion) {
+                    name = canonicalQuestion.name;
+                    input = canonicalQuestion.input ?? input;
+                }
             }
             this.toolCalls.set(toolCallId, { name, input });
             this.onMessage({

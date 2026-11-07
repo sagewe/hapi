@@ -1089,6 +1089,8 @@ export const toolResultViewRegistry: Record<string, ToolViewComponent> = {
     AskUserQuestion: AskUserQuestionResultView,
     ExitPlanMode: MarkdownResultView,
     ask_user_question: AskUserQuestionResultView,
+    ask_question: AskUserQuestionResultView,
+    'Run ask_question': AskUserQuestionResultView,
     exit_plan_mode: MarkdownResultView
 }
 

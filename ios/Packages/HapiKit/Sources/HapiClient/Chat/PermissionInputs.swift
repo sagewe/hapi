@@ -82,11 +82,16 @@ public func parseAskUserQuestions(_ input: JSONValue?, cursorDialect: Bool) -> [
             question = trimmedString(object["question"]) ?? ""
             header = trimmedString(object["header"]) ?? ""
             multiSelect = object["multiSelect"]?.boolValue == true
+                || object["is_multi_select"]?.boolValue == true
             questionId = nil
         }
 
         var options: [AskOption] = []
         for rawOption in object["options"]?.arrayValue ?? [] {
+            if let plainLabel = trimmedString(rawOption), !plainLabel.isEmpty {
+                options.append(AskOption(id: cursorDialect ? plainLabel : nil, label: plainLabel, description: nil))
+                continue
+            }
             guard let optionObject = rawOption.objectValue else { continue }
             let label: String
             if cursorDialect {

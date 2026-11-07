@@ -152,7 +152,11 @@ private let interactiveToolNames: Set<String> = [
 
 /// Port of `isAskUserQuestionToolName` (web ToolCard/askUserQuestion.ts).
 public func isAskUserQuestionToolName(_ toolName: String) -> Bool {
-    toolName == "AskUserQuestion" || toolName == "ask_user_question" || toolName == "CursorAskQuestion"
+    toolName == "AskUserQuestion"
+        || toolName == "ask_user_question"
+        || toolName == "ask_question"
+        || toolName == "Run ask_question"
+        || toolName == "CursorAskQuestion"
 }
 
 /// Port of `isRequestUserInputToolName` (web ToolCard/requestUserInput.ts).

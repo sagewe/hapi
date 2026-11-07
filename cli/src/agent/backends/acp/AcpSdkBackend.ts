@@ -246,6 +246,7 @@ export class AcpSdkBackend implements AgentBackend {
                 clientCapabilities: {
                     fs: { readTextFile: false, writeTextFile: false },
                     terminal: false,
+                    ...(this.options.flavor === 'agy' ? { elicitation: { form: {} } } : {}),
                     _meta: {
                         // Cursor ACP exposes Composer's non-fast/fast choice as separate
                         // `model` + `fast` config options only when the client advertises

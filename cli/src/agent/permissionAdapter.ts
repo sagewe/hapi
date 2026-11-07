@@ -2,17 +2,18 @@ import type { AgentBackend, PermissionRequest, PermissionResponse } from './type
 import type { AgentState, SessionPermissionMode } from '@/api/types';
 import type { ApiSessionClient } from '@/api/apiSession';
 import { logger } from '@/ui/logger';
-import { deriveToolInput, deriveToolName } from '@/agent/utils';
+import { canonicalizeQuestionToolInput, deriveToolInput, deriveToolName } from '@/agent/utils';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import {
     resolveToolAutoApprovalDecision,
     type AutoApprovalDecision
 } from '@/modules/common/permission/BasePermissionHandler';
 
-interface PermissionResponseMessage {
+export interface PermissionResponseMessage {
     id: string;
     approved: boolean;
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
+    answers?: Record<string, string[]>;
 }
 
 function pickOptionId(
@@ -55,12 +56,15 @@ export class PermissionAdapter {
     }
 
     private handlePermissionRequest(request: PermissionRequest): void {
-        const toolName = deriveToolName({
+        const rawToolName = deriveToolName({
             title: request.title,
             kind: request.kind,
             rawInput: request.rawInput
         });
-        const input = deriveToolInput(request);
+        const rawInput = deriveToolInput(request);
+        const canonicalQuestion = canonicalizeQuestionToolInput(rawInput, request.title ?? rawToolName);
+        const toolName = canonicalQuestion?.name ?? rawToolName;
+        const input = canonicalQuestion?.input ?? rawInput;
         const mode = this.getPermissionMode?.();
         const autoDecision = resolveToolAutoApprovalDecision(mode, toolName, request.toolCallId);
 
@@ -140,12 +144,15 @@ export class PermissionAdapter {
         this.pendingRequests.delete(response.id);
 
         const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
-        const toolName = deriveToolName({
+        const rawToolName = deriveToolName({
             title: pending.title,
             kind: pending.kind,
             rawInput: pending.rawInput
         });
-        const toolInput = deriveToolInput(pending);
+        const rawToolInput = deriveToolInput(pending);
+        const canonicalQuestion = canonicalizeQuestionToolInput(rawToolInput, pending.title ?? rawToolName);
+        const toolName = canonicalQuestion?.name ?? rawToolName;
+        const toolInput = canonicalQuestion?.input ?? rawToolInput;
 
         const outcome = this.mapDecisionToOutcome(pending, decision);
         if (decision === 'abort') {

@@ -189,6 +189,7 @@ export class AgyReactiveWakeupTracker {
 
     private syncedStepIndex = -1;
     private prePromptMaxStepIndex = -1;
+    private promptEndStepIndex = -1;
     private openPromptToolCalls: TrackedToolCall[] = [];
     private readonly pendingTasks = new Map<string, PendingBackgroundTask>();
     private readonly pendingReactiveToolResults = new Map<number, PendingReactiveToolResult>();
@@ -202,6 +203,7 @@ export class AgyReactiveWakeupTracker {
     reset(): void {
         this.syncedStepIndex = -1;
         this.prePromptMaxStepIndex = -1;
+        this.promptEndStepIndex = -1;
         this.openPromptToolCalls = [];
         this.pendingTasks.clear();
         this.pendingReactiveToolResults.clear();
@@ -260,6 +262,9 @@ export class AgyReactiveWakeupTracker {
         if (maxIdx > this.syncedStepIndex) {
             this.syncedStepIndex = maxIdx;
         }
+        if (maxIdx > this.promptEndStepIndex) {
+            this.promptEndStepIndex = maxIdx;
+        }
     }
 
     /** Record transcript baseline before dispatching `backend.prompt()`. */
@@ -267,11 +272,13 @@ export class AgyReactiveWakeupTracker {
         this.openPromptToolCalls = [];
         if (!sessionId) {
             this.prePromptMaxStepIndex = -1;
+            this.promptEndStepIndex = -1;
             return;
         }
         const steps = this.readSteps(sessionId);
         const maxIdx = steps.length > 0 ? steps[steps.length - 1].step_index : -1;
         this.prePromptMaxStepIndex = maxIdx;
+        this.promptEndStepIndex = maxIdx;
         if (this.syncedStepIndex < maxIdx) {
             this.syncedStepIndex = maxIdx;
         }
@@ -292,11 +299,6 @@ export class AgyReactiveWakeupTracker {
                 this.openPromptToolCalls[idx] = record;
             } else {
                 this.openPromptToolCalls.push(record);
-            }
-        } else if (message.type === 'tool_result') {
-            const idx = this.openPromptToolCalls.findIndex((entry) => entry.id === message.id);
-            if (idx >= 0) {
-                this.openPromptToolCalls.splice(idx, 1);
             }
         }
     }
@@ -333,6 +335,7 @@ export class AgyReactiveWakeupTracker {
         if (steps.length === 0) return;
 
         const promptEndStepIndex = this.findSynchronousPromptEndStepIndex(steps, this.prePromptMaxStepIndex);
+        this.promptEndStepIndex = promptEndStepIndex;
         this.ingestSynchronousTurnSteps(steps, this.prePromptMaxStepIndex, promptEndStepIndex, cwd, onUpdate);
         if (promptEndStepIndex > this.syncedStepIndex) {
             this.syncedStepIndex = promptEndStepIndex;
@@ -454,13 +457,26 @@ export class AgyReactiveWakeupTracker {
         args: Record<string, unknown>
     ): TrackedToolCall | null {
         if (this.openPromptToolCalls.length === 0) return null;
-        if (toolName === 'run_command' && typeof args.CommandLine === 'string') {
-            const idx = this.openPromptToolCalls.findIndex(
-                (c) => isObject(c.input) && c.input.CommandLine === args.CommandLine
-            );
-            if (idx >= 0) {
-                return this.openPromptToolCalls.splice(idx, 1)[0];
+        if (toolName === 'run_command') {
+            if (typeof args.CommandLine === 'string') {
+                const idx = this.openPromptToolCalls.findIndex(
+                    (c) =>
+                        (isObject(c.input) && (
+                            c.input.CommandLine === args.CommandLine ||
+                            c.input.command === args.CommandLine
+                        )) ||
+                        c.title === args.CommandLine ||
+                        c.name === args.CommandLine
+                );
+                if (idx >= 0) {
+                    return this.openPromptToolCalls.splice(idx, 1)[0];
+                }
             }
+            const execIdx = this.openPromptToolCalls.findIndex((c) => c.kind === 'execute');
+            if (execIdx >= 0) {
+                return this.openPromptToolCalls.splice(execIdx, 1)[0];
+            }
+            return null;
         }
         if (toolName === 'schedule' && typeof args.Prompt === 'string') {
             const idx = this.openPromptToolCalls.findIndex(
@@ -670,12 +686,15 @@ export class AgyReactiveWakeupTracker {
         if (this.pendingReactiveToolResults.size > 0) return true;
         if (steps.length === 0) return false;
         const last = steps[steps.length - 1];
+        if (last.step_index <= this.promptEndStepIndex) {
+            return false;
+        }
         if (last.source === 'SYSTEM' && last.type === 'SYSTEM_MESSAGE') {
             return true;
         }
         if (last.source === 'MODEL' && last.type === 'PLANNER_RESPONSE') {
             const toolCalls = Array.isArray(last.tool_calls) ? last.tool_calls : [];
-            if (toolCalls.length > 0) return true;
+            if (toolCalls.some((tc) => tc.name !== 'ask_question')) return true;
         }
         if (last.source === 'MODEL' && last.type === 'GENERIC') {
             return true;

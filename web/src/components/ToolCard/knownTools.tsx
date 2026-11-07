@@ -686,7 +686,10 @@ export function getToolPresentation(
     }
 
     const goalName = getGoalToolName(opts.toolName)
-    const known = knownTools[goalName ?? opts.toolName]
+    const normalizedToolName = opts.toolName === 'ask_question' || opts.toolName === 'Run ask_question'
+        ? 'AskUserQuestion'
+        : opts.toolName
+    const known = knownTools[goalName ?? normalizedToolName]
     if (known) {
         const minimal = typeof known.minimal === 'function' ? known.minimal(opts) : (known.minimal ?? false)
         return {

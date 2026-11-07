@@ -24,6 +24,8 @@ export type AskUserQuestionQuestionInfo = {
 export function isAskUserQuestionToolName(toolName: string): boolean {
     return toolName === 'AskUserQuestion'
         || toolName === 'ask_user_question'
+        || toolName === 'ask_question'
+        || toolName === 'Run ask_question'
         || toolName === 'CursorAskQuestion'
 }
 
@@ -39,11 +41,18 @@ export function parseAskUserQuestionInput(input: unknown): { questions: AskUserQ
 
         const question = typeof raw.question === 'string' ? raw.question.trim() : ''
         const header = typeof raw.header === 'string' ? raw.header.trim() : ''
-        const multiSelect = typeof raw.multiSelect === 'boolean' ? raw.multiSelect : false
+        const multiSelect = raw.multiSelect === true || raw.is_multi_select === true
 
         const rawOptions = Array.isArray(raw.options) ? raw.options : []
         const options: AskUserQuestionOption[] = []
         for (const opt of rawOptions) {
+            if (typeof opt === 'string') {
+                const label = opt.trim()
+                if (label) {
+                    options.push({ label, description: null })
+                }
+                continue
+            }
             if (!isObject(opt)) continue
             const label = typeof opt.label === 'string' ? opt.label.trim() : ''
             if (!label) continue

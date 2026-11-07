@@ -118,7 +118,7 @@ public struct ToolPresentation: Equatable, Sendable {
             )
         case "TodoWrite", "update_plan":
             return ToolPresentation(title: "Plan", subtitle: nil)
-        case "AskUserQuestion", "ask_user_question", "CursorAskQuestion":
+        case "AskUserQuestion", "ask_user_question", "ask_question", "Run ask_question", "CursorAskQuestion":
             return ToolPresentation(title: "Question", subtitle: nil)
         case "request_user_input":
             return ToolPresentation(title: "Input requested", subtitle: nil)

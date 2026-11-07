@@ -13,6 +13,7 @@ import type { AgentMessage } from '@/agent/types';
 import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
+import { AgyElicitationAdapter } from './agyElicitationAdapter';
 import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
 
 /** One handler owns all notifications, including concurrent prompts. A turn is
@@ -20,6 +21,7 @@ import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyRe
 export class AgyAcpDriver extends RemoteLauncherBase {
     private backend: AcpSdkBackend | null = null;
     private permission: PermissionAdapter | null = null;
+    private elicitation: AgyElicitationAdapter | null = null;
     private readonly loopAbort = new AbortController();
     private readonly pendingSteers = new Set<Promise<void>>();
     private readonly reactiveWakeup: AgyReactiveWakeupTracker;
@@ -59,9 +61,12 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         this.backend = null;
         this.backendModeHash = null;
         this.reactiveWakeup.reset();
+        const elicitation = this.elicitation;
+        this.elicitation = null;
         const permission = this.permission;
         this.permission = null;
         try {
+            await elicitation?.cancelAll('Antigravity session closed');
             await permission?.cancelAll('Antigravity session closed');
         } catch (error) {
             logger.debug('[agy-acp] permission cancellation failed during teardown', error);
@@ -79,7 +84,14 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         try {
             await backend.initialize();
             if (this.stopping) throw new Error('Antigravity session stopped');
-            this.permission = new PermissionAdapter(this.session.client, backend, () => mode.permissionMode);
+            const elicitation = new AgyElicitationAdapter(this.session.client, backend);
+            this.elicitation = elicitation;
+            this.permission = new PermissionAdapter(
+                this.session.client,
+                backend,
+                () => mode.permissionMode,
+                (response) => elicitation.handlePermissionResponse(response)
+            );
             registerAcpSessionTitleSync(backend, this.session.client);
             const config = { cwd: this.session.path, mcpServers: [] };
             const id = this.session.sessionId

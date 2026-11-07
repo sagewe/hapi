@@ -11,6 +11,88 @@ export type CanonicalDiffToolInput =
     | { name: 'Edit'; input: { file_path: string; old_string: string; new_string: string; replace_all?: boolean } }
     | { name: 'Write'; input: { file_path: string; content: string } };
 
+export type CanonicalQuestionToolInput = {
+    name: 'AskUserQuestion';
+    input: Record<string, unknown> | null;
+};
+
+const QUESTION_TOOL_HINTS = new Set([
+    'ask_question',
+    'run ask_question',
+    'askuserquestion',
+    'ask_user_question',
+]);
+
+/**
+ * Normalizes native `ask_question` tool calls (e.g. Antigravity `Run ask_question`
+ * with `{ questions: [{ question, options: string[], is_multi_select?: boolean }] }`)
+ * into the canonical `AskUserQuestion` tool name and `{ questions: [{ question,
+ * multiSelect, options: [{ label, description? }] }] }` input shape expected by
+ * Web, iOS, and Mac Catalyst question cards.
+ */
+export function canonicalizeQuestionToolInput(
+    rawInput: unknown,
+    semanticHint: string | null
+): CanonicalQuestionToolInput | null {
+    const hint = semanticHint?.trim().toLowerCase() ?? null;
+    if (!hint || !QUESTION_TOOL_HINTS.has(hint)) {
+        return null;
+    }
+
+    if (!isObject(rawInput)) {
+        return { name: 'AskUserQuestion', input: null };
+    }
+
+    if (!Array.isArray(rawInput.questions)) {
+        return { name: 'AskUserQuestion', input: rawInput };
+    }
+
+    const questions = rawInput.questions
+        .map((entry): Record<string, unknown> | null => {
+            if (!isObject(entry)) return null;
+            const question = typeof entry.question === 'string' ? entry.question : '';
+            if (!question) return null;
+            const header = typeof entry.header === 'string' && entry.header.trim().length > 0
+                ? entry.header.trim()
+                : undefined;
+            const multiSelect = entry.multiSelect === true || entry.is_multi_select === true;
+            const rawOptions = Array.isArray(entry.options) ? entry.options : [];
+            const options: Array<{ label: string; description?: string }> = [];
+            for (const opt of rawOptions) {
+                if (typeof opt === 'string') {
+                    const trimmed = opt.trim();
+                    if (trimmed.length > 0) {
+                        options.push({ label: trimmed });
+                    }
+                } else if (isObject(opt) && typeof opt.label === 'string' && opt.label.trim().length > 0) {
+                    const description = typeof opt.description === 'string' && opt.description.trim().length > 0
+                        ? opt.description
+                        : undefined;
+                    options.push({
+                        label: opt.label,
+                        ...(description ? { description } : {})
+                    });
+                }
+            }
+            return {
+                ...entry,
+                question,
+                ...(header ? { header } : {}),
+                multiSelect,
+                options
+            };
+        })
+        .filter((entry): entry is Record<string, unknown> => entry !== null);
+
+    return {
+        name: 'AskUserQuestion',
+        input: {
+            ...rawInput,
+            questions
+        }
+    };
+}
+
 function firstString(value: unknown, keys: readonly string[]): string | null {
     if (!isObject(value)) return null;
     for (const key of keys) {
