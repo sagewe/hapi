@@ -154,91 +154,11 @@ struct ChatView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
-                    if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
-                        Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
-                            .disabled(!model.header.active)
-                    }
-                    Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
-                    Button {
-                        filesOpen = true
-                    } label: {
-                        Label("Session files", systemImage: "folder")
-                    }
-                    Button {
-                        model.interactor.setComposerDestination(.scratchlist)
-                    } label: {
-                        let count = model.interactor.scratchlistCount
-                        if count > 0 {
-                            Label(
-                                String(format: String(localized: "Scratchlist (%lld)"), Int64(count)),
-                                systemImage: "note.text"
-                            )
-                        } else {
-                            Label("Scratchlist", systemImage: "note.text")
-                        }
-                    }
-                    Divider()
-                    if model.interactor.canForkCurrentConversation {
-                        Button {
-                            forkConfirmOpen = true
-                        } label: {
-                            Label("Fork Conversation", systemImage: "arrow.triangle.branch")
-                        }
-                        .disabled(model.interactor.historyActionPending)
-                    }
-                    if !model.historyPointMessages.isEmpty {
-                        Button {
-                            historyOpen = true
-                        } label: {
-                            Label("Rewind or Fork…", systemImage: "clock.arrow.circlepath")
-                        }
-                    }
-                    Button {
-                        exportFormatOpen = true
-                    } label: {
-                        Label("Export Conversation…", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(model.isExporting)
-                    Divider()
-                    Button {
-                        renameOpen = true
-                    } label: {
-                        Label("Rename…", systemImage: "pencil")
-                    }
-                    // Web `SessionActionMenu`: reopen/delete only for a known
-                    // inactive session; a removal closes this chat.
-                    if model.sessionIsActive == false {
-                        Button {
-                            model.interactor.reopenSession()
-                        } label: {
-                            Label("Reopen", systemImage: "arrow.clockwise")
-                        }
-                        .disabled(model.interactor.sessionOpPending)
-                        Button(role: .destructive) {
-                            deleteOpen = true
-                        } label: {
-                            Label("Delete…", systemImage: "trash")
-                        }
-                        .disabled(model.interactor.sessionOpPending)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityLabel("More actions")
+                moreActionsMenu
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .focusedSceneValue(\.chatCommands, ChatCommandActions(
-            openSessionSettings: { configOpen = true },
-            openFiles: { filesOpen = true },
-            rename: {
-                renameOpen = true
-            },
-            export: model.isExporting ? nil : { exportFormatOpen = true },
-            stop: model.interactor.composer.canStop ? { model.interactor.abortSession() } : nil
-        ))
+        .focusedSceneValue(\.chatCommands, chatCommandActions)
         .navigationDestination(isPresented: $filesOpen) {
             FilesView(session: session, sessionId: sessionId)
         }
@@ -411,6 +331,125 @@ struct ChatView: View {
     }
 
     // MARK: - Chrome
+
+    private var moreActionsMenu: some View {
+        Menu {
+            Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
+            if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
+                Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
+                    .disabled(!model.header.active)
+            }
+            Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
+            Button {
+                filesOpen = true
+            } label: {
+                Label("Session files", systemImage: "folder")
+            }
+            Button {
+                model.interactor.setComposerDestination(.scratchlist)
+            } label: {
+                let count = model.interactor.scratchlistCount
+                if count > 0 {
+                    Label(
+                        String(format: String(localized: "Scratchlist (%lld)"), Int64(count)),
+                        systemImage: "note.text"
+                    )
+                } else {
+                    Label("Scratchlist", systemImage: "note.text")
+                }
+            }
+            Divider()
+            if model.interactor.canForkCurrentConversation {
+                Button {
+                    forkConfirmOpen = true
+                } label: {
+                    Label("Fork Conversation", systemImage: "arrow.triangle.branch")
+                }
+                .disabled(model.interactor.historyActionPending)
+            }
+            if !model.historyPointMessages.isEmpty {
+                Button {
+                    historyOpen = true
+                } label: {
+                    Label("Rewind or Fork…", systemImage: "clock.arrow.circlepath")
+                }
+            }
+            Button {
+                exportFormatOpen = true
+            } label: {
+                Label("Export Conversation…", systemImage: "square.and.arrow.up")
+            }
+            .disabled(model.isExporting)
+            Divider()
+            Button {
+                renameOpen = true
+            } label: {
+                Label("Rename…", systemImage: "pencil")
+            }
+            if model.sessionIsActive == true {
+                Button {
+                    model.interactor.archiveSession()
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                .disabled(model.interactor.sessionOpPending)
+            } else if model.sessionIsActive == false {
+                Button {
+                    model.interactor.reopenSession()
+                } label: {
+                    Label("Reopen", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.interactor.sessionOpPending)
+                Button(role: .destructive) {
+                    deleteOpen = true
+                } label: {
+                    Label("Delete…", systemImage: "trash")
+                }
+                .disabled(model.interactor.sessionOpPending)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("More actions")
+        .help("More actions")
+    }
+
+    private var chatCommandActions: ChatCommandActions {
+        let canOpenTerminal = session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false
+            && model.header.active
+        let archiveOrReopenAction: (() -> Void)? = {
+            guard !model.interactor.sessionOpPending else { return nil }
+            if model.sessionIsActive == true {
+                return { model.interactor.archiveSession() }
+            }
+            if model.sessionIsActive == false {
+                return { model.interactor.reopenSession() }
+            }
+            return nil
+        }()
+        return ChatCommandActions(
+            focusComposer: { model.interactor.focusComposer() },
+            toggleScratchlist: model.interactor.scratchlist != nil ? {
+                let target: ComposerDestination = model.interactor.composerDestination == .scratchlist ? .chat : .scratchlist
+                model.interactor.setComposerDestination(target)
+                model.interactor.focusComposer()
+            } : nil,
+            openSessionSettings: { configOpen = true },
+            openFiles: { filesOpen = true },
+            openTerminal: canOpenTerminal ? { terminalOpen.toggle() } : nil,
+            openWebPreview: {
+                if webPreview != nil { webPreview = nil }
+                else { previewPortOpen = true }
+            },
+            markUnread: { model.markUnread() },
+            archiveOrReopen: archiveOrReopenAction,
+            isArchivedOrInactive: model.sessionIsActive == false,
+            rename: { renameOpen = true },
+            export: model.isExporting ? nil : { exportFormatOpen = true },
+            refreshChat: { model.retry() },
+            stop: model.interactor.composer.canStop ? { model.interactor.abortSession() } : nil
+        )
+    }
 
     private var headerTitle: some View {
         VStack(alignment: .leading, spacing: 0) {

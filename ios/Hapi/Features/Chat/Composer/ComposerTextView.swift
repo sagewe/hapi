@@ -11,9 +11,17 @@ struct ComposerTextView: UIViewRepresentable {
     @Binding var isComposing: Bool
     let font: UIFont
     let accessibilityLabel: String
-    /// Mac: a bare Return submits through this handler (true = consumed);
+    /// Mac: a bare Return or ⌘Return submits through this handler (true = consumed);
     /// Shift/Option-Return and IME commits still edit the text.
     var onReturn: (() -> Bool)? = nil
+    /// Mac: ⇧⌘Return / ⌥⌘Return submits and steers into the active turn.
+    var onSteerReturn: (() -> Bool)? = nil
+    /// Mac: ↑ (-1) / ↓ (+1) navigates open suggestion popups (true = consumed).
+    var onMoveSuggestion: ((Int) -> Bool)? = nil
+    /// Mac: Tab accepts the highlighted suggestion when a popup is open.
+    var onTab: (() -> Bool)? = nil
+    /// Mac: Escape dismisses an open suggestion popup or unfocuses the field.
+    var onEscape: (() -> Bool)? = nil
     /// Pasted images and copied files become attachments instead of text.
     var onPasteItems: (([NSItemProvider]) -> Void)? = nil
 
@@ -71,6 +79,10 @@ struct ComposerTextView: UIViewRepresentable {
             }
         }
         view.onReturn = onReturn
+        view.onSteerReturn = onSteerReturn
+        view.onMoveSuggestion = onMoveSuggestion
+        view.onTab = onTab
+        view.onEscape = onEscape
         view.onPasteItems = onPasteItems
         view.wantsFocus = isFocused
         view.updateFocus()
@@ -92,6 +104,10 @@ struct ComposerTextView: UIViewRepresentable {
     final class NativeTextView: UITextView {
         var wantsFocus = false
         var onReturn: (() -> Bool)?
+        var onSteerReturn: (() -> Bool)?
+        var onMoveSuggestion: ((Int) -> Bool)?
+        var onTab: (() -> Bool)?
+        var onEscape: (() -> Bool)?
         var onPasteItems: (([NSItemProvider]) -> Void)?
 
         /// Only image-only clipboards and copied files; anything with text
@@ -115,12 +131,35 @@ struct ComposerTextView: UIViewRepresentable {
             super.paste(sender)
         }
 
+        func handleMacKeyPress(keyCode: UIKeyboardHIDUsage, modifiers: UIKeyModifierFlags) -> Bool {
+            guard markedTextRange == nil else { return false }
+            let relevantModifiers = modifiers.intersection([.shift, .alternate, .command, .control])
+            switch keyCode {
+            case .keyboardReturnOrEnter, .keypadEnter:
+                if relevantModifiers.isEmpty || relevantModifiers == .command {
+                    return onReturn?() == true
+                }
+                if relevantModifiers == [.command, .shift] || relevantModifiers == [.command, .alternate] {
+                    return onSteerReturn?() == true
+                }
+                return false
+            case .keyboardUpArrow where relevantModifiers.isEmpty:
+                return onMoveSuggestion?(-1) == true
+            case .keyboardDownArrow where relevantModifiers.isEmpty:
+                return onMoveSuggestion?(1) == true
+            case .keyboardTab where relevantModifiers.isEmpty:
+                return onTab?() == true
+            case .keyboardEscape where relevantModifiers.isEmpty:
+                return onEscape?() == true
+            default:
+                return false
+            }
+        }
+
         #if targetEnvironment(macCatalyst)
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-            if markedTextRange == nil, let key = presses.first?.key,
-               key.keyCode == .keyboardReturnOrEnter || key.keyCode == .keypadEnter,
-               key.modifierFlags.isDisjoint(with: [.shift, .alternate, .command, .control]),
-               onReturn?() == true {
+            if let key = presses.first?.key,
+               handleMacKeyPress(keyCode: key.keyCode, modifiers: key.modifierFlags) {
                 return
             }
             super.pressesBegan(presses, with: event)

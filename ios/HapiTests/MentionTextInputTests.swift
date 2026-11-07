@@ -87,4 +87,46 @@ final class MentionTextInputTests: XCTestCase {
         XCTAssertEqual(editor.text, "", "Send clearing must apply even with marked text")
         XCTAssertNil(editor.markedTextRange)
     }
+
+    func testMacKeyPressHandlersRouteSuggestionsAndSteerAndRespectIME() {
+        let editor = ComposerTextView.NativeTextView()
+        var returnCount = 0
+        var steerCount = 0
+        var moves: [Int] = []
+        var tabCount = 0
+        var escapeCount = 0
+
+        editor.onReturn = { returnCount += 1; return true }
+        editor.onSteerReturn = { steerCount += 1; return true }
+        editor.onMoveSuggestion = { delta in moves.append(delta); return true }
+        editor.onTab = { tabCount += 1; return true }
+        editor.onEscape = { escapeCount += 1; return true }
+
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: []))
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: [.command]))
+        XCTAssertEqual(returnCount, 2)
+
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: [.shift]))
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: [.alternate]))
+
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: [.command, .shift]))
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keypadEnter, modifiers: [.command, .alternate]))
+        XCTAssertEqual(steerCount, 2)
+
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardUpArrow, modifiers: []))
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardDownArrow, modifiers: []))
+        XCTAssertEqual(moves, [-1, 1])
+
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardTab, modifiers: []))
+        XCTAssertEqual(tabCount, 1)
+
+        XCTAssertTrue(editor.handleMacKeyPress(keyCode: .keyboardEscape, modifiers: []))
+        XCTAssertEqual(escapeCount, 1)
+
+        editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0))
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: []))
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardUpArrow, modifiers: []))
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardTab, modifiers: []))
+        XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardEscape, modifiers: []))
+    }
 }

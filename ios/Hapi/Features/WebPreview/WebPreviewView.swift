@@ -134,12 +134,16 @@ struct WebPreviewView: View {
             .navigationTitle("Web Preview")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { model.close(); dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { model.close(); dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                        .help("Close (Esc)")
+                }
                 ToolbarItemGroup(placement: .bottomBar) {
-                    Button { model.webView?.goBack() } label: { Image(systemName: "chevron.left") }.disabled(!model.canGoBack).accessibilityLabel("Back")
-                    Button { model.webView?.goForward() } label: { Image(systemName: "chevron.right") }.disabled(!model.canGoForward).accessibilityLabel("Forward")
+                    Button { model.webView?.goBack() } label: { Image(systemName: "chevron.left") }.disabled(!model.canGoBack).accessibilityLabel("Back").help("Back")
+                    Button { model.webView?.goForward() } label: { Image(systemName: "chevron.right") }.disabled(!model.canGoForward).accessibilityLabel("Forward").help("Forward")
                     Spacer()
-                    Button { model.reload() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Reload")
+                    Button { model.reload() } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Reload").help("Reload")
                 }
             }
         }.task { await model.start() }.onDisappear { model.close() }

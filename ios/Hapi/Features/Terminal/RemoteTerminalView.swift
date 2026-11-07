@@ -180,8 +180,16 @@ struct RemoteTerminalView: View {
             .navigationTitle("Terminal")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { model.setActive(false); dismiss() } }
-                ToolbarItem(placement: .primaryAction) { Button { model.copySelection() } label: { Image(systemName: "doc.on.doc") }.accessibilityLabel("Copy Selection") }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { model.setActive(false); dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                        .help("Close (Esc)")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { model.copySelection() } label: { Image(systemName: "doc.on.doc") }
+                        .accessibilityLabel("Copy Selection")
+                        .help("Copy Selection")
+                }
             }
         }
         .onChange(of: scenePhase) { _, phase in model.setActive(phase == .active) }

@@ -36,6 +36,8 @@ struct ChatComposerView: View {
     @State private var isComposing = false
     @State private var preparingAttachment = false
     @State private var schedulePickerOpen = false
+    @State private var selectedSuggestionIndex = 0
+    @State private var dismissedSuggestionKey: String?
     // Secondary tools are bare symbols; only the primary action is a filled
     // circle (Messages / ChatGPT / Claude). Both follow Dynamic Type.
     @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 20
@@ -73,14 +75,44 @@ struct ChatComposerView: View {
     var body: some View {
         let composer = interactor.composer
         let attachments = interactor.attachments.items
-        let slashSuggestions = interactor.slashSuggestions
-        let mentionSuggestions = mentionRequest == nil ? [] : interactor.mentionSuggestions(selection: textSelection)
-        let skillQuery = scratchlistMode ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing)
-        let skillMatches = skillQuery.map { SkillSuggestions.matches(interactor.skills, query: $0.text, recent: interactor.recentSkills) } ?? []
+        let rawSlashSuggestions = interactor.slashSuggestions
+        let rawMentionSuggestions = mentionRequest == nil ? [] : interactor.mentionSuggestions(selection: textSelection)
+        let rawSkillQuery = scratchlistMode ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing)
+        let rawSkillMatches = rawSkillQuery.map { SkillSuggestions.matches(interactor.skills, query: $0.text, recent: interactor.recentSkills) } ?? []
+        let suggestionKey: String? = {
+            if !rawMentionSuggestions.isEmpty {
+                return "mention:\(mentionRequest?.query ?? "")"
+            }
+            if !rawSlashSuggestions.isEmpty {
+                return "slash:\(interactor.composerText)"
+            }
+            if let query = rawSkillQuery {
+                return "skill:\(query.text)"
+            }
+            return nil
+        }()
+        let suggestionsDismissed = suggestionKey != nil && suggestionKey == dismissedSuggestionKey
+        let mentionSuggestions = suggestionsDismissed ? [] : rawMentionSuggestions
+        let slashSuggestions = suggestionsDismissed ? [] : rawSlashSuggestions
+        let skillQuery = suggestionsDismissed ? nil : rawSkillQuery
+        let skillMatches = suggestionsDismissed ? [] : rawSkillMatches
+        let activeSuggestionCount: Int = {
+            if !mentionSuggestions.isEmpty { return mentionSuggestions.count }
+            if !slashSuggestions.isEmpty { return slashSuggestions.count }
+            if skillQuery != nil { return skillMatches.count }
+            return 0
+        }()
+        let clampedSuggestionIndex = activeSuggestionCount > 0
+            ? min(max(0, selectedSuggestionIndex), activeSuggestionCount - 1)
+            : 0
         let collapsed = isCollapsed(composer, attachments: attachments)
         VStack(spacing: 0) {
             if !mentionSuggestions.isEmpty {
-                ComposerMentionList(suggestions: mentionSuggestions, surface: composerSurfaceColor) { suggestion in
+                ComposerMentionList(
+                    suggestions: mentionSuggestions,
+                    selectedIndex: clampedSuggestionIndex,
+                    surface: composerSurfaceColor
+                ) { suggestion in
                     if let selection = interactor.selectMention(suggestion, selection: textSelection) {
                         textSelection = selection
                         textFocused = true
@@ -88,7 +120,11 @@ struct ChatComposerView: View {
                 }
                 .padding(.bottom, 6)
             } else if !slashSuggestions.isEmpty {
-                SlashCommandList(commands: slashSuggestions, surface: composerSurfaceColor) { command in
+                SlashCommandList(
+                    commands: slashSuggestions,
+                    selectedIndex: clampedSuggestionIndex,
+                    surface: composerSurfaceColor
+                ) { command in
                     interactor.selectSlashCommand(command)
                 }
                 .padding(.bottom, 6)
@@ -105,22 +141,37 @@ struct ChatComposerView: View {
                     if !interactor.skillsLoading && interactor.skillsError == nil && skillMatches.isEmpty {
                         Text("No matching skills").foregroundStyle(.secondary).padding(12)
                     }
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(skillMatches, id: \.name) { skill in
-                                Button {
-                                    guard !isComposing else { return }
-                                    let result = SkillSuggestions.insert(skill.name, text: interactor.composerText, query: skillQuery)
-                                    interactor.setComposerText(result.0)
-                                    textSelection = result.1
-                                    interactor.recordSkill(skill.name)
-                                    textFocused = true
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("$" + skill.name)
-                                        if let description = skill.description, !description.isEmpty { Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                                }.buttonStyle(.plain)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(skillMatches.enumerated()), id: \.element.name) { index, skill in
+                                    let isSelected = index == clampedSuggestionIndex
+                                    Button {
+                                        guard !isComposing else { return }
+                                        let result = SkillSuggestions.insert(skill.name, text: interactor.composerText, query: skillQuery)
+                                        interactor.setComposerText(result.0)
+                                        textSelection = result.1
+                                        interactor.recordSkill(skill.name)
+                                        textFocused = true
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("$" + skill.name)
+                                            if let description = skill.description, !description.isEmpty { Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10)
+                                        .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .id(skill.name)
+                                }
+                            }
+                        }
+                        .onChange(of: clampedSuggestionIndex) { _, newIndex in
+                            guard skillMatches.indices.contains(newIndex) else { return }
+                            withAnimation(.easeInOut(duration: 0.12)) {
+                                proxy.scrollTo(skillMatches[newIndex].name, anchor: .center)
                             }
                         }
                     }.frame(height: min(CGFloat(skillMatches.count) * 64, 220))
@@ -175,7 +226,23 @@ struct ChatComposerView: View {
                                 ? String(localized: "Keep an instruction for later…") : String(localized: "Message the agent…"),
                             onReturn: {
                                 handleReturn(composer, attachments: attachments,
-                                             mentions: mentionSuggestions, slashCommands: slashSuggestions)
+                                             mentions: mentionSuggestions, slashCommands: slashSuggestions,
+                                             skillQuery: skillQuery, skillMatches: skillMatches,
+                                             selectedIndex: clampedSuggestionIndex)
+                            },
+                            onSteerReturn: {
+                                handleSteerReturn(composer, attachments: attachments)
+                            },
+                            onMoveSuggestion: { delta in
+                                moveSuggestion(delta, count: activeSuggestionCount)
+                            },
+                            onTab: {
+                                acceptSuggestion(mentions: mentionSuggestions, slashCommands: slashSuggestions,
+                                                 skillQuery: skillQuery, skillMatches: skillMatches,
+                                                 selectedIndex: clampedSuggestionIndex)
+                            },
+                            onEscape: {
+                                handleEscape(suggestionKey: suggestionKey, hasVisiblePopup: activeSuggestionCount > 0 || skillQuery != nil)
                             },
                             onPasteItems: ingest)
                     }
@@ -201,6 +268,7 @@ struct ChatComposerView: View {
                             textFocused = true
                         } label: { Image(systemName: "sparkles").frame(width: 44, height: 44) }
                         .accessibilityLabel("Skills")
+                        .help("Insert skill ($)")
                     }
                         if interactor.scratchlist != nil { scratchlistButton }
                         if !scratchlistMode { scheduleButton(hasAttachments: !attachments.isEmpty) }
@@ -222,21 +290,43 @@ struct ChatComposerView: View {
         // keyboard is down; above a keyboard the normal gap applies.
         .padding(.bottom, hugsBottomEdge && !textFocused ? -8 : 8)
         .animation(.snappy, value: hugsBottomEdge && !textFocused)
-        .task(id: skillQuery != nil) { if skillQuery != nil { await interactor.loadSkills() } }
+        .task(id: rawSkillQuery != nil) { if rawSkillQuery != nil { await interactor.loadSkills() } }
         .task(id: mentionRequest) {
             await interactor.mentionFiles.load(mentionRequest)
+        }
+        .onChange(of: suggestionKey) { _, newKey in
+            selectedSuggestionIndex = 0
+            if newKey != dismissedSuggestionKey {
+                dismissedSuggestionKey = nil
+            }
+        }
+        .onChange(of: activeSuggestionCount) { _, count in
+            if selectedSuggestionIndex >= count {
+                selectedSuggestionIndex = max(0, count - 1)
+            }
         }
         .onChange(of: interactor.composerFocusRequest) {
             textFocused = true
         }
-        // Hardware keyboard: ⌘↩ sends, matching the Send button's gate.
+        // Hardware keyboard: ⌘↩ sends (or parks draft in scratchlist mode); ⇧⌘↩ steers into active turn.
         .background {
-            Button("Send") { interactor.sendMessage() }
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(scratchlistMode || !primaryAction(composer, attachments: attachments).canSend)
-                .opacity(0)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            Group {
+                if scratchlistMode {
+                    Button("Save draft") { interactor.parkComposerDraft() }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!canParkDraft)
+                } else {
+                    Button("Send") { interactor.sendMessage() }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!primaryAction(composer, attachments: attachments).canSend)
+                    Button("Send & steer into current turn") { interactor.sendMessage(steer: true) }
+                        .keyboardShortcut(.return, modifiers: [.command, .shift])
+                        .disabled(!canSendAndSteer(composer, attachments: attachments))
+                }
+            }
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
         }
         .confirmationDialog("Attach", isPresented: $attachDialogOpen, titleVisibility: .visible) {
             Button("Photo library") {
@@ -422,6 +512,7 @@ struct ChatComposerView: View {
         .disabled(hasAttachments || interactor.scratchlistBusy)
         .accessibilityLabel("Schedule send")
         .accessibilityIdentifier("chat.schedule-send")
+        .help("Schedule send")
     }
 
     private var addAttachmentButton: some View {
@@ -434,6 +525,7 @@ struct ChatComposerView: View {
         .disabled(preparingAttachment || interactor.scratchlistBusy)
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("chat.add-attachment")
+        .help("Add attachment")
     }
 
     private var scratchlistButton: some View {
@@ -458,6 +550,12 @@ struct ChatComposerView: View {
         .accessibilityLabel(String(format: String(localized: "Scratchlist (%lld)"), Int64(interactor.scratchlistCount)))
         .accessibilityValue(scratchlistMode ? String(localized: "Held — not sent") : String(localized: "Chat"))
         .accessibilityIdentifier("scratchlist.toggle")
+        .help("Toggle Scratchlist (⇧⌘D)")
+    }
+
+    private var canParkDraft: Bool {
+        interactor.hasComposerDraft && !interactor.scratchlistBusy && !interactor.isSending
+            && !interactor.attachments.hasUnsettled && !preparingAttachment
     }
 
     private var parkButton: some View {
@@ -473,9 +571,9 @@ struct ChatComposerView: View {
             .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
-        .disabled(!interactor.hasComposerDraft || interactor.scratchlistBusy || interactor.isSending
-            || interactor.attachments.hasUnsettled || preparingAttachment)
+        .disabled(!canParkDraft)
         .accessibilityIdentifier("scratchlist.park")
+        .help("Save draft to Scratchlist (⌘↩)")
     }
 
     // MARK: - Dictation
@@ -557,27 +655,81 @@ struct ChatComposerView: View {
         else { primaryActionButton(composer, attachments: attachments) }
     }
 
-    /// Mac Return: picks the first visible suggestion, otherwise sends when
-    /// the Send button would. Scratchlist drafts keep Return as a newline.
-    private func handleReturn(_ composer: ComposerState, attachments: [ComposerAttachmentUI],
-                              mentions: [ComposerMentionSuggestion], slashCommands: [SlashCommand]) -> Bool {
+    private func moveSuggestion(_ delta: Int, count: Int) -> Bool {
+        guard !isComposing, count > 0 else { return false }
+        selectedSuggestionIndex = (selectedSuggestionIndex + delta + count) % count
+        return true
+    }
+
+    private func acceptSuggestion(
+        mentions: [ComposerMentionSuggestion],
+        slashCommands: [SlashCommand],
+        skillQuery: SkillSuggestions.Query?,
+        skillMatches: [SkillSummary],
+        selectedIndex: Int
+    ) -> Bool {
         guard !isComposing else { return false }
-        if !scratchlistMode, let query = SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing),
-           let skill = SkillSuggestions.matches(interactor.skills, query: query.text, recent: interactor.recentSkills).first {
+        if !mentions.isEmpty {
+            let suggestion = mentions[min(max(0, selectedIndex), mentions.count - 1)]
+            if let selection = interactor.selectMention(suggestion, selection: textSelection) {
+                textSelection = selection
+            }
+            return true
+        }
+        if !slashCommands.isEmpty {
+            let command = slashCommands[min(max(0, selectedIndex), slashCommands.count - 1)]
+            interactor.selectSlashCommand(command)
+            return true
+        }
+        if !scratchlistMode, let query = skillQuery, !skillMatches.isEmpty {
+            let skill = skillMatches[min(max(0, selectedIndex), skillMatches.count - 1)]
             let edit = SkillSuggestions.insert(skill.name, text: interactor.composerText, query: query)
             interactor.setComposerText(edit.0)
             textSelection = edit.1
             interactor.recordSkill(skill.name)
             return true
         }
-        if let suggestion = mentions.first {
-            if let selection = interactor.selectMention(suggestion, selection: textSelection) {
-                textSelection = selection
-            }
+        return false
+    }
+
+    private func handleEscape(suggestionKey: String?, hasVisiblePopup: Bool) -> Bool {
+        guard !isComposing else { return false }
+        if hasVisiblePopup, let suggestionKey {
+            dismissedSuggestionKey = suggestionKey
             return true
         }
-        if let command = slashCommands.first {
-            interactor.selectSlashCommand(command)
+        if textFocused {
+            textFocused = false
+            return true
+        }
+        return false
+    }
+
+    private func canSendAndSteer(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
+        !scratchlistMode && interactor.pendingSchedule == nil && composer.canSendAndSteer
+            && primaryAction(composer, attachments: attachments).canSend
+    }
+
+    private func handleSteerReturn(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
+        guard !isComposing, canSendAndSteer(composer, attachments: attachments) else { return false }
+        interactor.sendMessage(steer: true)
+        return true
+    }
+
+    /// Mac Return: picks the highlighted suggestion, otherwise sends when
+    /// the Send button would. Scratchlist drafts keep Return as a newline.
+    private func handleReturn(_ composer: ComposerState, attachments: [ComposerAttachmentUI],
+                              mentions: [ComposerMentionSuggestion], slashCommands: [SlashCommand],
+                              skillQuery: SkillSuggestions.Query?, skillMatches: [SkillSummary],
+                              selectedIndex: Int) -> Bool {
+        guard !isComposing else { return false }
+        if acceptSuggestion(
+            mentions: mentions,
+            slashCommands: slashCommands,
+            skillQuery: skillQuery,
+            skillMatches: skillMatches,
+            selectedIndex: selectedIndex
+        ) {
             return true
         }
         guard !scratchlistMode else { return false }
@@ -640,6 +792,7 @@ struct ChatComposerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Stop the current turn")
+            .help("Stop the current turn (⌘.)")
         case .send(let enabled):
             let label = sendLabel(enabled: enabled)
             if scheduled {
@@ -651,10 +804,11 @@ struct ChatComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!enabled)
                 .accessibilityLabel("Schedule send")
+                .help("Schedule send (↩)")
             } else if composer.canSendAndSteer && enabled {
-                // Tap sends (queue); long-press opens the deliberate steer intent.
+                // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
                 Menu {
-                    Button("Send & steer into current turn") {
+                    Button("Send & steer into current turn (⇧⌘↩)") {
                         interactor.sendMessage(steer: true)
                     }
                 } label: {
@@ -665,6 +819,7 @@ struct ChatComposerView: View {
                 .menuStyle(.button)
                 .buttonStyle(.plain)
                 .accessibilityLabel("Send — long-press to steer")
+                .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
             } else {
                 Button {
                     interactor.sendMessage()
@@ -674,6 +829,7 @@ struct ChatComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!enabled)
                 .accessibilityLabel("Send")
+                .help("Send (↩)")
             }
         }
     }
@@ -760,18 +916,27 @@ private enum ComposerPrimaryAction {
 /// longer ones scroll inside a bounded card.
 private struct SlashCommandList: View {
     let commands: [SlashCommand]
+    var selectedIndex: Int = 0
     let surface: Color
     let onSelect: (SlashCommand) -> Void
 
     var body: some View {
-        Group {
-            if commands.count > 4 {
-                ScrollView {
+        ScrollViewReader { proxy in
+            Group {
+                if commands.count > 4 {
+                    ScrollView {
+                        rows
+                    }
+                    .frame(height: 220)
+                } else {
                     rows
                 }
-                .frame(height: 220)
-            } else {
-                rows
+            }
+            .onChange(of: selectedIndex) { _, newIndex in
+                guard commands.indices.contains(newIndex) else { return }
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    proxy.scrollTo(commands[newIndex].name, anchor: .center)
+                }
             }
         }
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(surface))
@@ -783,6 +948,7 @@ private struct SlashCommandList: View {
     private var rows: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(Array(commands.enumerated()), id: \.element.name) { index, command in
+                let isSelected = index == selectedIndex
                 if index > 0 {
                     Divider().padding(.leading, 12)
                 }
@@ -803,9 +969,11 @@ private struct SlashCommandList: View {
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
+                    .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .id(command.name)
                 .accessibilityIdentifier("composer.slash.\(command.name)")
             }
         }

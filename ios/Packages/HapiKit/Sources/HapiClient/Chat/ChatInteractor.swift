@@ -1259,6 +1259,21 @@ public final class ChatInteractor {
         }
     }
 
+    /// `POST /sessions/:id/archive` for an active session.
+    public func archiveSession() {
+        guard !sessionOpPending else { return }
+        sessionOpPending = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.sessionOpPending = false }
+            do {
+                try await self.sessionStore.archiveSession(sessionId: self.sessionId)
+            } catch {
+                self.emit(.notice("Failed to archive session"))
+            }
+        }
+    }
+
     /// `DELETE /sessions/:id` for an inactive session. Success removes the
     /// row and fires the store's removal callback, which closes this chat;
     /// a 409 means the session became active again.

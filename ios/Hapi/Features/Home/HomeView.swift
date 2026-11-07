@@ -17,6 +17,7 @@ struct HomeView: View {
     @State private var listModel: SessionListModel
     @State private var showNewSession = false
     @State private var showSettings = false
+    @State private var searchFocused = false
     @State private var path: [String] = []
     @State private var tabletNavigation = SessionNavigationState()
     /// Transient connection states show only after `connectionRevealDelay`:
@@ -111,7 +112,15 @@ struct HomeView: View {
             newSession: { showNewSession = true },
             openSettings: { showSettings = true },
             toggleSidebar: usesSplitNavigation ? toggleSidebar : nil,
-            selectAdjacentSession: usesSplitNavigation ? selectAdjacentSession : nil
+            focusSearch: {
+                if usesSplitNavigation && tabletNavigation.columnVisibility == .detailOnly {
+                    tabletNavigation.columnVisibility = .all
+                }
+                searchFocused = true
+            },
+            refresh: { Task { await listModel.refresh() } },
+            selectAdjacentSession: usesSplitNavigation ? selectAdjacentSession : nil,
+            selectSessionAtIndex: usesSplitNavigation ? selectSessionAtIndex : nil
         ))
     }
 
@@ -131,6 +140,12 @@ struct HomeView: View {
         }
         guard ids.indices.contains(target) else { return }
         openSession(ids[target])
+    }
+
+    private func selectSessionAtIndex(_ index: Int) {
+        let ids = listModel.rows.map(\.id)
+        guard ids.indices.contains(index) else { return }
+        openSession(ids[index])
     }
 
     private var sessionList: some View {
@@ -154,7 +169,7 @@ struct HomeView: View {
         }
         .modifier(ConnectionSubtitle(message: subtitleCarriesConnectionStatus
             ? connectionNotice.transientMessage(revealed: connectionStatusRevealed) : nil))
-        .searchable(text: $listModel.searchQuery, prompt: Text("Search sessions"))
+        .searchable(text: $listModel.searchQuery, isPresented: $searchFocused, prompt: Text("Search sessions"))
         .onChange(of: tabletNavigation.selectedSessionId, initial: true) { _, sessionId in
             listModel.selectedSessionId = sessionId
         }
@@ -210,6 +225,7 @@ struct HomeView: View {
                 .modifier(TouchTarget())
         }
         .accessibilityIdentifier("home.new-session")
+        .help("New Session (⌘N)")
     }
 
     private var settingsButton: some View {
@@ -218,6 +234,7 @@ struct HomeView: View {
                 .modifier(TouchTarget())
         }
         .accessibilityIdentifier("home.settings")
+        .help("Settings (⌘,)")
     }
 
     private func openSession(_ sessionId: String) {

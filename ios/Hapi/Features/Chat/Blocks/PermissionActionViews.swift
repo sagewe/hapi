@@ -138,6 +138,8 @@ struct PermissionActionsRow: View {
             Text("Allow").fixedSize(horizontal: horizontal, vertical: true)
         }
         .buttonStyle(ChatActionButtonStyle(emphasis: .primary))
+        .keyboardShortcut("y", modifiers: .command)
+        .help("Allow (⌘Y)")
         .accessibilityIdentifier("permission-allow-\(requestId)")
 
         Button { submit(options.denyAction) } label: {
@@ -145,12 +147,15 @@ struct PermissionActionsRow: View {
                 .fixedSize(horizontal: horizontal, vertical: true)
         }
         .buttonStyle(ChatActionButtonStyle(emphasis: .destructive))
+        .keyboardShortcut(.delete, modifiers: .command)
+        .help(options.denyAction == .abort ? String(localized: "Abort (⌘⌫)") : String(localized: "Deny (⌘⌫)"))
         .accessibilityIdentifier("permission-deny-\(requestId)")
 
         if options.hasMore {
             Menu {
                 if options.canAllowForSession {
                     Button("Allow for this session") { submit(.allowForSession) }
+                        .keyboardShortcut("y", modifiers: [.command, .shift])
                 }
                 if options.canAllowAllEdits {
                     Button("Allow all edits") { submit(.allowAllEdits) }
