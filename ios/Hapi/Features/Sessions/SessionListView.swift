@@ -113,51 +113,61 @@ struct SessionListView: View {
     /// stays live; returning refreshes once.
     private var sessionList: some View {
         let rows = frozenRows ?? model.rows
-        return KeyedContent(key: ListRenderKey(rows: rows, selectable: selection != nil,
+        let selectedSessionId = selection?.wrappedValue
+        return KeyedContent(key: ListRenderKey(rows: rows, selectedSessionId: selectedSessionId,
+                                               selectable: selection != nil,
                                                theme: theme, filters: model.filters)) {
-            list(rows)
+            list(rows, selectedSessionId: selectedSessionId)
         }
         .equatable()
         .onAppear { frozenRows = nil }
         .onDisappear { frozenRows = model.rows }
     }
 
-    private func list(_ rows: [SessionRowUI]) -> some View {
+    private func list(_ rows: [SessionRowUI], selectedSessionId: String?) -> some View {
         let pinnedCount = SessionListModel.pinnedCount(of: rows)
-        return List(selection: selection) {
-            if pinnedCount > 0 {
-                Section {
-                    ForEach(rows.prefix(pinnedCount)) { row in
-                        equatableRow(row)
-                    }
-                } header: {
-                    sectionHeader("Pinned")
-                }
-                .listSectionSeparator(.hidden, edges: .top)
-            }
-            if rows.count > pinnedCount {
-                // Headerless when nothing is pinned: an empty-string Section
-                // header still reserves a blank sticky band above the list
-                // (device feedback: "一片空白").
+        return ScrollViewReader { proxy in
+            List(selection: selection) {
                 if pinnedCount > 0 {
                     Section {
-                        ForEach(rows.dropFirst(pinnedCount)) { row in
-                            equatableRow(row)
+                        ForEach(rows.prefix(pinnedCount)) { row in
+                            equatableRow(row, isSelected: selectedSessionId == row.id)
                         }
                     } header: {
-                        // Not "Sessions": the navigation title already says so.
-                        sectionHeader("Recent")
+                        sectionHeader("Pinned")
                     }
                     .listSectionSeparator(.hidden, edges: .top)
-                } else {
-                    // Top edge hidden: a plain list otherwise draws a stray
-                    // separator above the very first row (device feedback).
-                    Section {
-                        ForEach(rows) { row in
-                            equatableRow(row)
+                }
+                if rows.count > pinnedCount {
+                    // Headerless when nothing is pinned: an empty-string Section
+                    // header still reserves a blank sticky band above the list
+                    // (device feedback: "一片空白").
+                    if pinnedCount > 0 {
+                        Section {
+                            ForEach(rows.dropFirst(pinnedCount)) { row in
+                                equatableRow(row, isSelected: selectedSessionId == row.id)
+                            }
+                        } header: {
+                            // Not "Sessions": the navigation title already says so.
+                            sectionHeader("Recent")
                         }
+                        .listSectionSeparator(.hidden, edges: .top)
+                    } else {
+                        // Top edge hidden: a plain list otherwise draws a stray
+                        // separator above the very first row (device feedback).
+                        Section {
+                            ForEach(rows) { row in
+                                equatableRow(row, isSelected: selectedSessionId == row.id)
+                            }
+                        }
+                        .listSectionSeparator(.hidden, edges: .top)
                     }
-                    .listSectionSeparator(.hidden, edges: .top)
+                }
+            }
+            .onChange(of: selectedSessionId) { _, newId in
+                guard let newId, rows.contains(where: { $0.id == newId }) else { return }
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    proxy.scrollTo(newId)
                 }
             }
         }
@@ -180,14 +190,16 @@ struct SessionListView: View {
     /// The List evaluates every row's content (offscreen ones included) on
     /// each list change, so one streaming session cost O(all rows) per
     /// update. Rows compare only what they draw and skip unchanged content.
-    private func equatableRow(_ row: SessionRowUI) -> some View {
-        KeyedContent(key: RowRenderKey(row: row, selectable: selection != nil, theme: theme)) {
-            rowCell(row)
+    private func equatableRow(_ row: SessionRowUI, isSelected: Bool) -> some View {
+        KeyedContent(key: RowRenderKey(row: row, isSelected: isSelected, selectable: selection != nil, theme: theme)) {
+            rowCell(row, isSelected: isSelected)
         }
         .equatable()
+        .tag(row.id)
+        .id(row.id)
     }
 
-    private func rowCell(_ row: SessionRowUI) -> some View {
+    private func rowCell(_ row: SessionRowUI, isSelected: Bool) -> some View {
         Group {
             if selection != nil {
                 NavigationLink(value: row.id) {
@@ -203,6 +215,11 @@ struct SessionListView: View {
                 .buttonStyle(.plain)
             }
         }
+        .listRowBackground(
+            isSelected
+                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.18))
+                : nil
+        )
         .listRowInsets(EdgeInsets(top: Self.rowVerticalInset, leading: 16, bottom: Self.rowVerticalInset, trailing: 16))
         // Default separator color reads heavy against these rows; the theme
         // divider is the WeChat-style faint hairline.
@@ -406,12 +423,14 @@ private struct KeyedContent<Key: Equatable, Content: View>: View, Equatable {
 
 private struct RowRenderKey: Equatable {
     let row: SessionRowUI
+    let isSelected: Bool
     let selectable: Bool
     let theme: HapiTheme
 }
 
 private struct ListRenderKey: Equatable {
     let rows: [SessionRowUI]
+    let selectedSessionId: String?
     let selectable: Bool
     let theme: HapiTheme
     let filters: SessionListFilters

@@ -18,6 +18,8 @@ struct UserTextBlockView: View {
 
     @Environment(\.chatInteractions) private var interactions
     @Environment(\.hapiTypography) private var typography
+    @Environment(\.hapiTheme) private var theme
+    @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.openChatMessage) private var openMessage
 
     init(block: UserTextBlock) {
@@ -31,12 +33,35 @@ struct UserTextBlockView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 VStack(alignment: .leading, spacing: 8) {
                     if !block.text.isEmpty {
+                        #if targetEnvironment(macCatalyst)
+                        if preview.end == block.text.endIndex {
+                            MacSelectableText(
+                                attributedText: MacSelectableText.plainAttributedString(
+                                    preview.text,
+                                    size: typography.bodySize,
+                                    weight: typography.boldText ? .semibold : .regular,
+                                    foregroundColor: UIColor(theme.textPrimary),
+                                    lineSpacing: typography.bodyLineSpacing
+                                ),
+                                wraps: true,
+                                fillsWidth: false
+                            )
+                        } else {
+                            Text(verbatim: preview.text)
+                                .font(typography.bodyFont)
+                                .lineSpacing(typography.bodyLineSpacing)
+                                .lineLimit(MessageTextPage.previewLines)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                        #else
                         Text(verbatim: preview.text)
                             .font(typography.bodyFont)
                             .lineSpacing(typography.bodyLineSpacing)
                             .lineLimit(preview.end < block.text.endIndex ? MessageTextPage.previewLines : nil)
                             .fixedSize(horizontal: false, vertical: true)
                             .textSelection(.enabled)
+                        #endif
                         if preview.end < block.text.endIndex {
                             Button { openMessage?(block) } label: {
                                 Label("View full message", systemImage: "doc.text")
@@ -66,6 +91,13 @@ struct UserTextBlockView: View {
                         topTrailingRadius: 16
                     )
                 )
+                .contextMenu {
+                    if !block.text.isEmpty {
+                        Button("Copy Message", systemImage: "doc.on.doc") {
+                            pasteboard.copy(block.text)
+                        }
+                    }
+                }
                 if block.status == "failed" {
                     if let interactions, let retryLocalId = block.localId {
                         Button {
@@ -94,10 +126,45 @@ struct UserTextBlockView: View {
 /// Assistant prose: full-width markdown through the shared M2e renderer.
 struct AgentTextBlockView: View {
     let block: AgentTextBlock
+    @Environment(\.hapiPasteboard) private var pasteboard
+    @Environment(\.hapiTheme) private var theme
+    @State private var copied = false
+    @State private var hovered = false
 
     var body: some View {
         CachedMarkdownView(markdown: block.text)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .topTrailing) {
+                #if targetEnvironment(macCatalyst)
+                if hovered || copied {
+                    Button {
+                        pasteboard.copy(block.text)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(1500))
+                            copied = false
+                        }
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.caption)
+                            .foregroundStyle(copied ? theme.success : theme.textSecondary)
+                            .padding(6)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy full message")
+                    .accessibilityLabel(copied ? "Copied" : "Copy message")
+                }
+                #endif
+            }
+            .onHover { isHovered in
+                hovered = isHovered
+            }
+            .contextMenu {
+                Button("Copy Message", systemImage: "doc.on.doc") {
+                    pasteboard.copy(block.text)
+                }
+            }
     }
 }
 
@@ -233,6 +300,22 @@ struct TerminalTextView: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
+            #if targetEnvironment(macCatalyst)
+            MacSelectableText(
+                attributedText: MacSelectableText.plainAttributedString(
+                    text,
+                    size: typography.codeSize,
+                    weight: typography.boldText ? .semibold : .regular,
+                    monospaced: true,
+                    foregroundColor: UIColor(isError ? theme.danger : theme.textPrimary),
+                    lineSpacing: typography.codeLineSpacing
+                ),
+                wraps: false,
+                fillsWidth: false
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            #else
             Text(text)
                 .font(typography.codeFont)
                 .lineSpacing(typography.codeLineSpacing)
@@ -240,6 +323,7 @@ struct TerminalTextView: View {
                 .textSelection(.enabled)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+            #endif
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.codeBackground)

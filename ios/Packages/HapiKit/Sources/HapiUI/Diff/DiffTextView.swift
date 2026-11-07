@@ -183,6 +183,7 @@ public struct DiffTextView: View {
 
         return Text(text)
             .font(typography.codeFont)
+            .textSelection(.enabled)
             .padding(.horizontal, 12)
             .padding(.vertical, typography.codeLineSpacing / 2)
             .background(background ?? Color.clear)

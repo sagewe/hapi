@@ -39,12 +39,28 @@ public struct CodeBlockView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             ScrollView(.horizontal, showsIndicators: false) {
+                #if targetEnvironment(macCatalyst)
+                MacSelectableText(
+                    attributedText: MacSelectableText.codeAttributedString(
+                        highlighted: highlighted,
+                        fallbackCode: code,
+                        size: typography.codeSize,
+                        weight: typography.boldText ? .semibold : .regular,
+                        defaultColor: .init(theme.textPrimary),
+                        lineSpacing: typography.codeLineSpacing
+                    ),
+                    wraps: false,
+                    fillsWidth: false
+                )
+                .padding(12)
+                #else
                 Text(highlighted ?? AttributedString(code))
                     .font(typography.codeFont)
                     .lineSpacing(typography.codeLineSpacing)
                     .foregroundStyle(theme.textPrimary)
                     .textSelection(.enabled)
                     .padding(12)
+                #endif
             }
         }
         .background(theme.codeBackground)

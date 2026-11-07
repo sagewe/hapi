@@ -535,22 +535,57 @@ struct MarkdownBlockView: View {
     let block: MarkdownBlockNode
     @Environment(\.hapiTheme) private var theme
     @Environment(\.hapiTypography) private var typography
+    @Environment(\.hapiOpenURL) private var hapiOpenURL
 
     var body: some View {
         switch block {
         case .paragraph(let text):
+            #if targetEnvironment(macCatalyst)
+            MacSelectableText(
+                attributedText: MacSelectableText.markdownAttributedString(
+                    text,
+                    baseSize: typography.bodySize,
+                    baseWeight: typography.boldText ? .semibold : .regular,
+                    lineSpacing: typography.bodyLineSpacing,
+                    theme: theme,
+                    typography: typography
+                ),
+                wraps: true,
+                fillsWidth: true,
+                linkColor: .init(theme.link),
+                onOpenURL: { hapiOpenURL($0) }
+            )
+            #else
             SwiftUI.Text(hapiStyledText(text, theme: theme, typography: typography))
                 .font(typography.bodyFont)
                 .lineSpacing(typography.bodyLineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
+            #endif
         case .heading(let level, let text):
+            #if targetEnvironment(macCatalyst)
+            MacSelectableText(
+                attributedText: MacSelectableText.markdownAttributedString(
+                    text,
+                    baseSize: typography.headingSize(level),
+                    baseWeight: typography.boldText ? .bold : .semibold,
+                    lineSpacing: 0,
+                    theme: theme,
+                    typography: typography
+                ),
+                wraps: true,
+                fillsWidth: true,
+                linkColor: .init(theme.link),
+                onOpenURL: { hapiOpenURL($0) }
+            )
+            #else
             SwiftUI.Text(hapiStyledText(text, theme: theme, typography: typography))
                 .font(typography.headingFont(level))
                 .fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(theme.textPrimary)
                 .textSelection(.enabled)
+            #endif
         case .codeBlock(let language, let code):
             #if canImport(UIKit) && canImport(WebKit)
             if language == "mermaid" {
@@ -636,6 +671,7 @@ struct MarkdownTableView: View {
                             .fontWeight(.semibold)
                             .font(typography.bodyFont)
                             .foregroundStyle(theme.textPrimary)
+                            .textSelection(.enabled)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .gridColumnAlignment(columnAlignment(index))
@@ -649,6 +685,7 @@ struct MarkdownTableView: View {
                             SwiftUI.Text(hapiStyledText(cell, theme: theme, typography: typography))
                                 .font(typography.bodyFont)
                                 .foregroundStyle(theme.textPrimary)
+                                .textSelection(.enabled)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .gridColumnAlignment(columnAlignment(index))
