@@ -447,7 +447,7 @@ struct ChatView: View {
             rename: { renameOpen = true },
             export: model.isExporting ? nil : { exportFormatOpen = true },
             refreshChat: { model.retry() },
-            stop: model.interactor.composer.canStop ? { model.interactor.abortSession() } : nil
+            stop: model.interactor.canStop ? { model.interactor.abortSession() } : nil
         )
     }
 

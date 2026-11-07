@@ -2,10 +2,6 @@
 import SwiftUI
 import UIKit
 
-private extension Notification.Name {
-    static let hapiClearOtherTextSelections = Notification.Name("hapi.clearOtherTextSelections")
-}
-
 /// Tracks the most recent non-empty text selection inside any `MacSelectableText`
 /// so `⌘C` works reliably even when `ComposerTextView` holds first responder.
 @MainActor
@@ -21,6 +17,9 @@ public final class MacTextSelectionTracker {
         if range.length > 0,
            let nsText = textView.text as NSString?,
            range.location + range.length <= nsText.length {
+            if let previous = activeView, previous !== textView, previous.selectedRange.length > 0 {
+                previous.selectedRange = NSRange(location: 0, length: 0)
+            }
             selectedText = nsText.substring(with: range)
             activeView = textView
         } else if activeView === textView {
@@ -30,6 +29,9 @@ public final class MacTextSelectionTracker {
     }
 
     public func clear() {
+        if let previous = activeView, previous.selectedRange.length > 0 {
+            previous.selectedRange = NSRange(location: 0, length: 0)
+        }
         selectedText = nil
         activeView = nil
     }
@@ -37,22 +39,82 @@ public final class MacTextSelectionTracker {
 
 /// Read-only selectable `UITextView` for Mac Catalyst so mouse pointer I-beam
 /// drag-selection, double/triple-click selection, and ⌘C work natively inside
-/// chat transcripts, code blocks, and user bubbles.
+/// chat transcripts, code blocks, and user bubbles without redundant TextKit work.
 public struct MacSelectableText: UIViewRepresentable {
-    public let attributedText: NSAttributedString
+    public enum Content: Equatable {
+        case markdown(
+            AttributedString,
+            baseSize: CGFloat,
+            baseWeight: UIFont.Weight,
+            lineSpacing: CGFloat,
+            theme: HapiTheme,
+            typography: HapiTypography
+        )
+        case plain(
+            String,
+            size: CGFloat,
+            weight: UIFont.Weight,
+            monospaced: Bool,
+            foregroundColor: UIColor,
+            lineSpacing: CGFloat
+        )
+        case code(
+            highlighted: AttributedString?,
+            fallbackCode: String,
+            size: CGFloat,
+            weight: UIFont.Weight,
+            defaultColor: UIColor,
+            lineSpacing: CGFloat
+        )
+
+        @MainActor
+        func buildAttributedString() -> NSAttributedString {
+            switch self {
+            case let .markdown(source, baseSize, baseWeight, lineSpacing, theme, typography):
+                return MacSelectableText.markdownAttributedString(
+                    source,
+                    baseSize: baseSize,
+                    baseWeight: baseWeight,
+                    lineSpacing: lineSpacing,
+                    theme: theme,
+                    typography: typography
+                )
+            case let .plain(text, size, weight, monospaced, foregroundColor, lineSpacing):
+                return MacSelectableText.plainAttributedString(
+                    text,
+                    size: size,
+                    weight: weight,
+                    monospaced: monospaced,
+                    foregroundColor: foregroundColor,
+                    lineSpacing: lineSpacing
+                )
+            case let .code(highlighted, fallbackCode, size, weight, defaultColor, lineSpacing):
+                return MacSelectableText.codeAttributedString(
+                    highlighted: highlighted,
+                    fallbackCode: fallbackCode,
+                    size: size,
+                    weight: weight,
+                    defaultColor: defaultColor,
+                    lineSpacing: lineSpacing
+                )
+            }
+        }
+    }
+
+    public let content: Content
     public var wraps: Bool
     public var fillsWidth: Bool
     public var linkColor: UIColor?
     public var onOpenURL: ((URL) -> Void)?
 
     public init(
-        attributedText: NSAttributedString,
+        content: Content,
         wraps: Bool = true,
         fillsWidth: Bool = true,
         linkColor: UIColor? = nil,
         onOpenURL: ((URL) -> Void)? = nil
     ) {
-        self.attributedText = attributedText
+        self.content = content
         self.wraps = wraps
         self.fillsWidth = fillsWidth
         self.linkColor = linkColor
@@ -64,7 +126,7 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> SelectableUITextView {
-        let view = SelectableUITextView()
+        let view = SelectableUITextView(usingTextLayoutManager: false)
         view.isEditable = false
         view.isSelectable = true
         view.isScrollEnabled = false
@@ -75,26 +137,28 @@ public struct MacSelectableText: UIViewRepresentable {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.setContentHuggingPriority(.required, for: .vertical)
         view.delegate = context.coordinator
+        applyConfiguration(to: view, coordinator: context.coordinator)
         return view
     }
 
     public func updateUIView(_ view: SelectableUITextView, context: Context) {
-        context.coordinator.onOpenURL = onOpenURL
+        applyConfiguration(to: view, coordinator: context.coordinator)
+    }
+
+    private func applyConfiguration(to view: SelectableUITextView, coordinator: Coordinator) {
+        coordinator.onOpenURL = onOpenURL
         view.textContainer.widthTracksTextView = wraps
-        if !wraps {
-            view.textContainer.size = CGSize(
-                width: CGFloat.greatestFiniteMagnitude,
-                height: CGFloat.greatestFiniteMagnitude
-            )
-        }
-        if let linkColor {
+        if let linkColor, view.lastLinkColor != linkColor {
+            view.lastLinkColor = linkColor
             view.linkTextAttributes = [
                 .foregroundColor: linkColor,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
             ]
         }
-        if !view.attributedText.isEqual(to: attributedText) {
-            view.attributedText = attributedText
+        if view.lastContent != content {
+            view.lastContent = content
+            view.clearSizeCache()
+            view.attributedText = content.buildAttributedString()
             view.invalidateIntrinsicContentSize()
         }
     }
@@ -104,51 +168,86 @@ public struct MacSelectableText: UIViewRepresentable {
         uiView: SelectableUITextView,
         context: Context
     ) -> CGSize? {
+        applyConfiguration(to: uiView, coordinator: context.coordinator)
+
         if !wraps {
-            let measured = uiView.sizeThatFits(
-                CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            )
-            return CGSize(width: ceil(measured.width), height: ceil(measured.height))
+            let unwrapped = uiView.measureUnwrapped()
+            return CGSize(width: max(1, unwrapped.width), height: max(1, unwrapped.height))
         }
-        let proposedWidth = proposal.width ?? .greatestFiniteMagnitude
-        let targetWidth = (proposedWidth > 0 && proposedWidth.isFinite)
-            ? proposedWidth
-            : .greatestFiniteMagnitude
-        let measured = uiView.sizeThatFits(
-            CGSize(width: targetWidth, height: CGFloat.greatestFiniteMagnitude)
-        )
-        let width: CGFloat
-        if targetWidth.isFinite {
-            width = fillsWidth ? targetWidth : min(targetWidth, ceil(measured.width))
-        } else {
-            width = ceil(measured.width)
+
+        // SwiftUI HStack/VStack minimum-width probe: wrapping text can shrink to 0.
+        if let proposedWidth = proposal.width, proposedWidth <= 0 {
+            return CGSize(width: 0, height: 1)
         }
-        return CGSize(width: max(1, width), height: max(1, ceil(measured.height)))
+
+        // Unspecified (ideal) or .infinity (maximum-width) probe from HStack/VStack:
+        // Never pass CGFloat.greatestFiniteMagnitude to UITextView.sizeThatFits, as UIKit
+        // falls back to NSTextContainer's default 100pt width when given CGFLOAT_MAX.
+        guard let proposedWidth = proposal.width, proposedWidth.isFinite else {
+            let unwrapped = uiView.measureUnwrapped()
+            if fillsWidth, proposal.width == .infinity {
+                return CGSize(width: max(10_000, unwrapped.width), height: max(1, unwrapped.height))
+            }
+            return CGSize(width: max(1, unwrapped.width), height: max(1, unwrapped.height))
+        }
+
+        let measured = uiView.measureWrapped(width: proposedWidth)
+        let width = fillsWidth ? proposedWidth : min(proposedWidth, measured.width)
+        return CGSize(width: max(1, width), height: max(1, measured.height))
     }
 
     public final class SelectableUITextView: UITextView {
-        public override var canBecomeFirstResponder: Bool { true }
+        var lastContent: Content?
+        var lastLinkColor: UIColor?
+        private var cachedUnwrappedSize: CGSize?
+        private var cachedWrappedSizes: [Int: CGSize] = [:]
 
-        override init(frame: CGRect, textContainer: NSTextContainer?) {
-            super.init(frame: frame, textContainer: textContainer)
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleClearOtherSelections(_:)),
-                name: .hapiClearOtherTextSelections,
-                object: nil
-            )
+        func clearSizeCache() {
+            cachedUnwrappedSize = nil
+            cachedWrappedSizes.removeAll(keepingCapacity: true)
         }
 
-        @available(*, unavailable)
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        @objc private func handleClearOtherSelections(_ notification: Notification) {
-            guard notification.object as AnyObject !== self else { return }
-            if selectedRange.length > 0 {
-                selectedRange = NSRange(location: 0, length: 0)
+        func measureUnwrapped() -> CGSize {
+            if let cached = cachedUnwrappedSize { return cached }
+            guard attributedText.length > 0 else {
+                let empty = CGSize(width: 1, height: 1)
+                cachedUnwrappedSize = empty
+                return empty
             }
+            let maxDimension: CGFloat = 100_000
+            let previousTracks = textContainer.widthTracksTextView
+            let previousWidth = bounds.width > 0 ? bounds.width : textContainer.size.width
+            textContainer.widthTracksTextView = false
+            textContainer.size = CGSize(width: maxDimension, height: maxDimension)
+            layoutManager.ensureLayout(for: textContainer)
+            let raw = layoutManager.usedRect(for: textContainer).size
+            if previousTracks, previousWidth > 0 {
+                textContainer.size = CGSize(width: previousWidth, height: maxDimension)
+            }
+            textContainer.widthTracksTextView = previousTracks
+            let size = CGSize(width: ceil(raw.width), height: ceil(raw.height))
+            cachedUnwrappedSize = size
+            return size
+        }
+
+        func measureWrapped(width: CGFloat) -> CGSize {
+            let key = Int((width * 2).rounded())
+            if let cached = cachedWrappedSizes[key] { return cached }
+            guard attributedText.length > 0 else {
+                let empty = CGSize(width: 1, height: 1)
+                cachedWrappedSizes[key] = empty
+                return empty
+            }
+            let maxDimension: CGFloat = 100_000
+            let previousTracks = textContainer.widthTracksTextView
+            textContainer.widthTracksTextView = false
+            textContainer.size = CGSize(width: width, height: maxDimension)
+            layoutManager.ensureLayout(for: textContainer)
+            let raw = layoutManager.usedRect(for: textContainer).size
+            textContainer.widthTracksTextView = previousTracks
+            let size = CGSize(width: ceil(raw.width), height: ceil(raw.height))
+            cachedWrappedSizes[key] = size
+            return size
         }
     }
 
@@ -161,12 +260,6 @@ public struct MacSelectableText: UIViewRepresentable {
 
         public func textViewDidChangeSelection(_ textView: UITextView) {
             MacTextSelectionTracker.shared.updateSelection(from: textView)
-            if textView.selectedRange.length > 0 {
-                if !textView.isFirstResponder {
-                    textView.becomeFirstResponder()
-                }
-                NotificationCenter.default.post(name: .hapiClearOtherTextSelections, object: textView)
-            }
         }
 
         public func textView(

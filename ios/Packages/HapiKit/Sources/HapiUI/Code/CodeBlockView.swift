@@ -41,7 +41,7 @@ public struct CodeBlockView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 #if targetEnvironment(macCatalyst)
                 MacSelectableText(
-                    attributedText: MacSelectableText.codeAttributedString(
+                    content: .code(
                         highlighted: highlighted,
                         fallbackCode: code,
                         size: typography.codeSize,

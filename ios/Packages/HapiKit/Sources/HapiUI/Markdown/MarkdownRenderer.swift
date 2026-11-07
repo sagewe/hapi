@@ -542,7 +542,7 @@ struct MarkdownBlockView: View {
         case .paragraph(let text):
             #if targetEnvironment(macCatalyst)
             MacSelectableText(
-                attributedText: MacSelectableText.markdownAttributedString(
+                content: .markdown(
                     text,
                     baseSize: typography.bodySize,
                     baseWeight: typography.boldText ? .semibold : .regular,
@@ -566,7 +566,7 @@ struct MarkdownBlockView: View {
         case .heading(let level, let text):
             #if targetEnvironment(macCatalyst)
             MacSelectableText(
-                attributedText: MacSelectableText.markdownAttributedString(
+                content: .markdown(
                     text,
                     baseSize: typography.headingSize(level),
                     baseWeight: typography.boldText ? .bold : .semibold,
@@ -634,6 +634,7 @@ struct MarkdownListView: View {
                 HStack(alignment: .top, spacing: 8) {
                     marker(for: item, index: index)
                     MarkdownBlockListView(blocks: item.blocks)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 #else
                 HStack(alignment: .firstTextBaseline, spacing: 8) {

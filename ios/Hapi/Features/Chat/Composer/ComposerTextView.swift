@@ -189,6 +189,7 @@ struct ComposerTextView: UIViewRepresentable {
         }
 
         func updateFocus() {
+            guard wantsFocus != isFirstResponder else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if wantsFocus, window != nil, !isFirstResponder { becomeFirstResponder() }
@@ -215,6 +216,9 @@ struct ComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            if textView.selectedRange.length > 0 {
+                MacTextSelectionTracker.shared.clear()
+            }
             guard !applying, textView.text == owner.text else { return }
             publishSelection(textView)
         }
@@ -226,6 +230,7 @@ struct ComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
+            MacTextSelectionTracker.shared.clear()
             if !applying { owner.isFocused = true }
         }
 

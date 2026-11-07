@@ -257,6 +257,12 @@ public final class ChatInteractor {
 
     // MARK: - Composer
 
+    /// True while a turn is active and can be aborted without reading `composerText`.
+    public var canStop: Bool {
+        let live = currentSessionState()
+        return live.active && live.thinking
+    }
+
     /// Composer bar state (steer offered only while a turn is active).
     public var composer: ComposerState {
         let live = currentSessionState()

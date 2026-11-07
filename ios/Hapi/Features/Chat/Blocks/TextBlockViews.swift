@@ -36,10 +36,11 @@ struct UserTextBlockView: View {
                         #if targetEnvironment(macCatalyst)
                         if preview.end == block.text.endIndex {
                             MacSelectableText(
-                                attributedText: MacSelectableText.plainAttributedString(
+                                content: .plain(
                                     preview.text,
                                     size: typography.bodySize,
                                     weight: typography.boldText ? .semibold : .regular,
+                                    monospaced: false,
                                     foregroundColor: UIColor(theme.textPrimary),
                                     lineSpacing: typography.bodyLineSpacing
                                 ),
@@ -302,7 +303,7 @@ struct TerminalTextView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             #if targetEnvironment(macCatalyst)
             MacSelectableText(
-                attributedText: MacSelectableText.plainAttributedString(
+                content: .plain(
                     text,
                     size: typography.codeSize,
                     weight: typography.boldText ? .semibold : .regular,
