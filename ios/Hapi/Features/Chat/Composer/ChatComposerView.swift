@@ -38,10 +38,18 @@ struct ChatComposerView: View {
     @State private var schedulePickerOpen = false
     @State private var selectedSuggestionIndex = 0
     @State private var dismissedSuggestionKey: String?
+    @State private var sentHistory: [String] = []
+    @State private var historyIndex: Int?
+    @State private var draftBeforeHistory = ""
     // Secondary tools are bare symbols; only the primary action is a filled
     // circle (Messages / ChatGPT / Claude). Both follow Dynamic Type.
+    #if targetEnvironment(macCatalyst)
+    @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 16
+    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 28
+    #else
     @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 20
     @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 32
+    #endif
 
     private var scratchlistMode: Bool { interactor.composerDestination == .scratchlist }
     private var composerPrompt: LocalizedStringKey {
@@ -249,39 +257,61 @@ struct ChatComposerView: View {
                     .padding(.horizontal, collapsed ? 2 : 14)
                     .padding(.top, collapsed ? 0 : 12)
                     .padding(.bottom, collapsed ? 0 : 4)
-                    if collapsed { trailingActions(composer, attachments: attachments) }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !textFocused {
+                            textFocused = true
+                        }
+                    }
+                    if collapsed { trailingActions(composer, attachments: attachments, hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil) }
                 }
                 .padding(.horizontal, collapsed ? 4 : 0)
                 .padding(.vertical, collapsed ? 4 : 0)
                 if !collapsed {
                     HStack(spacing: 0) {
                         addAttachmentButton
-                    if !scratchlistMode {
-                        Button {
-                            guard !isComposing else { return }
-                            let source = interactor.composerText as NSString
-                            let range = textSelection.location <= source.length && NSMaxRange(textSelection) <= source.length ? textSelection : NSRange(location: source.length, length: 0)
-                            let needsSpace = range.location > 0 && !CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(source.character(at: range.location - 1)) ?? " ")
-                            let value = needsSpace ? " $" : "$"
-                            interactor.setComposerText(source.replacingCharacters(in: range, with: value))
-                            textSelection = NSRange(location: range.location + value.utf16.count, length: 0)
-                            textFocused = true
-                        } label: { Image(systemName: "sparkles").frame(width: 44, height: 44) }
-                        .accessibilityLabel("Skills")
-                        .help("Insert skill ($)")
-                    }
+                        if !scratchlistMode {
+                            #if targetEnvironment(macCatalyst)
+                            Button {
+                                insertTrigger("@")
+                            } label: {
+                                toolGlyph("at")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Mention")
+                            .help("Mention file or session (@)")
+
+                            Button {
+                                insertTrigger("/", atStartOnly: true)
+                            } label: {
+                                toolGlyph("slash.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Commands")
+                            .help("Slash commands (/)")
+                            #endif
+
+                            Button {
+                                insertTrigger("$")
+                            } label: {
+                                toolGlyph("sparkles")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Skills")
+                            .help("Insert skill ($)")
+                        }
                         if interactor.scratchlist != nil { scratchlistButton }
                         if !scratchlistMode { scheduleButton(hasAttachments: !attachments.isEmpty) }
                         Spacer()
-                        trailingActions(composer, attachments: attachments)
+                        trailingActions(composer, attachments: attachments, hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil)
                     }
                     // 44 pt slots: a 20 pt glyph sits ~12 pt in, so 4 pt
                     // aligns it with the field's 14 pt text inset.
-                    .padding(.horizontal, 4)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
                 }
             }
-            .modifier(ComposerCardSurface(fill: composerSurfaceColor))
+            .modifier(ComposerCardSurface(fill: composerSurfaceColor, isFocused: textFocused))
             .animation(.snappy, value: collapsed)
         }
         .hapiReadingColumn()
@@ -316,10 +346,10 @@ struct ChatComposerView: View {
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!canParkDraft)
                 } else {
-                    Button("Send") { interactor.sendMessage() }
+                    Button("Send") { submitMessage() }
                         .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!primaryAction(composer, attachments: attachments).canSend)
-                    Button("Send & steer into current turn") { interactor.sendMessage(steer: true) }
+                    Button("Send & steer into current turn") { submitMessage(steer: true) }
                         .keyboardShortcut(.return, modifiers: [.command, .shift])
                         .disabled(!canSendAndSteer(composer, attachments: attachments))
                 }
@@ -534,7 +564,32 @@ struct ChatComposerView: View {
         .help("Schedule send")
     }
 
+    @ViewBuilder
     private var addAttachmentButton: some View {
+        #if targetEnvironment(macCatalyst)
+        Menu {
+            Button {
+                filePickerOpen = true
+            } label: {
+                Label("Choose Files…", systemImage: "folder")
+            }
+            Button {
+                photosPickerOpen = true
+            } label: {
+                Label("Photo Library…", systemImage: "photo.on.rectangle")
+            }
+        } label: {
+            toolGlyph("plus")
+        } primaryAction: {
+            filePickerOpen = true
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .disabled(preparingAttachment || interactor.scratchlistBusy)
+        .accessibilityLabel("Add attachment")
+        .accessibilityIdentifier("chat.add-attachment")
+        .help("Attach files (click) · Hold for Photo Library")
+        #else
         Button {
             attachDialogOpen = true
         } label: {
@@ -545,6 +600,46 @@ struct ChatComposerView: View {
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("chat.add-attachment")
         .help("Add attachment")
+        #endif
+    }
+
+    private func insertTrigger(_ symbol: String, atStartOnly: Bool = false) {
+        guard !isComposing else { return }
+        if atStartOnly {
+            if interactor.composerText.isEmpty {
+                interactor.setComposerText(symbol)
+                textSelection = NSRange(location: symbol.utf16.count, length: 0)
+            } else if !interactor.composerText.hasPrefix(symbol) {
+                let updated = symbol + interactor.composerText
+                interactor.setComposerText(updated)
+                textSelection = NSRange(location: symbol.utf16.count, length: 0)
+            }
+            textFocused = true
+            return
+        }
+        let source = interactor.composerText as NSString
+        let range = textSelection.location <= source.length && NSMaxRange(textSelection) <= source.length
+            ? textSelection
+            : NSRange(location: source.length, length: 0)
+        let needsSpace = range.location > 0
+            && !CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(source.character(at: range.location - 1)) ?? " ")
+        let value = needsSpace ? " " + symbol : symbol
+        interactor.setComposerText(source.replacingCharacters(in: range, with: value))
+        textSelection = NSRange(location: range.location + value.utf16.count, length: 0)
+        textFocused = true
+    }
+
+    private func submitMessage(steer: Bool = false) {
+        let trimmed = interactor.composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, sentHistory.last != interactor.composerText {
+            sentHistory.append(interactor.composerText)
+            if sentHistory.count > 50 {
+                sentHistory.removeFirst(sentHistory.count - 50)
+            }
+        }
+        historyIndex = nil
+        draftBeforeHistory = ""
+        interactor.sendMessage(steer: steer)
     }
 
     private var scratchlistButton: some View {
@@ -650,16 +745,32 @@ struct ChatComposerView: View {
     /// action) instead of the field above a tool row. Anything in flight —
     /// a draft, chips, a schedule, recording, the scratchlist — expands it.
     private func isCollapsed(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
+        #if targetEnvironment(macCatalyst)
+        return false
+        #else
         let recording: Bool = {
             if let dictation, case .recording = dictation.state { return true }
             return false
         }()
         return !textFocused && !scratchlistMode && composer.text.isEmpty && attachments.isEmpty
             && interactor.pendingSchedule == nil && interactor.scratchlistError == nil && !recording
+        #endif
     }
 
     @ViewBuilder
-    private func trailingActions(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> some View {
+    private func trailingActions(
+        _ composer: ComposerState,
+        attachments: [ComposerAttachmentUI],
+        hasActiveSuggestions: Bool = false
+    ) -> some View {
+        #if targetEnvironment(macCatalyst)
+        Text(macShortcutHint(composer: composer, hasActiveSuggestions: hasActiveSuggestions))
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .padding(.trailing, 6)
+            .allowsHitTesting(false)
+        #endif
         if scratchlistMode, composer.canStop {
             Button { interactor.abortSession() } label: {
                 toolGlyph("stop.circle")
@@ -674,10 +785,69 @@ struct ChatComposerView: View {
         else { primaryActionButton(composer, attachments: attachments) }
     }
 
+    private func macShortcutHint(composer: ComposerState, hasActiveSuggestions: Bool) -> String {
+        if hasActiveSuggestions {
+            return String(localized: "↑↓ Navigate · ↩ Accept · Esc")
+        }
+        if scratchlistMode {
+            return String(localized: "⌘↩ Save draft")
+        }
+        let base = ShortcutPrefs.shared.bareReturnSends
+            ? String(localized: "↩ Send · ⇧↩ Newline")
+            : String(localized: "⌘↩ Send · ↩ Newline")
+        if composer.canSendAndSteer {
+            return base + String(localized: " · ⇧⌘↩ Steer")
+        }
+        return base
+    }
+
     private func moveSuggestion(_ delta: Int, count: Int) -> Bool {
-        guard !isComposing, count > 0 else { return false }
-        selectedSuggestionIndex = (selectedSuggestionIndex + delta + count) % count
-        return true
+        guard !isComposing else { return false }
+        if count > 0 {
+            selectedSuggestionIndex = (selectedSuggestionIndex + delta + count) % count
+            return true
+        }
+        // Up / Down arrow recalls sent message history when no popup is open
+        guard !sentHistory.isEmpty else { return false }
+        if delta < 0 {
+            if let current = historyIndex {
+                guard textSelection.location == 0 || textSelection.location == (interactor.composerText as NSString).length else {
+                    return false
+                }
+                let nextIndex = max(0, current - 1)
+                guard nextIndex != current else { return true }
+                historyIndex = nextIndex
+                let recalled = sentHistory[nextIndex]
+                interactor.setComposerText(recalled)
+                textSelection = NSRange(location: (recalled as NSString).length, length: 0)
+                return true
+            } else if interactor.composerText.isEmpty {
+                draftBeforeHistory = interactor.composerText
+                let index = sentHistory.count - 1
+                historyIndex = index
+                let recalled = sentHistory[index]
+                interactor.setComposerText(recalled)
+                textSelection = NSRange(location: (recalled as NSString).length, length: 0)
+                return true
+            }
+        } else if delta > 0, let current = historyIndex {
+            guard textSelection.location == (interactor.composerText as NSString).length || textSelection.location == 0 else {
+                return false
+            }
+            if current + 1 < sentHistory.count {
+                let nextIndex = current + 1
+                historyIndex = nextIndex
+                let recalled = sentHistory[nextIndex]
+                interactor.setComposerText(recalled)
+                textSelection = NSRange(location: (recalled as NSString).length, length: 0)
+            } else {
+                historyIndex = nil
+                interactor.setComposerText(draftBeforeHistory)
+                textSelection = NSRange(location: (draftBeforeHistory as NSString).length, length: 0)
+            }
+            return true
+        }
+        return false
     }
 
     private func acceptSuggestion(
@@ -731,7 +901,7 @@ struct ChatComposerView: View {
 
     private func handleSteerReturn(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
         guard !isComposing, canSendAndSteer(composer, attachments: attachments) else { return false }
-        interactor.sendMessage(steer: true)
+        submitMessage(steer: true)
         return true
     }
 
@@ -753,7 +923,7 @@ struct ChatComposerView: View {
         }
         guard !scratchlistMode else { return false }
         if primaryAction(composer, attachments: attachments).canSend {
-            interactor.sendMessage()
+            submitMessage()
         }
         return true
     }
@@ -816,7 +986,7 @@ struct ChatComposerView: View {
             let label = sendLabel(enabled: enabled)
             if scheduled {
                 Button {
-                    interactor.sendMessage()
+                    submitMessage()
                 } label: {
                     label
                 }
@@ -828,12 +998,12 @@ struct ChatComposerView: View {
                 // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
                 Menu {
                     Button("Send & steer into current turn (⇧⌘↩)") {
-                        interactor.sendMessage(steer: true)
+                        submitMessage(steer: true)
                     }
                 } label: {
                     label
                 } primaryAction: {
-                    interactor.sendMessage()
+                    submitMessage()
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
@@ -841,7 +1011,7 @@ struct ChatComposerView: View {
                 .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
             } else {
                 Button {
-                    interactor.sendMessage()
+                    submitMessage()
                 } label: {
                     label
                 }
@@ -863,28 +1033,37 @@ struct ChatComposerView: View {
         }
     }
 
-    /// Bare secondary tool symbol in a 44 pt slot; `active` recolors it for
+    /// Bare secondary tool symbol; `active` recolors it for
     /// a state (scheduled, held, recording) without changing its shape.
     private func toolGlyph(_ name: String, active: AnyShapeStyle? = nil) -> some View {
-        Image(systemName: name)
+        #if targetEnvironment(macCatalyst)
+        let slotSize: CGFloat = 32
+        #else
+        let slotSize: CGFloat = 44
+        #endif
+        return Image(systemName: name)
             .font(.system(size: toolGlyphSize, weight: .medium))
             .foregroundStyle(active ?? AnyShapeStyle(.secondary))
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: slotSize, minHeight: slotSize)
             .contentShape(Rectangle())
     }
 
-    /// The primary action (send / stop / sending): a filled circle in a
-    /// 44 pt slot.
+    /// The primary action (send / stop / sending): a filled circle.
     private func actionCircle<Content: View>(
         background: AnyShapeStyle,
         foreground: AnyShapeStyle,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        content()
+        #if targetEnvironment(macCatalyst)
+        let slotSize: CGFloat = 32
+        #else
+        let slotSize: CGFloat = 44
+        #endif
+        return content()
             .frame(width: primaryDiameter, height: primaryDiameter)
             .background(background, in: Circle())
             .foregroundStyle(foreground)
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: slotSize, minHeight: slotSize)
             .contentShape(Rectangle())
     }
 }
@@ -894,9 +1073,16 @@ struct ChatComposerView: View {
 /// elevated surface with a hairline edge so it separates from white rows.
 private struct ComposerCardSurface: ViewModifier {
     let fill: Color
+    var isFocused: Bool = false
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        #if targetEnvironment(macCatalyst)
+        let borderColor = isFocused
+            ? Color.accentColor.opacity(0.45)
+            : Color(uiColor: .separator).opacity(0.45)
+        let borderWidth: CGFloat = isFocused ? 1.5 : 0.75
+        #endif
         if #available(iOS 26.0, *) {
             // A short pill mostly refracts rather than blurs, so transcript
             // text would read through the placeholder; a partial surface
@@ -905,11 +1091,18 @@ private struct ComposerCardSurface: ViewModifier {
                 .background(shape.fill(fill.opacity(0.7)))
                 .clipShape(shape)
                 .glassEffect(.regular, in: shape)
+                #if targetEnvironment(macCatalyst)
+                .overlay(shape.strokeBorder(borderColor, lineWidth: borderWidth))
+                #endif
         } else {
             content
                 .background(shape.fill(fill))
                 .clipShape(shape)
+                #if targetEnvironment(macCatalyst)
+                .overlay(shape.strokeBorder(borderColor, lineWidth: borderWidth))
+                #else
                 .overlay(shape.strokeBorder(Color(uiColor: .separator), lineWidth: 0.5))
+                #endif
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         }
     }

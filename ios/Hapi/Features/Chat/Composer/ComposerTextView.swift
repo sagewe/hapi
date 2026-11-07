@@ -92,9 +92,16 @@ struct ComposerTextView: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: NativeTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width > 0 else { return nil }
         let height = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        #if targetEnvironment(macCatalyst)
+        let minimum = ceil(font.lineHeight * 1.75)
+        let maximum = ceil(font.lineHeight * 12)
+        uiView.showsVerticalScrollIndicator = true
+        #else
+        let minimum = ceil(font.lineHeight)
         let maximum = ceil(font.lineHeight * 6)
+        #endif
         uiView.isScrollEnabled = height > maximum
-        return CGSize(width: width, height: min(maximum, max(ceil(font.lineHeight), height)))
+        return CGSize(width: width, height: min(maximum, max(minimum, height)))
     }
 
     static func dismantleUIView(_ uiView: NativeTextView, coordinator: Coordinator) {
@@ -156,6 +163,9 @@ struct ComposerTextView: UIViewRepresentable {
                 let bareReturnSends = ShortcutPrefs.shared.bareReturnSends
                 if relevantModifiers == .command || (bareReturnSends && relevantModifiers.isEmpty) {
                     return onReturn?() == true
+                }
+                if relevantModifiers.isEmpty, onTab?() == true {
+                    return true
                 }
                 if relevantModifiers == [.command, .shift] || relevantModifiers == [.command, .alternate] {
                     return onSteerReturn?() == true
