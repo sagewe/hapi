@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var deleteOpen = false
     @State private var forkConfirmOpen = false
     @State private var historyOpen = false
+    @State private var isDropTargeted = false
 
     /// Resume/reopen handed back a superseding session id — the host swaps
     /// its navigation entry (HomeView replaces the path element).
@@ -110,6 +111,14 @@ struct ChatView: View {
         // anchors it just above the composer instead of on top of it.
         .overlay(alignment: .bottom) {
             noticeToast
+        }
+        .overlay {
+            if isDropTargeted {
+                dropTargetOverlay
+            }
+        }
+        .onDrop(of: [.item], isTargeted: $isDropTargeted) { providers in
+            ChatComposerView.acceptDroppedProviders(providers, into: model.interactor)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -330,6 +339,26 @@ struct ChatView: View {
         }
     }
 
+    private var dropTargetOverlay: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.accentColor.opacity(0.08))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    Color.accentColor.opacity(0.65),
+                    style: StrokeStyle(lineWidth: 2, dash: [8, 6])
+                )
+            Label("Drop to attach files or images", systemImage: "arrow.down.doc.fill")
+                .font(.headline)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.regularMaterial, in: Capsule())
+                .shadow(radius: 6, y: 2)
+        }
+        .padding(12)
+        .allowsHitTesting(false)
+    }
+
     // MARK: - Chrome
 
     private var moreActionsMenu: some View {
@@ -434,6 +463,7 @@ struct ChatView: View {
                 model.interactor.setComposerDestination(target)
                 model.interactor.focusComposer()
             } : nil,
+            jumpToLatest: { model.jumpToLatest() },
             openSessionSettings: { configOpen = true },
             openFiles: { filesOpen = true },
             openTerminal: canOpenTerminal ? { terminalOpen.toggle() } : nil,

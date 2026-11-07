@@ -1,8 +1,10 @@
 import Foundation
 import HapiClient
+import HapiProtocol
 import Observation
 import OSLog
 import Security
+import SwiftUI
 import UIKit
 import UserNotifications
 
@@ -93,6 +95,16 @@ final class PushCoordinator: NSObject {
     @ObservationIgnored private var environment: Environment?
     @ObservationIgnored private var apnsTokenHex: String?
     @ObservationIgnored private let log = Logger(subsystem: "run.hapi.companion", category: "push")
+    @ObservationIgnored private var localSnapshots: [String: LocalSessionSnapshot] = [:]
+    @ObservationIgnored private var localSnapshotsSeeded = false
+    @ObservationIgnored private var requestedLocalAuth = false
+
+    private struct LocalSessionSnapshot {
+        let active: Bool
+        let thinking: Bool
+        let pendingRequestsCount: Int
+        let pendingRequestKinds: [PendingRequestKind]
+    }
 
     // MARK: - Wiring (AppModel)
 
@@ -326,6 +338,107 @@ final class PushCoordinator: NSObject {
         }
         return PushPayload.parse(plaintext: plaintext)
     }
+
+    // MARK: - Local session state notifications (Mac Catalyst / foreground-other-session)
+
+    func observeSessionsForLocalNotifications(
+        _ sessions: [SessionSummary],
+        openSessionId: String?,
+        scenePhase: ScenePhase
+    ) {
+        #if targetEnvironment(macCatalyst)
+        if !requestedLocalAuth {
+            requestedLocalAuth = true
+            Task { _ = await self.requestAuthorizationIfNeeded() }
+        }
+        guard !sessions.isEmpty else { return }
+        if !localSnapshotsSeeded {
+            for summary in sessions {
+                localSnapshots[summary.id] = LocalSessionSnapshot(
+                    active: summary.active,
+                    thinking: summary.thinking,
+                    pendingRequestsCount: summary.pendingRequestsCount,
+                    pendingRequestKinds: summary.pendingRequestKinds
+                )
+            }
+            localSnapshotsSeeded = true
+            return
+        }
+
+        for summary in sessions {
+            let current = LocalSessionSnapshot(
+                active: summary.active,
+                thinking: summary.thinking,
+                pendingRequestsCount: summary.pendingRequestsCount,
+                pendingRequestKinds: summary.pendingRequestKinds
+            )
+            let previous = localSnapshots[summary.id]
+            localSnapshots[summary.id] = current
+            guard let previous else { continue }
+
+            let isActivelyViewing = (scenePhase == .active) && (openSessionId == summary.id)
+            guard !isActivelyViewing else { continue }
+
+            let title = SessionListSearch.sessionTitle(summary)
+            if current.pendingRequestsCount > previous.pendingRequestsCount, current.pendingRequestsCount > 0 {
+                let isPermission = current.pendingRequestKinds.contains(.permission)
+                let isInput = current.pendingRequestKinds.contains(.input)
+                let type = isPermission ? "permission-request" : (isInput ? "input-request" : "permission-request")
+                let body = isPermission
+                    ? String(localized: "Waiting for permission approval")
+                    : (isInput ? String(localized: "Waiting for your reply") : String(localized: "Needs your attention"))
+                postLocalSessionNotification(
+                    id: "hapi.local.pending.\(summary.id).\(current.pendingRequestsCount)",
+                    sessionId: summary.id,
+                    title: title,
+                    body: body,
+                    type: type,
+                    category: nil
+                )
+            } else if previous.thinking && !current.thinking && current.active && current.pendingRequestsCount == 0 {
+                let rawSummary = summary.metadata?.summary?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let body = rawSummary.isEmpty ? String(localized: "Task completed") : rawSummary
+                postLocalSessionNotification(
+                    id: "hapi.local.ready.\(summary.id).\(summary.updatedAt)",
+                    sessionId: summary.id,
+                    title: title,
+                    body: body,
+                    type: "ready",
+                    category: "ready"
+                )
+            }
+        }
+        #endif
+    }
+
+    private func postLocalSessionNotification(
+        id: String,
+        sessionId: String,
+        title: String,
+        body: String,
+        type: String,
+        category: String?
+    ) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        if let category {
+            content.categoryIdentifier = category
+        }
+        content.userInfo = [
+            Self.decryptedUserInfoKey: [
+                "sessionId": sessionId,
+                "sessionName": title,
+                "type": type,
+                "title": title,
+                "body": body,
+                "contractVersion": PushPayload.contractVersion,
+            ],
+        ]
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate
@@ -340,7 +453,8 @@ extension PushCoordinator: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        if let payload = payload(from: notification.request.content.userInfo),
+        if UIApplication.shared.applicationState == .active,
+           let payload = payload(from: notification.request.content.userInfo),
            let openId = environment?.openChatSessionId(),
            openId == payload.sessionId {
             return []

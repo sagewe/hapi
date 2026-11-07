@@ -394,6 +394,57 @@ final class SessionListModel {
         }
     }
 
+    struct QuickSwitchCandidate: Identifiable, Equatable {
+        let row: SessionRowUI
+        let machineLabel: String?
+        let path: String?
+        let isArchived: Bool
+        var id: String { row.id }
+    }
+
+    /// Candidates for the ⌘K quick switcher: when query is blank, shows non-archived
+    /// sessions in standard order; when query is non-blank, fuzzy-ranks all sessions
+    /// (including archived ones) by title, project, path, and machine name.
+    func quickSwitchCandidates(query: String) -> [QuickSwitchCandidate] {
+        let readState = lastSeenStore.state
+        let followedTails = lastSeenStore.followedTails
+        let labels = Dictionary(uniqueKeysWithValues: machineFilters.map { ($0.id, $0.label) })
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pool: [SessionSummary]
+        if trimmed.isEmpty {
+            pool = sessionStore.sessions.filter {
+                showArchivedSessions || $0.metadata?.lifecycleState != "archived" || $0.id == selectedSessionId
+            }
+        } else if let index = SessionListSearch.scoreIndex(
+            sessions: sessionStore.sessions,
+            query: trimmed,
+            machineLabel: { id in labels[id ?? unknownMachineFilterId] ?? "" }
+        ) {
+            pool = SessionListSearch.rank(sessionStore.sessions, by: index)
+        } else {
+            pool = []
+        }
+        return pool.prefix(50).map { summary in
+            let row = SessionRowUI(
+                summary: summary,
+                title: Self.sessionTitle(summary),
+                project: Self.projectLabel(summary),
+                flavor: summary.metadata?.flavor,
+                unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
+            )
+            let machineId = summary.metadata?.machineId
+            let machine = machineId.flatMap { labels[$0] }
+            let path = summary.metadata?.worktree?.basePath ?? summary.metadata?.path
+            let archived = summary.metadata?.lifecycleState == "archived"
+            return QuickSwitchCandidate(
+                row: row,
+                machineLabel: machine,
+                path: path,
+                isArchived: archived
+            )
+        }
+    }
+
     /// The sort contract puts globalPinned/pinned rows first; this boundary
     /// index is where the pinned section ends.
     static func pinnedCount(of rows: [SessionRowUI]) -> Int {

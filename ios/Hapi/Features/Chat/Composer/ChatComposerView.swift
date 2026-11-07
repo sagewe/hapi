@@ -426,25 +426,44 @@ struct ChatComposerView: View {
     }
 
     private func ingest(_ providers: [NSItemProvider]) {
-        Task {
+        Self.ingestProviders(providers, into: interactor)
+    }
+
+    static func acceptDroppedProviders(_ providers: [NSItemProvider], into interactor: ChatInteractor) -> Bool {
+        let loadable = providers.filter(ItemProviderAttachmentLoader.canLoad)
+        guard !loadable.isEmpty, !interactor.scratchlistBusy, !interactor.isSending else { return false }
+        ingestProviders(loadable, into: interactor)
+        return true
+    }
+
+    static func ingestProviders(_ providers: [NSItemProvider], into interactor: ChatInteractor) {
+        Task { @MainActor in
             for provider in providers {
                 guard let copy = await ItemProviderAttachmentLoader.copy(provider) else {
                     interactor.postNotice(String(format: String(localized: "Couldn't read %@"),
                                                  provider.suggestedName ?? String(localized: "the dropped item")))
                     continue
                 }
-                await handle(AttachmentPreparer.prepare(fileURL: copy.fileURL))
+                await handlePreparedResult(AttachmentPreparer.prepare(fileURL: copy.fileURL), into: interactor)
                 copy.remove()
             }
         }
     }
 
     private func handle(_ result: PrepareResult) async {
+        await Self.handlePreparedResult(result, into: interactor, onPreparingChange: { preparingAttachment = $0 })
+    }
+
+    private static func handlePreparedResult(
+        _ result: PrepareResult,
+        into interactor: ChatInteractor,
+        onPreparingChange: ((Bool) -> Void)? = nil
+    ) async {
         switch result {
         case .ready(let prepared):
-            if scratchlistMode, let store = interactor.scratchlist {
-                preparingAttachment = true
-                defer { preparingAttachment = false }
+            if interactor.composerDestination == .scratchlist, let store = interactor.scratchlist {
+                onPreparingChange?(true)
+                defer { onPreparingChange?(false) }
                 let limits = await store.limits(sessionId: interactor.sessionId)
                 let existing = interactor.attachments.scratchlistBudget
                 let outcome = await Task.detached(priority: .userInitiated) {

@@ -14,9 +14,11 @@ struct HomeView: View {
 
     @Environment(AppModel.self) private var model
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
     @State private var listModel: SessionListModel
     @State private var showNewSession = false
     @State private var showSettings = false
+    @State private var showQuickSwitcher = false
     @State private var searchFocused = false
     @State private var path: [String] = []
     @State private var tabletNavigation = SessionNavigationState()
@@ -108,10 +110,28 @@ struct HomeView: View {
             SettingsView(session: session)
                 .macSheetSizing()
         }
+        .sheet(isPresented: $showQuickSwitcher) {
+            QuickSwitchSheet(
+                model: listModel,
+                currentSessionId: usesSplitNavigation ? tabletNavigation.selectedSessionId : path.last,
+                onSelect: { sessionId in openSession(sessionId) },
+                onNewSession: { showNewSession = true }
+            )
+            .macSheetSizing()
+        }
+        .onChange(of: session.sessionStore.sessions, initial: true) { _, sessions in
+            let activeId = usesSplitNavigation ? tabletNavigation.selectedSessionId : path.last
+            PushCoordinator.shared.observeSessionsForLocalNotifications(
+                sessions,
+                openSessionId: activeId,
+                scenePhase: scenePhase
+            )
+        }
         .focusedSceneValue(\.homeCommands, HomeCommandActions(
             newSession: { showNewSession = true },
             openSettings: { showSettings = true },
             toggleSidebar: usesSplitNavigation ? toggleSidebar : nil,
+            openQuickSwitcher: { showQuickSwitcher = true },
             focusSearch: {
                 if usesSplitNavigation && tabletNavigation.columnVisibility == .detailOnly {
                     tabletNavigation.columnVisibility = .all

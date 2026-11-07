@@ -669,34 +669,53 @@ struct MarkdownTableView: View {
     let model: MarkdownTableModel
     @Environment(\.hapiTheme) private var theme
     @Environment(\.hapiTypography) private var typography
+    @Environment(\.hapiPasteboard) private var pasteboard
+    @Environment(\.hapiOpenURL) private var hapiOpenURL
+    @State private var copied = false
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                GridRow {
-                    ForEach(Array(model.header.enumerated()), id: \.offset) { index, cell in
-                        SwiftUI.Text(hapiStyledText(cell, theme: theme, typography: typography))
-                            .fontWeight(.semibold)
-                            .font(typography.bodyFont)
-                            .foregroundStyle(theme.textPrimary)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .gridColumnAlignment(columnAlignment(index))
-                            .background(theme.tableHeaderBackground)
+        VStack(alignment: .leading, spacing: 0) {
+            #if targetEnvironment(macCatalyst)
+            HStack {
+                Spacer(minLength: 0)
+                Button {
+                    copyMarkdownTable()
+                } label: {
+                    HStack(spacing: 4) {
+                        SwiftUI.Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        SwiftUI.Text(copied ? "Copied" : "Copy table")
                     }
+                    .font(typography.captionFont)
+                    .foregroundStyle(copied ? theme.success : theme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                 }
-                ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
-                    Divider()
+                .buttonStyle(.plain)
+                .help("Copy table as Markdown")
+            }
+            .background(theme.tableHeaderBackground.opacity(0.6))
+            Divider()
+            #endif
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
                     GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
-                            SwiftUI.Text(hapiStyledText(cell, theme: theme, typography: typography))
-                                .font(typography.bodyFont)
-                                .foregroundStyle(theme.textPrimary)
-                                .textSelection(.enabled)
+                        ForEach(Array(model.header.enumerated()), id: \.offset) { index, cell in
+                            cellView(cell, isHeader: true)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .gridColumnAlignment(columnAlignment(index))
+                                .background(theme.tableHeaderBackground)
+                        }
+                    }
+                    ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
+                        Divider()
+                        GridRow {
+                            ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
+                                cellView(cell, isHeader: false)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .gridColumnAlignment(columnAlignment(index))
+                            }
                         }
                     }
                 }
@@ -704,6 +723,61 @@ struct MarkdownTableView: View {
         }
         .background(theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contextMenu {
+            Button("Copy Table (Markdown)", systemImage: "doc.on.doc") {
+                copyMarkdownTable()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cellView(_ cell: AttributedString, isHeader: Bool) -> some View {
+        #if targetEnvironment(macCatalyst)
+        MacSelectableText(
+            content: .markdown(
+                cell,
+                baseSize: typography.bodySize,
+                baseWeight: isHeader ? (typography.boldText ? .bold : .semibold) : (typography.boldText ? .semibold : .regular),
+                lineSpacing: typography.bodyLineSpacing,
+                theme: theme,
+                typography: typography
+            ),
+            wraps: false,
+            fillsWidth: false,
+            linkColor: .init(theme.link),
+            onOpenURL: { hapiOpenURL($0) }
+        )
+        #else
+        SwiftUI.Text(hapiStyledText(cell, theme: theme, typography: typography))
+            .fontWeight(isHeader ? .semibold : .regular)
+            .font(typography.bodyFont)
+            .foregroundStyle(theme.textPrimary)
+            .textSelection(.enabled)
+        #endif
+    }
+
+    private func copyMarkdownTable() {
+        let headerRow = "| " + model.header.map { String($0.characters).replacingOccurrences(of: "|", with: "\\|") }.joined(separator: " | ") + " |"
+        let separatorRow = "| " + (0..<max(model.header.count, 1)).map { index -> String in
+            guard index < model.columnAlignments.count, let alignment = model.columnAlignments[index] else {
+                return "---"
+            }
+            switch alignment {
+            case .left: return ":---"
+            case .center: return ":---:"
+            case .right: return "---:"
+            }
+        }.joined(separator: " | ") + " |"
+        let bodyRows = model.rows.map { row in
+            "| " + row.map { String($0.characters).replacingOccurrences(of: "|", with: "\\|") }.joined(separator: " | ") + " |"
+        }
+        let markdown = ([headerRow, separatorRow] + bodyRows).joined(separator: "\n")
+        pasteboard.copy(markdown)
+        copied = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1500))
+            copied = false
+        }
     }
 
     private func columnAlignment(_ index: Int) -> HorizontalAlignment {

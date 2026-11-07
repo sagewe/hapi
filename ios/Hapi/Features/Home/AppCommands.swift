@@ -7,6 +7,8 @@ struct HomeCommandActions {
     var openSettings: () -> Void
     /// Nil when the window has no sidebar to toggle (iPhone stack).
     var toggleSidebar: (() -> Void)?
+    /// Opens the ⌘K quick session switcher palette.
+    var openQuickSwitcher: (() -> Void)?
     /// Focuses the sidebar session search bar.
     var focusSearch: (() -> Void)?
     /// Refreshes the session list.
@@ -21,6 +23,7 @@ struct HomeCommandActions {
 struct ChatCommandActions {
     var focusComposer: (() -> Void)?
     var toggleScratchlist: (() -> Void)?
+    var jumpToLatest: (() -> Void)?
     var openSessionSettings: () -> Void
     var openFiles: () -> Void
     var openTerminal: (() -> Void)?
@@ -96,12 +99,18 @@ struct HapiCommands: Commands {
             }
         }
         CommandMenu("Session") {
+            Button("Quick Switch Session…") { home?.openQuickSwitcher?() }
+                .keyboardShortcut("k")
+                .disabled(home?.openQuickSwitcher == nil)
             Button("Focus Composer") { chat?.focusComposer?() }
                 .keyboardShortcut("l")
                 .disabled(chat?.focusComposer == nil)
             Button("Toggle Scratchlist") { chat?.toggleScratchlist?() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(chat?.toggleScratchlist == nil)
+            Button("Jump to Latest Message") { chat?.jumpToLatest?() }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .shift])
+                .disabled(chat?.jumpToLatest == nil)
             Button("Find Sessions…") { home?.focusSearch?() }
                 .keyboardShortcut("f")
                 .disabled(home?.focusSearch == nil)
