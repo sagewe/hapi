@@ -13,6 +13,7 @@ import type { AgentMessage } from '@/agent/types';
 import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
+import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
 
 /** One handler owns all notifications, including concurrent prompts. A turn is
  * not ready until every steer settles; no automatic retry of ambiguous sends. */
@@ -21,6 +22,8 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private permission: PermissionAdapter | null = null;
     private readonly loopAbort = new AbortController();
     private readonly pendingSteers = new Set<Promise<void>>();
+    private readonly reactiveWakeup: AgyReactiveWakeupTracker;
+    private lastMode: AgyMode = { permissionMode: 'request-review', model: null, effort: null };
     private activeModeHash: string | null = null;
     private backendModeHash: string | null = null;
     private activeTurn: Promise<void> | null = null;
@@ -28,9 +31,13 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private generation = 0;
     private stopping = false;
 
-    constructor(private readonly session: AgySession,
-        private readonly createBackend = createAgyAcpBackend) {
+    constructor(
+        private readonly session: AgySession,
+        private readonly createBackend = createAgyAcpBackend,
+        reactiveOptions?: AgyReactiveWakeupOptions
+    ) {
         super(process.env.DEBUG ? session.logPath : undefined);
+        this.reactiveWakeup = new AgyReactiveWakeupTracker(reactiveOptions);
         session.setKillHandler(() => this.stop());
         session.steerQueuedMessage = (localId) => this.steer({ localId });
     }
@@ -51,6 +58,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         const backend = this.backend;
         this.backend = null;
         this.backendModeHash = null;
+        this.reactiveWakeup.reset();
         const permission = this.permission;
         this.permission = null;
         try {
@@ -78,6 +86,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 ? await backend.loadSession({ ...config, sessionId: this.session.sessionId })
                 : await backend.newSession(config);
             this.session.onSessionFound(id, { agySessionProtocol: 'acp' });
+            this.reactiveWakeup.syncBaseline(id);
             await configureAgyAcpSession(backend, id, mode);
             if (this.stopping || this.backend !== backend) throw new Error('Antigravity session stopped');
             this.backendModeHash = modeHash;
@@ -174,6 +183,57 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         await this.abort();
     }
 
+    private async waitForNextMessageOrIdleWakeup(): Promise<
+        | { kind: 'user'; batch: NonNullable<Awaited<ReturnType<AgySession['queue']['waitForMessagesAndGetAsString']>>> }
+        | { kind: 'idle-wakeup' }
+        | null
+    > {
+        const { session } = this;
+        if (this.stopping) return null;
+        if (
+            this.backend
+            && session.sessionId
+            && session.queue.size() === 0
+            && this.reactiveWakeup.hasUnreadReactiveSteps(session.sessionId)
+        ) {
+            return { kind: 'idle-wakeup' };
+        }
+
+        const waitAbort = new AbortController();
+        let wokeOnReactive = false;
+        const onLoopAbort = () => waitAbort.abort();
+        if (this.loopAbort.signal.aborted) {
+            waitAbort.abort();
+        } else {
+            this.loopAbort.signal.addEventListener('abort', onLoopAbort, { once: true });
+        }
+
+        const timer = setInterval(() => {
+            if (
+                !this.stopping
+                && !this.aborting
+                && this.backend
+                && session.sessionId
+                && session.queue.size() === 0
+                && this.reactiveWakeup.hasUnreadReactiveSteps(session.sessionId)
+            ) {
+                wokeOnReactive = true;
+                waitAbort.abort();
+            }
+        }, this.reactiveWakeup.getPollIntervalMs());
+        timer.unref?.();
+
+        try {
+            const batch = await session.queue.waitForMessagesAndGetAsString(waitAbort.signal);
+            if (batch) return { kind: 'user', batch };
+            if (wokeOnReactive && !this.stopping) return { kind: 'idle-wakeup' };
+            return null;
+        } finally {
+            clearInterval(timer);
+            this.loopAbort.signal.removeEventListener('abort', onLoopAbort);
+        }
+    }
+
     protected async runMainLoop(): Promise<void> {
         const { session } = this;
         this.steering(false);
@@ -181,14 +241,49 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage, (payload) => this.steer(payload));
         try {
             while (!this.stopping) {
-                const msg = await session.queue.waitForMessagesAndGetAsString(this.loopAbort.signal);
-                if (!msg) break;
+                const next = await this.waitForNextMessageOrIdleWakeup();
+                if (!next) break;
                 if (this.aborting) await this.aborting;
+                if (next.kind === 'idle-wakeup') {
+                    if (this.stopping || !this.backend || !session.sessionId) continue;
+                    const mode = this.lastMode;
+                    session.onThinkingChange(true);
+                    this.generation++;
+                    this.activeTurn = (async () => {
+                        try {
+                            const backend = this.backend;
+                            if (!backend || !session.sessionId || this.stopping || this.aborting) return;
+                            const onUpdate = (message: AgentMessage) => {
+                                const converted = convertAgentMessage(message, mode.model);
+                                if (converted) session.client.sendAgentMessage(converted);
+                            };
+                            await this.reactiveWakeup.afterIdleWakeup({
+                                sessionId: session.sessionId,
+                                cwd: session.path,
+                                mode,
+                                backend,
+                                onUpdate,
+                                shouldYield: () => this.stopping || Boolean(this.aborting) || session.queue.size() > 0,
+                                isAborted: () => this.stopping || Boolean(this.aborting)
+                            });
+                        } catch (error) {
+                            logger.debug('[agy-acp] idle reactive wakeup failed', error);
+                        } finally {
+                            session.onThinkingChange(false);
+                            if (!this.stopping && !this.aborting) session.sendSessionEvent({ type: 'ready' });
+                        }
+                    })();
+                    await this.activeTurn;
+                    this.activeTurn = null;
+                    continue;
+                }
+                const msg = next.batch;
                 if (this.stopping) {
                     session.client.emitMessagesConsumed((msg.items ?? []).flatMap((item) => item.localId ? [item.localId] : []));
                     session.sendSessionEvent({ type: 'abort-restore', text: msg.message });
                     break;
                 }
+                this.lastMode = msg.mode;
                 const ids = (msg.items ?? []).flatMap((item) => item.localId ? [item.localId] : []);
                 let accepted = false;
                 const acknowledge = () => {
@@ -202,14 +297,26 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         if (this.stopping || this.aborting) throw new Error('Antigravity session stopped');
                         this.activeModeHash = msg.hash;
                         this.steering(true);
+                        this.reactiveWakeup.beforePrompt(session.sessionId);
                         const onUpdate = (message: AgentMessage) => {
                             if (['text', 'reasoning', 'tool_call', 'tool_result'].includes(message.type)) acknowledge();
+                            this.reactiveWakeup.observePromptUpdate(message);
                             const converted = convertAgentMessage(message, msg.mode.model);
                             if (converted) session.client.sendAgentMessage(converted);
                         };
                         await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
                         acknowledge();
                         await backend.waitForResponseComplete();
+                        this.steering(false);
+                        await this.reactiveWakeup.afterPrompt({
+                            sessionId: session.sessionId!,
+                            cwd: session.path,
+                            mode: msg.mode,
+                            backend,
+                            onUpdate,
+                            shouldYield: () => this.stopping || Boolean(this.aborting) || session.queue.size() > 0,
+                            isAborted: () => this.stopping || Boolean(this.aborting)
+                        });
                         void backend.refreshSessionInfo(session.sessionId!, session.path);
                     } catch (error) {
                         if (!this.aborting && !this.stopping) {
