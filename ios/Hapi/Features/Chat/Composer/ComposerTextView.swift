@@ -1,3 +1,4 @@
+import CoreGraphics
 import HapiUI
 import SwiftUI
 import UIKit
@@ -38,6 +39,7 @@ struct ComposerTextView: UIViewRepresentable {
         view.smartDashesType = .no
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
+        view.ownerCoordinator = context.coordinator
         return view
     }
 
@@ -186,13 +188,17 @@ struct ComposerTextView: UIViewRepresentable {
 
         #if targetEnvironment(macCatalyst)
         override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-            if let key = presses.first?.key,
-               handleMacKeyPress(keyCode: key.keyCode, modifiers: key.modifierFlags) {
-                return
+            if let key = presses.first?.key {
+                if ownerCoordinator?.syncBeforeKeyAction(self) == true,
+                   handleMacKeyPress(keyCode: key.keyCode, modifiers: key.modifierFlags) {
+                    return
+                }
             }
             super.pressesBegan(presses, with: event)
         }
         #endif
+
+        weak var ownerCoordinator: Coordinator?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
@@ -218,6 +224,40 @@ struct ComposerTextView: UIViewRepresentable {
             self.owner = owner
             self.lastBoundSelection = owner.selection
         }
+
+        func syncBeforeKeyAction(_ textView: UITextView) -> Bool {
+            guard textView.markedTextRange == nil else {
+                if !owner.isComposing { owner.isComposing = true }
+                return false
+            }
+            if owner.isComposing { owner.isComposing = false }
+            if owner.text != textView.text {
+                owner.text = textView.text
+            }
+            return true
+        }
+
+        #if targetEnvironment(macCatalyst)
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard !applying else { return true }
+            // When macOS input methods (e.g. Simplified Chinese Pinyin, Rime, WeType) are active,
+            // bare Return is routed through NSTextInputClient.insertNewline instead of pressesBegan.
+            if text == "\n", textView.markedTextRange == nil {
+                let cgFlags = CGEventSource.flagsState(.combinedSessionState)
+                var modifiers: UIKeyModifierFlags = []
+                if cgFlags.contains(.maskShift) { modifiers.insert(.shift) }
+                if cgFlags.contains(.maskAlternate) { modifiers.insert(.alternate) }
+                if cgFlags.contains(.maskCommand) { modifiers.insert(.command) }
+                if cgFlags.contains(.maskControl) { modifiers.insert(.control) }
+                _ = syncBeforeKeyAction(textView)
+                if let native = textView as? NativeTextView,
+                   native.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: modifiers) {
+                    return false
+                }
+            }
+            return true
+        }
+        #endif
 
         func textViewDidChange(_ textView: UITextView) {
             guard !applying else { return }

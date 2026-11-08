@@ -149,7 +149,6 @@ private struct TurnJumpRailView: View {
 
     @State private var hoveredItem: ChatRailNavItem?
     @State private var isLatestHovered = false
-    @State private var isRailHovered = false
 
     private var items: [ChatRailNavItem] { model.railNavItems }
     private var activeIndex: Int { model.activeRailIndex ?? max(0, items.count - 1) }
@@ -175,28 +174,26 @@ private struct TurnJumpRailView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
 
-            VStack(spacing: isRailHovered ? 4 : 3) {
-                if isRailHovered || model.isSeekingOlderTurn {
-                    Button {
-                        model.jumpToPreviousUserTurn()
-                    } label: {
-                        Group {
-                            if model.isSeekingOlderTurn || model.isLoadingOlder {
-                                ProgressView()
-                                    .controlSize(.mini)
-                            } else {
-                                Image(systemName: "chevron.up")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.secondary)
-                            }
+            VStack(spacing: 3) {
+                Button {
+                    model.jumpToPreviousUserTurn()
+                } label: {
+                    Group {
+                        if model.isSeekingOlderTurn || model.isLoadingOlder {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "chevron.up")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
                         }
-                        .frame(width: 22, height: 18)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .disabled((activeIndex == 0 && !model.hasMore) || model.isSeekingOlderTurn)
-                    .help(model.hasMore && activeIndex == 0 ? "Load & Jump to Previous User Turn (⌥↑)" : "Previous User Turn (⌥↑)")
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled((activeIndex == 0 && !model.hasMore) || model.isSeekingOlderTurn)
+                .help(model.hasMore && activeIndex == 0 ? "Load & Jump to Previous User Turn (⌥↑)" : "Previous User Turn (⌥↑)")
 
                 VStack(spacing: 3) {
                     ForEach(visibleSlice) { item in
@@ -210,11 +207,11 @@ private struct TurnJumpRailView: View {
                                 Capsule()
                                     .fill(tickColor(item: item, isActive: isActive, isHovered: isHovered))
                                     .frame(
-                                        width: tickWidth(item: item, isActive: isActive, isHovered: isHovered),
-                                        height: isActive ? 4 : (item.isUserTurn ? 3 : 2.5)
+                                        width: tickWidth(item: item, isActive: isActive),
+                                        height: isActive ? 3.5 : (item.isUserTurn ? 3 : 2.5)
                                     )
                             }
-                            .frame(width: isRailHovered ? 20 : 14, height: 9)
+                            .frame(width: 18, height: 8)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -232,7 +229,7 @@ private struct TurnJumpRailView: View {
                 }
                 .padding(.vertical, 2)
 
-                if isRailHovered, let onOpenJumpSheet {
+                if let onOpenJumpSheet {
                     Button(action: onOpenJumpSheet) {
                         Text("\(min(activeIndex + 1, items.count))/\(items.count)")
                             .font(.system(size: 9, weight: .semibold, design: .rounded))
@@ -240,36 +237,30 @@ private struct TurnJumpRailView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(Color.primary.opacity(0.08))
-                            )
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Jump to Message… (⌘J)")
                 }
 
-                if isRailHovered {
-                    Button {
-                        model.jumpToNextUserTurn()
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
-                    .help("Next User Turn (⌥↓)")
+                Button {
+                    model.jumpToNextUserTurn()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 18)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
+                .help("Next User Turn (⌥↓)")
 
                 if model.showsJumpToLatest {
-                    if isRailHovered {
-                        Divider()
-                            .frame(width: 14)
-                            .padding(.vertical, 1)
-                    }
+                    Divider()
+                        .frame(width: 14)
+                        .padding(.vertical, 1)
+
                     Button(action: model.jumpToLatest) {
                         Group {
                             if model.isJumpingToLatest {
@@ -278,54 +269,42 @@ private struct TurnJumpRailView: View {
                             } else {
                                 Image(systemName: "arrow.down.to.line")
                                     .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(isRailHovered ? .white : Color.accentColor)
+                                    .foregroundStyle(.white)
                             }
                         }
-                        .frame(width: 22, height: 22)
+                        .frame(width: 20, height: 20)
                         .background(
                             Circle()
-                                .fill(isRailHovered ? Color.accentColor : Color.accentColor.opacity(0.15))
+                                .fill(Color.accentColor)
                         )
-                        .overlay {
-                            if !isRailHovered {
-                                Circle()
-                                    .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.6)
-                            }
-                        }
                         .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .disabled(model.isJumpingToLatest)
                     .accessibilityIdentifier("chat-latest")
                     .help("Back to latest")
-                    .padding(.top, isRailHovered ? 0 : 2)
                     .onHover { hovering in
                         withAnimation(.easeOut(duration: 0.12)) {
                             isLatestHovered = hovering
                             if hovering { hoveredItem = nil }
                         }
                     }
-                    .transition(.scale.combined(with: .opacity))
                 }
             }
-            .padding(.vertical, isRailHovered ? 6 : 4)
-            .padding(.horizontal, isRailHovered ? 4 : 2)
-            .background {
-                if isRailHovered {
-                    Capsule()
-                        .fill(.regularMaterial)
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
-                        )
-                        .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
-                }
-            }
-            .animation(.easeOut(duration: 0.18), value: model.showsJumpToLatest)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 3)
+            .background(
+                Capsule()
+                    .fill(.regularMaterial)
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    )
+                    .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+            )
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
-                    isRailHovered = hovering
-                    if !hovering {
+                if !hovering {
+                    withAnimation(.easeOut(duration: 0.12)) {
                         hoveredItem = nil
                         isLatestHovered = false
                     }
@@ -356,14 +335,13 @@ private struct TurnJumpRailView: View {
 
     private func tickColor(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> Color {
         if isActive { return Color.accentColor }
-        if isHovered { return Color.primary.opacity(0.82) }
-        return item.isUserTurn ? Color.primary.opacity(0.42) : Color.secondary.opacity(0.28)
+        if isHovered { return Color.primary.opacity(0.85) }
+        return item.isUserTurn ? Color.primary.opacity(0.48) : Color.secondary.opacity(0.32)
     }
 
-    private func tickWidth(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> CGFloat {
-        if isActive { return isRailHovered ? 16 : 12 }
-        if isHovered { return 14 }
-        return item.isUserTurn ? (isRailHovered ? 11 : 8) : (isRailHovered ? 7 : 5)
+    private func tickWidth(item: ChatRailNavItem, isActive: Bool) -> CGFloat {
+        if isActive { return 14 }
+        return item.isUserTurn ? 10 : 6
     }
 
     private func railHoverPreview(_ item: ChatRailNavItem) -> some View {

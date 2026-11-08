@@ -900,7 +900,9 @@ struct ChatComposerView: View {
     }
 
     private func handleSteerReturn(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
-        guard !isComposing, canSendAndSteer(composer, attachments: attachments) else { return false }
+        let liveComposer = interactor.composer
+        let liveAttachments = interactor.attachments.items
+        guard canSendAndSteer(liveComposer, attachments: liveAttachments) else { return false }
         submitMessage(steer: true)
         return true
     }
@@ -911,7 +913,6 @@ struct ChatComposerView: View {
                               mentions: [ComposerMentionSuggestion], slashCommands: [SlashCommand],
                               skillQuery: SkillSuggestions.Query?, skillMatches: [SkillSummary],
                               selectedIndex: Int) -> Bool {
-        guard !isComposing else { return false }
         if acceptSuggestion(
             mentions: mentions,
             slashCommands: slashCommands,
@@ -922,7 +923,9 @@ struct ChatComposerView: View {
             return true
         }
         guard !scratchlistMode else { return false }
-        if primaryAction(composer, attachments: attachments).canSend {
+        let liveComposer = interactor.composer
+        let liveAttachments = interactor.attachments.items
+        if primaryAction(liveComposer, attachments: liveAttachments).canSend {
             submitMessage()
         }
         return true
