@@ -38,6 +38,16 @@ struct ChatMessageNavItem: Identifiable, Equatable {
     let createdAt: Int
 }
 
+struct ChatRailNavItem: Identifiable, Equatable {
+    let id: String
+    let isUserTurn: Bool
+    let turnNumber: Int
+    let title: String
+    let subtitle: String?
+    let toolCount: Int
+    let createdAt: Int
+}
+
 /// Presentation state machine for the read-only chat screen (M2f) — the iOS
 /// counterpart of the Android `ChatViewModel`'s pipeline half. It combines
 /// the message window's UI state with the cached session detail (whose
@@ -91,11 +101,14 @@ final class ChatModel {
     private(set) var topVisibleBlockID: String?
     private(set) var userTurnItems: [ChatTurnNavItem] = []
     private(set) var allMessageNavItems: [ChatMessageNavItem] = []
+    private(set) var railNavItems: [ChatRailNavItem] = []
+    private(set) var isSeekingOlderTurn = false
     private(set) var isJumpingToLatest = false
     private(set) var hasTrimmedTail = false
     private var isAwayFromBottom = false
     @ObservationIgnored private var scrollTargetToken = 0
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
+    @ObservationIgnored private var olderTurnSeekTask: Task<Void, Never>?
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
     }
@@ -114,6 +127,27 @@ final class ChatModel {
             if case .block(.userText(let user)) = blocks[idx],
                let turnIdx = userTurnItems.firstIndex(where: { $0.id == user.id }) {
                 return turnIdx
+            }
+        }
+        return 0
+    }
+
+    /// 0-based index in `railNavItems` corresponding to the item currently in view.
+    var activeRailIndex: Int? {
+        guard !railNavItems.isEmpty else { return nil }
+        if followsTail {
+            return railNavItems.count - 1
+        }
+        guard let topID = topVisibleBlockID,
+              let blockIdx = blocks.firstIndex(where: { $0.stableId == topID }) else {
+            return railNavItems.count - 1
+        }
+        let railIDs = Set(railNavItems.map(\.id))
+        for idx in stride(from: blockIdx, through: 0, by: -1) {
+            let candidateID = blocks[idx].stableId
+            if railIDs.contains(candidateID),
+               let railIdx = railNavItems.firstIndex(where: { $0.id == candidateID }) {
+                return railIdx
             }
         }
         return 0
@@ -391,6 +425,9 @@ final class ChatModel {
         isJumpingToLatest = false
         highlightTask?.cancel()
         highlightTask = nil
+        olderTurnSeekTask?.cancel()
+        olderTurnSeekTask = nil
+        isSeekingOlderTurn = false
         noticeTask?.cancel()
         noticeTask = nil
         // Discard an in-flight take — the mic must not stay hot off-screen
@@ -603,8 +640,9 @@ final class ChatModel {
         let turns = userTurnItems
         guard !turns.isEmpty else {
             if hasMore {
-                retryHistory()
-                showNotice(String(localized: "Loading older messages…"))
+                seekOlderUserTurn(jumpWhenFound: true)
+            } else if let prevRail = previousRailTargetID() {
+                jumpToBlock(id: prevRail)
             }
             return
         }
@@ -623,9 +661,7 @@ final class ChatModel {
         if current > 0 {
             jumpToBlock(id: turns[current - 1].id)
         } else if hasMore {
-            jumpToBlock(id: turns[0].id)
-            retryHistory()
-            showNotice(String(localized: "Loading older messages…"))
+            seekOlderUserTurn(jumpWhenFound: true)
         } else {
             jumpToBlock(id: turns[0].id)
         }
@@ -634,14 +670,73 @@ final class ChatModel {
     func jumpToNextUserTurn() {
         let turns = userTurnItems
         guard !turns.isEmpty else {
-            jumpToLatest()
+            if let nextRail = nextRailTargetID() {
+                jumpToBlock(id: nextRail)
+            } else {
+                jumpToLatest()
+            }
             return
         }
         let current = activeUserTurnIndex ?? 0
         if current + 1 < turns.count {
             jumpToBlock(id: turns[current + 1].id)
+        } else if let nextRail = nextRailTargetID() {
+            jumpToBlock(id: nextRail)
         } else {
             jumpToLatest()
+        }
+    }
+
+    private func previousRailTargetID() -> String? {
+        guard !railNavItems.isEmpty else { return nil }
+        let idx = activeRailIndex ?? (railNavItems.count - 1)
+        if idx > 0 { return railNavItems[idx - 1].id }
+        return railNavItems.first?.id
+    }
+
+    private func nextRailTargetID() -> String? {
+        guard !railNavItems.isEmpty else { return nil }
+        let idx = activeRailIndex ?? 0
+        if idx + 1 < railNavItems.count { return railNavItems[idx + 1].id }
+        return nil
+    }
+
+    /// Pages older message batches from the Hub (up to `maxPages` pages of 50
+    /// messages) until at least one earlier user turn appears in `userTurnItems`,
+    /// then optionally jumps to that newly loaded user prompt.
+    func seekOlderUserTurn(jumpWhenFound: Bool = true, maxPages: Int = 12) {
+        guard isActive, !isSeekingOlderTurn, hasMore, let controller = chat.windowController else { return }
+        isSeekingOlderTurn = true
+        let initialTurnCount = userTurnItems.count
+        let initialFirstTurnID = userTurnItems.first?.id
+        olderTurnSeekTask?.cancel()
+        olderTurnSeekTask = Task { [weak self] in
+            defer { self?.isSeekingOlderTurn = false }
+            for _ in 0..<maxPages {
+                guard let self, !Task.isCancelled, self.hasMore else { break }
+                let outcome = await controller.fetchOlder()
+                guard !Task.isCancelled else { return }
+                switch outcome {
+                case .applied(_, let more, _):
+                    // Wait one brief cycle for pipeline recompute to publish new `userTurnItems`
+                    try? await Task.sleep(for: .milliseconds(130))
+                    guard !Task.isCancelled else { return }
+                    if self.userTurnItems.count > initialTurnCount,
+                       let newestOlderTurn = self.userTurnItems.first,
+                       newestOlderTurn.id != initialFirstTurnID {
+                        if jumpWhenFound {
+                            self.jumpToBlock(id: newestOlderTurn.id)
+                        }
+                        return
+                    }
+                    if !more { return }
+                case .stopped, .failed:
+                    return
+                }
+            }
+            if let self, !Task.isCancelled, jumpWhenFound, let first = self.userTurnItems.first ?? self.railNavItems.first.map({ ChatTurnNavItem(id: $0.id, turnNumber: $0.turnNumber, userText: $0.title, assistantPreview: $0.subtitle, toolCount: $0.toolCount, createdAt: $0.createdAt) }) {
+                self.jumpToBlock(id: first.id)
+            }
         }
     }
 
@@ -770,6 +865,7 @@ final class ChatModel {
             let nav = Self.buildNavigationItems(from: visible)
             userTurnItems = nav.turns
             allMessageNavItems = nav.messages
+            railNavItems = nav.rail
             toolInspection.update(visible)
             var liveIDs = Set<String>()
             func collect(_ block: ChatBlock) {
@@ -821,7 +917,7 @@ final class ChatModel {
 
     private static func buildNavigationItems(
         from visible: [VisibleChatBlock]
-    ) -> (turns: [ChatTurnNavItem], messages: [ChatMessageNavItem]) {
+    ) -> (turns: [ChatTurnNavItem], messages: [ChatMessageNavItem], rail: [ChatRailNavItem]) {
         var turns: [ChatTurnNavItem] = []
         var messages: [ChatMessageNavItem] = []
 
@@ -878,7 +974,55 @@ final class ChatModel {
             }
         }
         flushCurrentTurn()
-        return (turns, messages)
+
+        // Build rail items:
+        // - When >= 3 user turns are loaded in the window, each rail tick is a User Turn.
+        // - When < 3 user turns are in the current window (e.g. a long coding turn with 100+ tool
+        //   calls where only 0-2 user prompts are in the 50-message tail window), include both
+        //   User Turns (primary ticks) and Assistant Replies (secondary ticks) so the rail is
+        //   always populated and navigable.
+        let rail: [ChatRailNavItem]
+        if turns.count >= 3 {
+            rail = turns.map { turn in
+                ChatRailNavItem(
+                    id: turn.id,
+                    isUserTurn: true,
+                    turnNumber: turn.turnNumber,
+                    title: turn.userText,
+                    subtitle: turn.assistantPreview,
+                    toolCount: turn.toolCount,
+                    createdAt: turn.createdAt
+                )
+            }
+        } else if !messages.isEmpty {
+            let turnByID = Dictionary(uniqueKeysWithValues: turns.map { ($0.id, $0) })
+            rail = messages.map { msg in
+                if let turn = turnByID[msg.id] {
+                    return ChatRailNavItem(
+                        id: turn.id,
+                        isUserTurn: true,
+                        turnNumber: turn.turnNumber,
+                        title: turn.userText,
+                        subtitle: turn.assistantPreview,
+                        toolCount: turn.toolCount,
+                        createdAt: turn.createdAt
+                    )
+                }
+                return ChatRailNavItem(
+                    id: msg.id,
+                    isUserTurn: msg.role == .user,
+                    turnNumber: msg.turnNumber,
+                    title: msg.text,
+                    subtitle: nil,
+                    toolCount: 0,
+                    createdAt: msg.createdAt
+                )
+            }
+        } else {
+            rail = []
+        }
+
+        return (turns, messages, rail)
     }
 
     private static func cleanSnippet(_ raw: String) -> String {
