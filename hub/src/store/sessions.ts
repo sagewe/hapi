@@ -458,7 +458,7 @@ export function updateSessionMetadata(
     metadata: unknown,
     expectedVersion: number,
     namespace: string,
-    options?: { touchUpdatedAt?: boolean; allowUnarchive?: boolean; allowTitleUpdate?: boolean; titleLocked?: boolean; inheritTitleLockFrom?: string }
+    options?: { touchUpdatedAt?: boolean; allowUnarchive?: boolean; allowTitleUpdate?: boolean; titleLocked?: boolean; tags?: string[]; inheritTitleLockFrom?: string }
 ): VersionedUpdateResult<unknown | null> {
     const now = Date.now()
     const touchUpdatedAt = options?.touchUpdatedAt !== false
@@ -474,8 +474,11 @@ export function updateSessionMetadata(
             const prior = existing.metadata
             const sourceTitle = options?.inheritTitleLockFrom
                 ? getSessionByNamespace(db, options.inheritTitleLockFrom, namespace)?.metadata : null
-            const titleOwner = isPlainObject(prior) && prior.titleLocked === true ? prior
+            const baseOwner = isPlainObject(prior) && prior.titleLocked === true ? prior
                 : isPlainObject(sourceTitle) && sourceTitle.titleLocked === true ? sourceTitle : prior
+            const titleOwner = isPlainObject(baseOwner) && !Array.isArray(baseOwner.tags) && isPlainObject(sourceTitle) && Array.isArray(sourceTitle.tags)
+                ? { ...baseOwner, tags: sourceTitle.tags }
+                : baseOwner
             let merged = preserveSessionTitle(titleOwner, mergeSessionMetadata(prior, metadata), options)
 
             // #1911 M1: unauthorized un-archive of hub-archived rows.

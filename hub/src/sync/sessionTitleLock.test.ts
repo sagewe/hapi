@@ -171,3 +171,19 @@ it('does not move history when title transfer fails', async () => {
         expect(store.sessions.getSession(source.id)?.metadata).toMatchObject({ titleLocked: true })
     } finally { store.close() }
 })
+
+it('preserves user-assigned tags across CLI metadata writes and clears when empty array passed', async () => {
+    const { store, cache, create, write } = setup()
+    try {
+        const session = create('tagged-session')
+        await cache.renameSession(session.id, undefined, undefined, ['  Work ', 'work', 'Urgent'])
+        expect(store.sessions.getSession(session.id)?.metadata).toMatchObject({ tags: ['Work', 'Urgent'] })
+        write(session.id, { name: 'Agent title', tags: ['spoofed'] })
+        expect(store.sessions.getSession(session.id)?.metadata).toMatchObject({
+            name: 'Agent title',
+            tags: ['Work', 'Urgent']
+        })
+        await cache.renameSession(session.id, undefined, undefined, [])
+        expect(store.sessions.getSession(session.id)?.metadata).not.toHaveProperty('tags')
+    } finally { store.close() }
+})

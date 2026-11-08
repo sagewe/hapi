@@ -120,16 +120,17 @@ extension APIClient {
         try await requestVoid(.delete, "/api/sessions/\(encodePathComponent(id))")
     }
 
-    /// `PATCH /api/sessions/:id` — rename (1–255 chars).
-    public func renameSession(id: String, name: String? = nil, titleLocked: Bool? = nil) async throws {
+    /// `PATCH /api/sessions/:id` — rename / lock / tags (1–255 chars).
+    public func renameSession(id: String, name: String? = nil, titleLocked: Bool? = nil, tags: [String]? = nil) async throws {
         struct RenameSessionRequest: Encodable {
             let name: String?
             let titleLocked: Bool?
+            let tags: [String]?
         }
         try await requestVoid(
             .patch,
             "/api/sessions/\(encodePathComponent(id))",
-            body: RenameSessionRequest(name: name, titleLocked: titleLocked)
+            body: RenameSessionRequest(name: name, titleLocked: titleLocked, tags: tags)
         )
     }
 

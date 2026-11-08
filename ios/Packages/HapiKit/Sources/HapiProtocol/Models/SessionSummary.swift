@@ -50,6 +50,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
     }
 
     public var titleLocked: Bool?
+    public var tags: [String]?
     public var name: String?
     public var promptTitle: String?
     public var path: String
@@ -64,6 +65,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
 
     public init(
         titleLocked: Bool? = nil,
+        tags: [String]? = nil,
         name: String? = nil,
         promptTitle: String? = nil,
         path: String,
@@ -76,6 +78,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
         hapiMcpUrl: String? = nil
     ) {
         self.titleLocked = titleLocked
+        self.tags = tags
         self.name = name
         self.promptTitle = promptTitle
         self.path = path

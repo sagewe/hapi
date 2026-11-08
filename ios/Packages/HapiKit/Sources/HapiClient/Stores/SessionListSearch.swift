@@ -7,11 +7,12 @@ import HapiProtocol
 /// field weights plus boundary and title-phrase bonuses only rank.
 public enum SessionListSearch {
     enum Field: CaseIterable {
-        case title, worktreeLabel, summary, flavor, machine, path, id
+        case title, tag, worktreeLabel, summary, flavor, machine, path, id
 
         var weight: Double {
             switch self {
             case .title: 10
+            case .tag: 6
             case .worktreeLabel: 5
             case .summary: 3
             case .flavor, .machine: 2
@@ -142,8 +143,10 @@ public enum SessionListSearch {
         let metadata = summary.metadata
         let paths = [metadata?.path, metadata?.worktree?.basePath, metadata?.worktree?.worktreePath]
             .compactMap { $0 }
+        let tags = (metadata?.tags ?? []).flatMap { [$0, "#\($0)"] }
         let values: [Field: [String?]] = [
             .title: [sessionTitle(summary)],
+            .tag: tags,
             .worktreeLabel: [worktreeLabel(summary)],
             .summary: [metadata?.summary?.text],
             .flavor: [metadata?.flavor],

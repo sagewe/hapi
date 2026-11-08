@@ -84,9 +84,10 @@ struct SessionListView: View {
             Text(model.actionError ?? "")
         }
         .sheet(item: $renameTarget) { row in
-            SessionTitleEditor(row: row) { name, locked in
-                try await model.saveTitle(row, name: name, locked: locked)
+            SessionTitleEditor(row: row, availableTags: model.availableTags) { name, locked, tags in
+                try await model.saveTitle(row, name: name, locked: locked, tags: tags)
             }
+            .macSheetSizing()
         }
         .alert(
             "Delete Session",
@@ -117,7 +118,9 @@ struct SessionListView: View {
         let effectiveSelectedId = selectedSessionId ?? selection?.wrappedValue ?? model.selectedSessionId
         return KeyedContent(key: ListRenderKey(rows: rows, selectedSessionId: effectiveSelectedId,
                                                selectable: selection != nil,
-                                               theme: theme, filters: model.filters)) {
+                                               theme: theme, filters: model.filters,
+                                               groupByTag: model.groupByTag,
+                                               collapsedTagGroups: model.collapsedTagGroups)) {
             list(rows, selectedSessionId: effectiveSelectedId)
         }
         .equatable()
@@ -127,48 +130,75 @@ struct SessionListView: View {
 
     private func list(_ rows: [SessionRowUI], selectedSessionId: String?) -> some View {
         let pinnedCount = SessionListModel.pinnedCount(of: rows)
+        let listSelection: Binding<String?>? = model.groupByTag ? nil : selection
         return ScrollViewReader { proxy in
-            List(selection: selection) {
-                if pinnedCount > 0 {
-                    Section {
-                        ForEach(rows.prefix(pinnedCount)) { row in
-                            equatableRow(row, isSelected: selectedSessionId == row.id)
+            List(selection: listSelection) {
+                if model.groupByTag {
+                    let groups = SessionListModel.tagGroups(of: rows)
+                    ForEach(groups) { group in
+                        let isCollapsed = model.isTagGroupCollapsed(group.id)
+                        Section {
+                            if !isCollapsed {
+                                ForEach(group.rows) { row in
+                                    groupedEquatableRow(row, groupId: group.id, isSelected: selectedSessionId == row.id)
+                                }
+                            }
+                        } header: {
+                            tagGroupHeader(group, isCollapsed: isCollapsed)
                         }
-                    } header: {
-                        sectionHeader("Pinned")
+                        .listSectionSeparator(.hidden, edges: .top)
                     }
-                    .listSectionSeparator(.hidden, edges: .top)
-                }
-                if rows.count > pinnedCount {
-                    // Headerless when nothing is pinned: an empty-string Section
-                    // header still reserves a blank sticky band above the list
-                    // (device feedback: "一片空白").
+                } else {
                     if pinnedCount > 0 {
                         Section {
-                            ForEach(rows.dropFirst(pinnedCount)) { row in
+                            ForEach(rows.prefix(pinnedCount)) { row in
                                 equatableRow(row, isSelected: selectedSessionId == row.id)
                             }
                         } header: {
-                            // Not "Sessions": the navigation title already says so.
-                            sectionHeader("Recent")
+                            sectionHeader("Pinned")
                         }
                         .listSectionSeparator(.hidden, edges: .top)
-                    } else {
-                        // Top edge hidden: a plain list otherwise draws a stray
-                        // separator above the very first row (device feedback).
-                        Section {
-                            ForEach(rows) { row in
-                                equatableRow(row, isSelected: selectedSessionId == row.id)
+                    }
+                    if rows.count > pinnedCount {
+                        // Headerless when nothing is pinned: an empty-string Section
+                        // header still reserves a blank sticky band above the list
+                        // (device feedback: "一片空白").
+                        if pinnedCount > 0 {
+                            Section {
+                                ForEach(rows.dropFirst(pinnedCount)) { row in
+                                    equatableRow(row, isSelected: selectedSessionId == row.id)
+                                }
+                            } header: {
+                                // Not "Sessions": the navigation title already says so.
+                                sectionHeader("Recent")
                             }
+                            .listSectionSeparator(.hidden, edges: .top)
+                        } else {
+                            // Top edge hidden: a plain list otherwise draws a stray
+                            // separator above the very first row (device feedback).
+                            Section {
+                                ForEach(rows) { row in
+                                    equatableRow(row, isSelected: selectedSessionId == row.id)
+                                }
+                            }
+                            .listSectionSeparator(.hidden, edges: .top)
                         }
-                        .listSectionSeparator(.hidden, edges: .top)
                     }
                 }
             }
             .onChange(of: selectedSessionId) { _, newId in
                 guard let newId, rows.contains(where: { $0.id == newId }) else { return }
                 withAnimation(.easeInOut(duration: 0.15)) {
-                    proxy.scrollTo(newId)
+                    if model.groupByTag {
+                        let groups = SessionListModel.tagGroups(of: rows)
+                        if let firstGroup = groups.first(where: { group in
+                            !model.isTagGroupCollapsed(group.id) && group.rows.contains(where: { $0.id == newId })
+                        }) {
+                            proxy.scrollTo("\(firstGroup.id)::\(newId)")
+                        }
+                    } else {
+                        proxy.scrollTo(newId)
+                    }
                 }
             }
         }
@@ -193,16 +223,25 @@ struct SessionListView: View {
     /// update. Rows compare only what they draw and skip unchanged content.
     private func equatableRow(_ row: SessionRowUI, isSelected: Bool) -> some View {
         KeyedContent(key: RowRenderKey(row: row, isSelected: isSelected, selectable: selection != nil, theme: theme)) {
-            rowCell(row, isSelected: isSelected)
+            rowCell(row, isSelected: isSelected, useSelectionLink: selection != nil)
         }
         .equatable()
         .tag(row.id)
         .id(row.id)
     }
 
-    private func rowCell(_ row: SessionRowUI, isSelected: Bool) -> some View {
+    private func groupedEquatableRow(_ row: SessionRowUI, groupId: String, isSelected: Bool) -> some View {
+        let compositeId = "\(groupId)::\(row.id)"
+        return KeyedContent(key: RowRenderKey(row: row, isSelected: isSelected, selectable: false, theme: theme)) {
+            rowCell(row, isSelected: isSelected, useSelectionLink: false)
+        }
+        .equatable()
+        .id(compositeId)
+    }
+
+    private func rowCell(_ row: SessionRowUI, isSelected: Bool, useSelectionLink: Bool) -> some View {
         Group {
-            if selection != nil {
+            if useSelectionLink {
                 #if targetEnvironment(macCatalyst)
                 Button {
                     onOpenSession(row.id)
@@ -262,6 +301,52 @@ struct SessionListView: View {
             .foregroundStyle(theme.textSecondary)
             .textCase(nil)
             .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+    }
+
+    private func tagGroupHeader(_ group: SessionTagGroup, isCollapsed: Bool) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                model.toggleTagGroupCollapsed(group.id)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(theme.textSecondary.opacity(0.8))
+                    .frame(width: 12)
+                switch group.kind {
+                case .pinned:
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text("Pinned")
+                case .tag(let label):
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                    Text(verbatim: label)
+                case .untagged:
+                    Image(systemName: "tray")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    Text("Untagged")
+                }
+                Spacer(minLength: 4)
+                Text(verbatim: "\(group.rows.count)")
+                    .font(.caption2.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(theme.textSecondary)
+            .textCase(nil)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 16))
     }
 
     /// Leading swipe: the quick toggles (pin, read), as in Mail.
@@ -331,7 +416,48 @@ struct SessionListView: View {
         Button {
             renameTarget = row
         } label: {
-            Label("Rename…", systemImage: "pencil")
+            Label("Rename & Tags…", systemImage: "pencil")
+        }
+        Menu {
+            Button {
+                renameTarget = row
+            } label: {
+                Label("Edit Tags…", systemImage: "plus.circle")
+            }
+            let allTags = model.availableTags
+            if !allTags.isEmpty {
+                Divider()
+                ForEach(allTags, id: \.self) { tag in
+                    let hasTag = row.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
+                    Button {
+                        model.toggleTag(row, tag: tag)
+                    } label: {
+                        Label(
+                            "#\(tag)",
+                            systemImage: hasTag ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+                }
+            }
+            if !row.tags.isEmpty {
+                Divider()
+                Button(role: .destructive) {
+                    model.setTags(row, tags: [])
+                } label: {
+                    Label("Clear Tags", systemImage: "xmark.circle")
+                }
+            }
+            Divider()
+            Button {
+                model.setGroupByTag(!model.groupByTag)
+            } label: {
+                Label(
+                    model.groupByTag ? "Disable Group by Tag" : "Group Sidebar by Tag",
+                    systemImage: "rectangle.3.group"
+                )
+            }
+        } label: {
+            Label("Tags", systemImage: "tag")
         }
         if summary.pinned == true || summary.globalPinned == true {
             Button {
@@ -445,6 +571,8 @@ private struct ListRenderKey: Equatable {
     let selectable: Bool
     let theme: HapiTheme
     let filters: SessionListFilters
+    let groupByTag: Bool
+    let collapsedTagGroups: Set<String>
 }
 
 struct SessionRowView: View {
@@ -527,16 +655,34 @@ struct SessionRowView: View {
         }
     }
 
-    /// Project left; only states that need the user (reply/approval) get a
+    /// Project + tags left; only states that need the user (reply/approval) get a
     /// trailing symbol. Routine activity lives on the icon badge.
     private var detailLine: some View {
-        HStack(alignment: .center, spacing: 0) {
+        HStack(alignment: .center, spacing: 6) {
             // Keep the same text line height when metadata is missing,
             // so the row height does not jump.
             Text(verbatim: row.project ?? " ")
                 .lineLimit(1)
                 .accessibilityHidden(row.project == nil)
-            Spacer(minLength: 12)
+            if !row.tags.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(Array(row.tags.prefix(3)), id: \.self) { tag in
+                        Text(verbatim: "#\(tag)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(theme.accent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(theme.accent.opacity(0.12), in: Capsule())
+                            .lineLimit(1)
+                    }
+                    if row.tags.count > 3 {
+                        Text(verbatim: "+\(row.tags.count - 3)")
+                            .font(.caption2)
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                }
+            }
+            Spacer(minLength: 8)
             if let status = row.status, let symbol = status.symbolName {
                 Image(systemName: symbol)
                     .symbolVariant(.none)
@@ -612,43 +758,181 @@ struct FilterChip: View {
 
 struct SessionTitleEditor: View {
     let row: SessionRowUI
-    let save: (String?, Bool) async throws -> Void
+    let availableTags: [String]
+    let save: (String?, Bool, [String]?) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var locked: Bool
+    @State private var tags: [String]
+    @State private var newTagInput = ""
     @State private var originalName: String
     @State private var originalLock: Bool
+    @State private var originalTags: [String]
     @State private var busy = false
     @State private var error: String?
 
-    init(row: SessionRowUI, save: @escaping (String?, Bool) async throws -> Void) {
-        self.row = row; self.save = save
+    init(
+        row: SessionRowUI,
+        availableTags: [String] = [],
+        save: @escaping (String?, Bool, [String]?) async throws -> Void
+    ) {
+        self.row = row
+        self.availableTags = availableTags
+        self.save = save
+        let initialTags = SessionListStore.normalizeTags(row.tags)
         _originalName = State(initialValue: row.title)
         _originalLock = State(initialValue: row.summary.metadata?.titleLocked == true)
+        _originalTags = State(initialValue: initialTags)
         _name = State(initialValue: row.title)
         _locked = State(initialValue: row.summary.metadata?.titleLocked == true)
+        _tags = State(initialValue: initialTags)
     }
+
+    init(row: SessionRowUI, save: @escaping (String?, Bool) async throws -> Void) {
+        self.init(row: row, availableTags: []) { name, locked, _ in
+            try await save(name, locked)
+        }
+    }
+
+    private var suggestedTags: [String] {
+        availableTags.filter { candidate in
+            !tags.contains { $0.caseInsensitiveCompare(candidate) == .orderedSame }
+        }
+    }
+
+    private func addTags(from raw: String) {
+        let parts = raw
+            .split(whereSeparator: { $0 == "," || $0 == "，" || $0 == "\n" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.hasPrefix("#") ? String($0.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) : $0 }
+            .filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return }
+        tags = SessionListStore.normalizeTags(tags + parts)
+    }
+
+    private func commitPendingTagInput() {
+        guard !newTagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        addTags(from: newTagInput)
+        newTagInput = ""
+    }
+
+    private func removeTag(_ tag: String) {
+        tags.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Session name", text: $name)
-                Toggle("Lock Title", isOn: $locked)
+                Section("Title") {
+                    TextField("Session name", text: $name)
+                    Toggle("Lock Title", isOn: $locked)
+                }
+                Section {
+                    if !tags.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(tags, id: \.self) { tag in
+                                    Button {
+                                        removeTag(tag)
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Text(verbatim: "#\(tag)")
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption)
+                                        }
+                                        .font(.footnote.weight(.medium))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.accentColor.opacity(0.16), in: Capsule())
+                                        .foregroundStyle(Color.accentColor)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        TextField("Add tag (comma or Return)", text: $newTagInput)
+                            .onSubmit {
+                                commitPendingTagInput()
+                            }
+                            .onChange(of: newTagInput) { _, updated in
+                                if updated.contains(",") || updated.contains("，") {
+                                    commitPendingTagInput()
+                                }
+                            }
+                        Button {
+                            commitPendingTagInput()
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.title3)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(newTagInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if !suggestedTags.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Existing Tags")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(suggestedTags, id: \.self) { suggestion in
+                                        Button {
+                                            addTags(from: suggestion)
+                                        } label: {
+                                            HStack(spacing: 3) {
+                                                Image(systemName: "plus")
+                                                    .font(.caption2.weight(.bold))
+                                                Text(verbatim: "#\(suggestion)")
+                                                    .font(.footnote)
+                                            }
+                                            .padding(.horizontal, 9)
+                                            .padding(.vertical, 4)
+                                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                                            .foregroundStyle(.primary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Tags")
+                }
                 if let error { Text(error).foregroundStyle(.red) }
             }
             .disabled(busy)
-            .navigationTitle("Rename Session")
+            .navigationTitle("Session Info & Tags")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        commitPendingTagInput()
                         let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if value == originalName && locked == originalLock { dismiss(); return }
+                        let normalizedTags = SessionListStore.normalizeTags(tags)
+                        let tagsChanged = normalizedTags != originalTags
+                        if value == originalName && locked == originalLock && !tagsChanged {
+                            dismiss()
+                            return
+                        }
                         busy = true
                         Task {
                             defer { busy = false }
-                            do { try await save(value == originalName ? nil : value, locked); dismiss() }
-                            catch { self.error = error.localizedDescription }
+                            do {
+                                try await save(
+                                    value == originalName ? nil : value,
+                                    locked,
+                                    tagsChanged ? normalizedTags : nil
+                                )
+                                dismiss()
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
                         }
                     }.disabled(busy || !SessionNameRules.isValid(name))
                 }

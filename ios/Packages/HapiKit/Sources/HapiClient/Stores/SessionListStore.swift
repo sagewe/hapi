@@ -33,7 +33,8 @@ public protocol SessionListStoring: AnyObject {
 
     /// `PATCH /sessions/:id` rename, optimistic `metadata.name`; rolls
     /// forward to server truth on failure.
-    func updateTitle(sessionId: String, name: String?, locked: Bool) async throws
+    func updateTitle(sessionId: String, name: String?, locked: Bool, tags: [String]?) async throws
+    func updateTags(sessionId: String, tags: [String]) async throws
     func renameSession(sessionId: String, name: String) async throws
 
     /// `DELETE /sessions/:id`, optimistic removal; 409 while active
@@ -47,6 +48,14 @@ public protocol SessionListStoring: AnyObject {
 
 extension SessionListStoring {
     public func updateTitle(sessionId: String, name: String?, locked: Bool) async throws {
+        try await updateTitle(sessionId: sessionId, name: name, locked: locked, tags: nil)
+    }
+
+    public func updateTitle(sessionId: String, name: String?, locked: Bool, tags: [String]?) async throws {
+        throw URLError(.unsupportedURL)
+    }
+
+    public func updateTags(sessionId: String, tags: [String]) async throws {
         throw URLError(.unsupportedURL)
     }
 }
@@ -268,19 +277,62 @@ public final class SessionListStore: SessionListStoring {
 
     // MARK: - Rename / delete / reopen
 
-    public func updateTitle(sessionId: String, name: String?, locked: Bool) async throws {
-        try await api.renameSession(id: sessionId, name: name, titleLocked: locked)
+    public static func normalizeTags(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in tags {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            result.append(String(trimmed.prefix(64)))
+            if result.count >= 20 { break }
+        }
+        return result
+    }
+
+    public func updateTitle(sessionId: String, name: String?, locked: Bool, tags: [String]? = nil) async throws {
+        let normalizedTags = tags.map(Self.normalizeTags)
+        try await api.renameSession(id: sessionId, name: name, titleLocked: locked, tags: normalizedTags)
         if let index = sessions.firstIndex(where: { $0.id == sessionId }) {
             var list = sessions
             if let name { list[index].metadata?.name = name }
             list[index].metadata?.titleLocked = locked
+            if let normalizedTags {
+                list[index].metadata?.tags = normalizedTags.isEmpty ? nil : normalizedTags
+            }
             setSessions(list)
         }
         updateDetailLocal(sessionId) { detail in
             if let name { detail.metadata?.name = name }
             detail.metadata?.titleLocked = locked
+            if let normalizedTags {
+                detail.metadata?.tags = normalizedTags.isEmpty ? nil : normalizedTags
+            }
         }
         scheduleRefresh()
+    }
+
+    public func updateTags(sessionId: String, tags: [String]) async throws {
+        let normalizedTags = Self.normalizeTags(tags)
+        let summaryField: [String]? = normalizedTags.isEmpty ? nil : normalizedTags
+        if let index = sessions.firstIndex(where: { $0.id == sessionId }),
+           sessions[index].metadata != nil {
+            var list = sessions
+            list[index].metadata?.tags = summaryField
+            setSessions(list)
+        }
+        updateDetailLocal(sessionId) { $0.metadata?.tags = summaryField }
+        do {
+            try await api.renameSession(id: sessionId, tags: normalizedTags)
+            scheduleRefresh()
+        } catch {
+            scheduleRefresh()
+            if details[sessionId] != nil {
+                Task { _ = try? await self.loadSessionDetail(sessionId) }
+            }
+            throw error
+        }
     }
 
     public func renameSession(sessionId: String, name: String) async throws {

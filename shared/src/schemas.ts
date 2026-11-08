@@ -59,6 +59,7 @@ export const MetadataSchema = z.object({
     version: z.string().optional(),
     name: z.string().optional(),
     titleLocked: z.boolean().optional(),
+    tags: z.array(z.string()).optional(),
     os: z.string().optional(),
     // Set when the title was chosen via the hapi change_title MCP tool. ACP
     // native session-title sync must not overwrite it, including after

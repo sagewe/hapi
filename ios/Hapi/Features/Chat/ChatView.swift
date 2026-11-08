@@ -210,7 +210,10 @@ struct ChatView: View {
         .fullScreenCover(isPresented: $terminalOpen) { RemoteTerminalView(api: session.api, sessionID: sessionId) }
         .sheet(isPresented: $renameOpen) {
             if let row = model.titleEditorRow {
-                SessionTitleEditor(row: row) { name, locked in try await model.saveTitle(name: name, locked: locked) }
+                SessionTitleEditor(row: row, availableTags: model.availableTags) { name, locked, tags in
+                    try await model.saveTitle(name: name, locked: locked, tags: tags)
+                }
+                .macSheetSizing()
             }
         }
         .alert("Delete Session", isPresented: $deleteOpen) {
@@ -425,7 +428,7 @@ struct ChatView: View {
             Button {
                 renameOpen = true
             } label: {
-                Label("Rename…", systemImage: "pencil")
+                Label("Rename & Tags…", systemImage: "tag")
             }
             if model.sessionIsActive == true {
                 Button {
@@ -501,17 +504,29 @@ struct ChatView: View {
             Text(model.header.title)
                 .font(.headline)
                 .lineLimit(1)
-            if let subtitle = model.header.subtitle {
+            let tags = model.sessionTags
+            if model.header.subtitle != nil || !tags.isEmpty {
                 HStack(spacing: 4) {
-                    if model.header.flavor != nil {
-                        // Inherits .secondary like the meta text (web:
-                        // currentColor under --app-hint); color variants
-                        // ignore the tint.
-                        AgentFlavorIconView(flavor: model.header.flavor, size: 12)
+                    if let subtitle = model.header.subtitle {
+                        if model.header.flavor != nil {
+                            // Inherits .secondary like the meta text (web:
+                            // currentColor under --app-hint); color variants
+                            // ignore the tint.
+                            AgentFlavorIconView(flavor: model.header.flavor, size: 12)
+                        }
+                        Text(subtitle)
+                            .font(.caption2)
+                            .lineLimit(1)
                     }
-                    Text(subtitle)
-                        .font(.caption2)
-                        .lineLimit(1)
+                    ForEach(Array(tags.prefix(3)), id: \.self) { tag in
+                        Text(verbatim: "#\(tag)")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Color.accentColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 0.5)
+                            .background(Color.accentColor.opacity(0.12), in: Capsule())
+                            .lineLimit(1)
+                    }
                 }
                 .foregroundStyle(.secondary)
             }

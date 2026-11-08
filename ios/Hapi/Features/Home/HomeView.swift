@@ -150,7 +150,7 @@ struct HomeView: View {
 
     /// Steps through the list as shown (filters and search applied).
     private func selectAdjacentSession(_ offset: Int) {
-        let ids = listModel.rows.map(\.id)
+        let ids = listModel.displayOrderSessionIds
         guard !ids.isEmpty else { return }
         let target: Int
         if let current = tabletNavigation.selectedSessionId, let index = ids.firstIndex(of: current) {
@@ -163,7 +163,7 @@ struct HomeView: View {
     }
 
     private func selectSessionAtIndex(_ index: Int) {
-        let ids = listModel.rows.map(\.id)
+        let ids = listModel.displayOrderSessionIds
         guard ids.indices.contains(index) else { return }
         openSession(ids[index])
     }

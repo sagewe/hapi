@@ -62,6 +62,34 @@ struct SessionListStoreTests {
         #expect(store.sessions.first?.metadata?.titleLocked == true)
     }
 
+    @Test func tagsSurviveProjectionUpdateAndSearch() async throws {
+        var detail = SessionMetadata(path: "/repo", host: "test")
+        detail.tags = ["work", "ios"]
+        let summary = SummaryPatching.toSessionSummaryMetadata(detail)
+        #expect(summary?.tags == ["work", "ios"])
+
+        let (performer, store) = try makeStore()
+        var row = storeSummary("s1")
+        row.metadata = SessionSummaryMetadata(name: "Feature work", path: "/repo")
+        await performer.enqueue(json: try sessionsResponseJSON(row))
+        try await store.refresh()
+        await performer.enqueue(json: "{}")
+        try await store.updateTags(sessionId: "s1", tags: ["  Frontend ", "frontend", "Urgent"])
+        let requests = await performer.requests
+        let request = try #require(requests.first { $0.httpMethod == "PATCH" })
+        let payload = try #require(request.httpBody)
+        let object = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        #expect(object["tags"] as? [String] == ["Frontend", "Urgent"])
+        #expect(store.sessions.first?.metadata?.tags == ["Frontend", "Urgent"])
+
+        let searchByHash = SessionListSearch.scoreIndex(
+            sessions: store.sessions,
+            query: "#urgent",
+            machineLabel: { _ in "" }
+        )
+        #expect(searchByHash?.matches("s1") == true)
+    }
+
     // MARK: - refresh
 
     @Test func refreshReplacesTheListWithTheSortedServerResponse() async throws {

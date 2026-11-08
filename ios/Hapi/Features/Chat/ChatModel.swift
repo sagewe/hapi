@@ -457,11 +457,39 @@ final class ChatModel {
     // MARK: - Actions
 
     var titleEditorRow: SessionRowUI? {
-        guard let detail = hub.sessionStore.detail(for: sessionId) else { return nil }
-        return SessionRowUI(summary: SummaryPatching.toSessionSummary(detail), title: header.title, project: "", flavor: detail.metadata?.flavor, unread: false)
+        if let detail = hub.sessionStore.detail(for: sessionId) {
+            return SessionRowUI(summary: SummaryPatching.toSessionSummary(detail), title: header.title, project: "", flavor: detail.metadata?.flavor, unread: false)
+        }
+        if let summary = hub.sessionStore.sessions.first(where: { $0.id == sessionId }) {
+            return SessionRowUI(summary: summary, title: header.title, project: "", flavor: summary.metadata?.flavor, unread: false)
+        }
+        return nil
     }
-    func saveTitle(name: String?, locked: Bool) async throws {
-        try await hub.sessionStore.updateTitle(sessionId: sessionId, name: name, locked: locked)
+
+    var availableTags: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for summary in hub.sessionStore.sessions {
+            for rawTag in summary.metadata?.tags ?? [] {
+                let trimmed = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let key = trimmed.lowercased()
+                guard seen.insert(key).inserted else { continue }
+                result.append(trimmed)
+            }
+        }
+        return result.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var sessionTags: [String] {
+        if let tags = hub.sessionStore.detail(for: sessionId)?.metadata?.tags {
+            return tags
+        }
+        return hub.sessionStore.sessions.first(where: { $0.id == sessionId })?.metadata?.tags ?? []
+    }
+
+    func saveTitle(name: String?, locked: Bool, tags: [String]? = nil) async throws {
+        try await hub.sessionStore.updateTitle(sessionId: sessionId, name: name, locked: locked, tags: tags)
     }
     func markUnread() {
         let observed = hub.sessionStore.detail(for: sessionId)?.readState

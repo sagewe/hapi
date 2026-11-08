@@ -166,6 +166,17 @@ struct QuickSwitchSheet: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
+                        if !row.tags.isEmpty {
+                            ForEach(Array(row.tags.prefix(3)), id: \.self) { tag in
+                                Text(verbatim: "#\(tag)")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(theme.accent)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(theme.accent.opacity(0.12), in: Capsule())
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
             }

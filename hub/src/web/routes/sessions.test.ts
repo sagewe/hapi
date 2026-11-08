@@ -297,6 +297,18 @@ describe('sessions routes', () => {
         expect(calls).toEqual([['session-1', undefined, true]])
     })
 
+    it('accepts a tags-only or combined PATCH /sessions/:id update', async () => {
+        const calls: unknown[] = []
+        const { app } = createApp(createSession(), { renameSession: async (...args) => { calls.push(args) } })
+        const response = await app.request('/api/sessions/session-1', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags: ['work', 'ios'] })
+        })
+        expect(response.status).toBe(200)
+        expect(calls).toEqual([['session-1', undefined, undefined, ['work', 'ios']]])
+    })
+
     it.each([true, false])('passes explicit title lock %s atomically through both user title routes', async (titleLocked) => {
         const calls: unknown[] = []
         const { app } = createApp(createSession(), {

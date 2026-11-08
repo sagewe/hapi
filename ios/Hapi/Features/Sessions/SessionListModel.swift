@@ -20,6 +20,7 @@ struct SessionRowUI: Identifiable, Equatable {
 
     var id: String { summary.id }
     var status: SessionRowStatus? { SessionRowStatus(summary: summary) }
+    var tags: [String] { summary.metadata?.tags ?? [] }
 }
 
 /// Presentation only: request totals/kinds come from the hub, independently
@@ -84,15 +85,35 @@ struct MachineFilterUI: Identifiable, Equatable {
     let sessionCount: Int
 }
 
+struct TagFilterUI: Identifiable, Equatable {
+    /// Lowercased normalized tag key.
+    let id: String
+    let label: String
+    let sessionCount: Int
+}
+
+struct SessionTagGroup: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case pinned
+        case tag(String)
+        case untagged
+    }
+
+    let id: String
+    let kind: Kind
+    let rows: [SessionRowUI]
+}
+
 /// Transient, per-home filters. Add future dimensions here, not to navigation.
 struct SessionListFilters: Equatable, Hashable {
     var dateStart: Date?
     var dateEnd: Date?
     var machineId: String?
+    var tag: String?
     /// Web "unread only" lens: hide sessions already read in this namespace.
     var unreadOnly = false
 
-    var isActive: Bool { machineId != nil || unreadOnly || dateStart != nil }
+    var isActive: Bool { machineId != nil || tag != nil || unreadOnly || dateStart != nil }
 }
 
 /// Session-list presentation state over the `HubSession` stores — the iOS
@@ -109,8 +130,12 @@ final class SessionListModel {
     private let hubUrl: String
     private let preferences: UserDefaults
     private var archivePreferenceKey: String { "hapi.showArchivedSessions." + hubUrl }
+    private var groupByTagPreferenceKey: String { "hapi.groupByTag." + hubUrl }
+    private var collapsedTagGroupsPreferenceKey: String { "hapi.collapsedTagGroups." + hubUrl }
     private(set) var showArchivedSessions = false
     private(set) var activeOnly = false
+    private(set) var groupByTag = false
+    private(set) var collapsedTagGroups: Set<String> = []
 
     func setActiveOnly(_ enabled: Bool) {
         activeOnly = enabled
@@ -120,6 +145,24 @@ final class SessionListModel {
     func setShowArchivedSessions(_ enabled: Bool) {
         showArchivedSessions = enabled
         preferences.set(enabled, forKey: archivePreferenceKey)
+    }
+
+    func setGroupByTag(_ enabled: Bool) {
+        groupByTag = enabled
+        preferences.set(enabled, forKey: groupByTagPreferenceKey)
+    }
+
+    func isTagGroupCollapsed(_ groupId: String) -> Bool {
+        collapsedTagGroups.contains(groupId)
+    }
+
+    func toggleTagGroupCollapsed(_ groupId: String) {
+        if collapsedTagGroups.contains(groupId) {
+            collapsedTagGroups.remove(groupId)
+        } else {
+            collapsedTagGroups.insert(groupId)
+        }
+        preferences.set(Array(collapsedTagGroups), forKey: collapsedTagGroupsPreferenceKey)
     }
     /// Reopen follows a superseding id with the composer draft (web
     /// `transferComposerDraftThenNavigate`).
@@ -165,6 +208,9 @@ final class SessionListModel {
         self.preferences = preferences
         self.showArchivedSessions = preferences.bool(forKey: "hapi.showArchivedSessions." + hubUrl)
         self.activeOnly = preferences.bool(forKey: "hapi.activeOnly." + hubUrl)
+        self.groupByTag = preferences.bool(forKey: "hapi.groupByTag." + hubUrl)
+        let savedCollapsed = preferences.stringArray(forKey: "hapi.collapsedTagGroups." + hubUrl) ?? []
+        self.collapsedTagGroups = Set(savedCollapsed)
     }
 
     // MARK: - Derived state
@@ -222,7 +268,58 @@ final class SessionListModel {
 
     /// The menu also holds the unread lens and Mark All as Read.
     var showsFilterMenu: Bool {
-        !sessionStore.sessions.isEmpty || filters.isActive || activeOnly
+        !sessionStore.sessions.isEmpty || filters.isActive || activeOnly || groupByTag
+    }
+
+    var tagFilters: [TagFilterUI] {
+        var counts: [String: Int] = [:]
+        var displayLabels: [String: String] = [:]
+        for summary in sessionStore.sessions {
+            guard showArchivedSessions || summary.metadata?.lifecycleState != "archived" || summary.id == selectedSessionId else {
+                continue
+            }
+            for rawTag in summary.metadata?.tags ?? [] {
+                let trimmed = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let key = trimmed.lowercased()
+                counts[key, default: 0] += 1
+                if displayLabels[key] == nil {
+                    displayLabels[key] = trimmed
+                }
+            }
+        }
+        return counts.map { key, count in
+            TagFilterUI(id: key, label: displayLabels[key] ?? key, sessionCount: count)
+        }.sorted { lhs, rhs in
+            let order = lhs.label.localizedStandardCompare(rhs.label)
+            return order == .orderedSame ? lhs.id < rhs.id : order == .orderedAscending
+        }
+    }
+
+    var availableTags: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for summary in sessionStore.sessions {
+            for rawTag in summary.metadata?.tags ?? [] {
+                let trimmed = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let key = trimmed.lowercased()
+                guard seen.insert(key).inserted else { continue }
+                result.append(trimmed)
+            }
+        }
+        return result.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var showsTagFilter: Bool {
+        !tagFilters.isEmpty
+    }
+
+    var activeTagFilter: String? {
+        guard let tag = filters.tag else { return nil }
+        let normalized = tag.lowercased()
+        guard tagFilters.contains(where: { $0.id == normalized }) else { return nil }
+        return normalized
     }
 
     var hasHiddenArchivedSessions: Bool {
@@ -234,7 +331,7 @@ final class SessionListModel {
     }
 
     var hasActiveFilters: Bool {
-        activeMachineFilter != nil || filters.unreadOnly || activeOnly || filters.dateStart != nil
+        activeMachineFilter != nil || activeTagFilter != nil || filters.unreadOnly || activeOnly || filters.dateStart != nil
     }
 
     var isSearching: Bool {
@@ -260,6 +357,10 @@ final class SessionListModel {
         if filters.unreadOnly {
             parts.append(String(localized: "Unread only"))
         }
+        if let tagId = activeTagFilter,
+           let tagItem = tagFilters.first(where: { $0.id == tagId }) {
+            parts.append(String(format: String(localized: "Tag: #%@"), tagItem.label))
+        }
         if let id = activeMachineFilter,
            let machine = machineFilters.first(where: { $0.id == id }) {
             parts.append(String(format: String(localized: "Machine: %@"), machine.label))
@@ -274,8 +375,35 @@ final class SessionListModel {
         }
     }
 
-    func saveTitle(_ row: SessionRowUI, name: String?, locked: Bool) async throws {
-        try await sessionStore.updateTitle(sessionId: row.id, name: name, locked: locked)
+    func saveTitle(_ row: SessionRowUI, name: String?, locked: Bool, tags: [String]? = nil) async throws {
+        try await sessionStore.updateTitle(sessionId: row.id, name: name, locked: locked, tags: tags)
+    }
+
+    func setTags(_ row: SessionRowUI, tags: [String]) {
+        let store = sessionStore
+        Task {
+            do {
+                try await store.updateTags(sessionId: row.id, tags: tags)
+            } catch {
+                self.actionError = String(
+                    format: String(localized: "Update tags failed: %@"),
+                    error.localizedDescription
+                )
+            }
+        }
+    }
+
+    func toggleTag(_ row: SessionRowUI, tag: String) {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let key = trimmed.lowercased()
+        var updated = row.tags
+        if let existingIndex = updated.firstIndex(where: { $0.lowercased() == key }) {
+            updated.remove(at: existingIndex)
+        } else {
+            updated.append(trimmed)
+        }
+        setTags(row, tags: updated)
     }
 
     func setDateRange(start: Date?, end: Date?) {
@@ -331,6 +459,11 @@ final class SessionListModel {
         reconcileFilters()
     }
 
+    func selectTag(_ tag: String?) {
+        filters.tag = tag?.lowercased()
+        reconcileFilters()
+    }
+
     func clearFilters() {
         filters = SessionListFilters()
         setActiveOnly(false)
@@ -341,9 +474,12 @@ final class SessionListModel {
         if filters.machineId != activeMachineFilter {
             filters.machineId = nil
         }
+        if filters.tag != activeTagFilter {
+            filters.tag = nil
+        }
     }
 
-    /// Machine filter → unread lens → text search (relevance order, pin
+    /// Machine filter → tag filter → unread lens → text search (relevance order, pin
     /// sections kept so the Pinned header still applies).
     var hasArchivedSearchMatches: Bool {
         isSearching && !showArchivedSessions
@@ -356,10 +492,17 @@ final class SessionListModel {
         let readState = lastSeenStore.state
         let followedTails = lastSeenStore.followedTails
         let activeFilter = activeMachineFilter
+        let activeTag = activeTagFilter
         var visible = sessionStore.sessions.filter { summary in
             guard Self.matchesDate(summary.updatedAt, start: filters.dateStart, end: filters.dateEnd) else { return false }
             guard !activeOnly || summary.active || summary.id == selectedSessionId else { return false }
             guard includeArchived || summary.metadata?.lifecycleState != "archived" || summary.id == selectedSessionId else { return false }
+            if let activeTag {
+                let tags = summary.metadata?.tags ?? []
+                guard tags.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == activeTag }) else {
+                    return false
+                }
+            }
             guard let activeFilter else { return true }
             return (summary.metadata?.machineId ?? unknownMachineFilterId) == activeFilter
         }
@@ -392,6 +535,20 @@ final class SessionListModel {
                 unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
             )
         }
+    }
+
+    /// Unique session ids in current visual display order (respects `groupByTag` and collapsed tag groups).
+    var displayOrderSessionIds: [String] {
+        let currentRows = rows
+        guard groupByTag else { return currentRows.map(\.id) }
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for group in Self.tagGroups(of: currentRows) where !isTagGroupCollapsed(group.id) {
+            for row in group.rows where seen.insert(row.id).inserted {
+                ordered.append(row.id)
+            }
+        }
+        return ordered
     }
 
     struct QuickSwitchCandidate: Identifiable, Equatable {
@@ -449,6 +606,81 @@ final class SessionListModel {
     /// index is where the pinned section ends.
     static func pinnedCount(of rows: [SessionRowUI]) -> Int {
         rows.prefix { $0.summary.globalPinned == true || $0.summary.pinned == true }.count
+    }
+
+    /// Groups rows by tag for the sidebar's "Group by Tag" mode.
+    /// Pinned sessions stay in the top Pinned section, every tag gets its own
+    /// alphabetically sorted section, and untagged non-pinned rows appear under Untagged.
+    static func tagGroups(of rows: [SessionRowUI]) -> [SessionTagGroup] {
+        guard !rows.isEmpty else { return [] }
+        var groups: [SessionTagGroup] = []
+        let pinnedCount = pinnedCount(of: rows)
+        if pinnedCount > 0 {
+            groups.append(
+                SessionTagGroup(
+                    id: "__pinned__",
+                    kind: .pinned,
+                    rows: Array(rows.prefix(pinnedCount))
+                )
+            )
+        }
+
+        var tagRowsByKey: [String: [SessionRowUI]] = [:]
+        var tagDisplayByKey: [String: String] = [:]
+        var untaggedRows: [SessionRowUI] = []
+
+        for row in rows {
+            let cleanTags = row.tags
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if cleanTags.isEmpty {
+                let isPinned = row.summary.globalPinned == true || row.summary.pinned == true
+                if !isPinned {
+                    untaggedRows.append(row)
+                }
+            } else {
+                var seenKeys = Set<String>()
+                for tag in cleanTags {
+                    let key = tag.lowercased()
+                    guard seenKeys.insert(key).inserted else { continue }
+                    if tagDisplayByKey[key] == nil {
+                        tagDisplayByKey[key] = tag
+                    }
+                    tagRowsByKey[key, default: []].append(row)
+                }
+            }
+        }
+
+        let sortedKeys = tagRowsByKey.keys.sorted { lhs, rhs in
+            let leftLabel = tagDisplayByKey[lhs] ?? lhs
+            let rightLabel = tagDisplayByKey[rhs] ?? rhs
+            let order = leftLabel.localizedStandardCompare(rightLabel)
+            return order == .orderedSame ? lhs < rhs : order == .orderedAscending
+        }
+
+        for key in sortedKeys {
+            guard let groupRows = tagRowsByKey[key], !groupRows.isEmpty else { continue }
+            let label = tagDisplayByKey[key] ?? key
+            groups.append(
+                SessionTagGroup(
+                    id: "tag:" + key,
+                    kind: .tag(label),
+                    rows: groupRows
+                )
+            )
+        }
+
+        if !untaggedRows.isEmpty {
+            groups.append(
+                SessionTagGroup(
+                    id: "__untagged__",
+                    kind: .untagged,
+                    rows: untaggedRows
+                )
+            )
+        }
+
+        return groups
     }
 
     /// Use the worktree's owning project, not its temporary checkout name.

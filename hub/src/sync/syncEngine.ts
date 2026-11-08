@@ -2540,8 +2540,8 @@ export class SyncEngine {
         await this.rpcGateway.switchSession(sessionId, to)
     }
 
-    async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean): Promise<void> {
-        await this.sessionCache.renameSession(sessionId, name, titleLocked)
+    async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean, tags?: string[]): Promise<void> {
+        await this.sessionCache.renameSession(sessionId, name, titleLocked, tags)
     }
 
     async suggestSessionTitle(sessionId: string): Promise<string> {

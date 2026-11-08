@@ -424,12 +424,15 @@ export type SessionServiceTierRequest = z.infer<typeof SessionServiceTierRequest
 
 /** Hub session display-name ceiling (`PATCH /api/sessions/:id`). */
 export const SESSION_NAME_MAX_LENGTH = 255
+export const SESSION_TAG_MAX_LENGTH = 64
+export const SESSION_TAGS_MAX_COUNT = 20
 
 export const RenameSessionRequestSchema = z.object({
     name: z.string().min(1).max(SESSION_NAME_MAX_LENGTH).optional(),
-    titleLocked: z.boolean().optional()
-}).refine(value => value.name !== undefined || value.titleLocked !== undefined, {
-    message: 'name or titleLocked is required'
+    titleLocked: z.boolean().optional(),
+    tags: z.array(z.string().trim().min(1).max(SESSION_TAG_MAX_LENGTH)).max(SESSION_TAGS_MAX_COUNT).optional()
+}).refine(value => value.name !== undefined || value.titleLocked !== undefined || value.tags !== undefined, {
+    message: 'name, titleLocked, or tags is required'
 })
 
 export type RenameSessionRequest = z.infer<typeof RenameSessionRequestSchema>

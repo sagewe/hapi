@@ -1048,7 +1048,11 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
         }
 
         try {
-            await engine.renameSession(sessionResult.sessionId, parsed.data.name, parsed.data.titleLocked)
+            if (parsed.data.tags !== undefined) {
+                await engine.renameSession(sessionResult.sessionId, parsed.data.name, parsed.data.titleLocked, parsed.data.tags)
+            } else {
+                await engine.renameSession(sessionResult.sessionId, parsed.data.name, parsed.data.titleLocked)
+            }
             return c.json({ ok: true })
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to rename session'

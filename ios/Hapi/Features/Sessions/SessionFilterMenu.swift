@@ -25,10 +25,17 @@ struct SessionFilterMenu: View {
                     Label("Unread Only", systemImage: "circle.inset.filled")
                 }
                 .accessibilityIdentifier("home.filters.unread")
+                Toggle(isOn: Binding(get: { model.groupByTag }, set: { model.setGroupByTag($0) })) {
+                    Label("Group by Tag", systemImage: "tag")
+                }
+                .accessibilityIdentifier("home.filters.group-by-tag")
             }
             Button("Date Range", systemImage: "calendar") { datesOpen = true }
             if model.filters.dateStart != nil {
                 Button("Clear Date Range") { model.setDateRange(start: nil, end: nil) }
+            }
+            if model.showsTagFilter {
+                tagSection
             }
             if model.showsMachineFilter {
                 machineSection
@@ -64,6 +71,29 @@ struct SessionFilterMenu: View {
                 format: String(localized: "Marks %lld unread sessions as read across your devices."),
                 Int64(model.unreadCount)
             ))
+        }
+    }
+
+    private var tagSection: some View {
+        Section("Tag") {
+            Button {
+                model.selectTag(nil)
+            } label: {
+                Text("All Tags")
+                if model.activeTagFilter == nil { Image(systemName: "checkmark") }
+            }
+            .accessibilityAddTraits(model.activeTagFilter == nil ? .isSelected : [])
+            ForEach(model.tagFilters) { tag in
+                Button {
+                    model.selectTag(tag.id)
+                } label: {
+                    Text(verbatim: "#\(tag.label)")
+                    Text("\(tag.sessionCount, specifier: "%lld") sessions")
+                    if model.activeTagFilter == tag.id { Image(systemName: "checkmark") }
+                }
+                .accessibilityLabel(Text("#\(tag.label), \(tag.sessionCount, specifier: "%lld") sessions"))
+                .accessibilityAddTraits(model.activeTagFilter == tag.id ? .isSelected : [])
+            }
         }
     }
 
