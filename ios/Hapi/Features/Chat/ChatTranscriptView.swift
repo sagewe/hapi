@@ -5,8 +5,8 @@ import SwiftUI
 
 /// Tool groups contribute only their displayed summary to transcript diffs.
 enum TranscriptRow: Identifiable, Equatable {
-    case history(ChatHistoryPagingState.Phase, Bool)
-    case message(VisibleChatBlock)
+    case history(ChatHistoryPagingState.Phase, Bool, Bool)
+    case message(VisibleChatBlock, Bool)
     case group(ToolGroupPresentation)
 
     static let historyID = "chat-history-control"
@@ -14,16 +14,16 @@ enum TranscriptRow: Identifiable, Equatable {
         switch self {
         case .history: .history
         case .group: .tool
-        case .message(.toolGroup): .tool
-        case .message(.block(.userText)): .user
-        case .message(.block(.toolCall)): .tool
+        case .message(.toolGroup, _): .tool
+        case .message(.block(.userText), _): .user
+        case .message(.block(.toolCall), _): .tool
         default: .content
         }
     }
     var id: String {
         switch self {
         case .history: Self.historyID
-        case .message(let block): block.stableId
+        case .message(let block, _): block.stableId
         case .group(let group): group.id
         }
     }
@@ -39,20 +39,15 @@ struct ChatTranscriptView: View {
     var onOpenJumpSheet: (() -> Void)? = nil
 
     private var rows: [TranscriptRow] {
-        var rows: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore)]
-        for block in model.blocks {
-            if case .toolGroup(let group) = block {
-                rows.append(.group(ToolGroupPresentation(group)))
-            } else {
-                rows.append(.message(block))
-            }
-        }
-        return rows
+        let isHistoryDisabled = !model.hasMore || model.isLoadingOlder || model.isSyncingTail
+        var result: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore, isHistoryDisabled)]
+        result.reserveCapacity(model.messageRows.count + 1)
+        result.append(contentsOf: model.messageRows)
+        return result
     }
 
     var body: some View {
-        let revision = model.readThroughRevision
-        let readState = model.renderedReadState
+        let basePath = model.basePath
         AnchoredTranscriptList(
             items: rows,
             historyVersion: model.historyVersion,
@@ -72,49 +67,27 @@ struct ChatTranscriptView: View {
             },
             onLayout: { version, progress in model.historyLaidOut(version: version, madeProgress: progress) },
             onTailDisplayed: {
-                if scenePhase == .active { model.markDisplayed(revision: revision, serverState: readState) }
+                if scenePhase == .active {
+                    model.markDisplayed(revision: model.readThroughRevision, serverState: model.renderedReadState)
+                }
             },
             spacingBefore: { previous, row in row.spacing(after: previous) }
         ) { row in
             // The list bridges the current environment into its hosting roots.
-            AnyView(rowView(row))
+            AnyView(rowView(row, basePath: basePath))
         }
         .overlay(alignment: .trailing) {
-            if !model.railNavItems.isEmpty {
-                TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
-                    #if targetEnvironment(macCatalyst)
-                    .padding(.trailing, 10)
-                    #else
-                    .padding(.trailing, 4)
-                    #endif
-                    .padding(.vertical, 48)
-            }
+            TurnJumpRailOverlay(model: model, onOpenJumpSheet: onOpenJumpSheet)
         }
         .overlay(alignment: .bottomTrailing) {
-            if model.showsJumpToLatest {
-                Button(action: model.jumpToLatest) {
-                    HStack(spacing: 6) {
-                        if model.isJumpingToLatest { ProgressView().controlSize(.small) }
-                        Text("Back to latest")
-                        Image(systemName: "arrow.down")
-                    }
-                    .font(.footnote.weight(.medium))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.regularMaterial, in: Capsule())
-                }
-                .disabled(model.isJumpingToLatest)
-                .accessibilityIdentifier("chat-latest")
-                .padding(12)
-            }
+            JumpToLatestOverlay(model: model)
         }
     }
 
     @ViewBuilder
-    private func rowView(_ row: TranscriptRow) -> some View {
-        let isHighlighted = model.highlightedBlockID == row.id
+    private func rowView(_ row: TranscriptRow, basePath: String?) -> some View {
         switch row {
-        case .history(let phase, let hasMore):
+        case .history(let phase, let hasMore, let isDisabled):
             Button(action: model.retryHistory) {
                 HStack(spacing: 8) {
                     if !hasMore {
@@ -136,12 +109,52 @@ struct ChatTranscriptView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!hasMore || model.isLoadingOlder || model.isSyncingTail)
+            .disabled(isDisabled)
             .accessibilityIdentifier("chat-history")
-        case .message(let block):
-            ChatBlockCard(block: block, basePath: model.basePath, isHighlighted: isHighlighted)
+        case .message(let block, let isHighlighted):
+            ChatBlockCard(block: block, basePath: basePath, isHighlighted: isHighlighted)
         case .group(let presentation):
             ToolGroupBlockView(presentation: presentation)
+        }
+    }
+}
+
+private struct TurnJumpRailOverlay: View {
+    let model: ChatModel
+    var onOpenJumpSheet: (() -> Void)? = nil
+
+    var body: some View {
+        if !model.railNavItems.isEmpty {
+            TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
+                #if targetEnvironment(macCatalyst)
+                .padding(.trailing, 10)
+                #else
+                .padding(.trailing, 4)
+                #endif
+                .padding(.vertical, 48)
+        }
+    }
+}
+
+private struct JumpToLatestOverlay: View {
+    let model: ChatModel
+
+    var body: some View {
+        if model.showsJumpToLatest {
+            Button(action: model.jumpToLatest) {
+                HStack(spacing: 6) {
+                    if model.isJumpingToLatest { ProgressView().controlSize(.small) }
+                    Text("Back to latest")
+                    Image(systemName: "arrow.down")
+                }
+                .font(.footnote.weight(.medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(.regularMaterial, in: Capsule())
+            }
+            .disabled(model.isJumpingToLatest)
+            .accessibilityIdentifier("chat-latest")
+            .padding(12)
         }
     }
 }
@@ -160,31 +173,7 @@ private struct TurnJumpRailView: View {
     @State private var didTriggerOutlineDuringDrag = false
     #endif
 
-    private var items: [ChatRailNavItem] {
-        if !model.userTurnItems.isEmpty {
-            return model.userTurnItems.map { turn in
-                ChatRailNavItem(
-                    id: turn.id,
-                    isUserTurn: true,
-                    turnNumber: turn.turnNumber,
-                    title: turn.userText,
-                    subtitle: turn.assistantPreview,
-                    toolCount: turn.toolCount,
-                    createdAt: turn.createdAt
-                )
-            }
-        }
-        return model.railNavItems
-    }
-
-    private var activeIndex: Int {
-        if !model.userTurnItems.isEmpty {
-            return model.activeUserTurnIndex ?? max(0, items.count - 1)
-        }
-        return model.activeRailIndex ?? max(0, items.count - 1)
-    }
-
-    private var visibleSlice: ArraySlice<ChatRailNavItem> {
+    private func computeVisibleSlice(items: [ChatRailNavItem], activeIndex: Int) -> ArraySlice<ChatRailNavItem> {
         #if targetEnvironment(macCatalyst)
         let maxVisible = 64
         #else
@@ -207,7 +196,10 @@ private struct TurnJumpRailView: View {
     }
 
     var body: some View {
-        let slice = Array(visibleSlice)
+        let allItems = model.railNavItems
+        let activeIdx = model.activeRailIndex ?? max(0, allItems.count - 1)
+        let activeID = allItems.indices.contains(activeIdx) ? allItems[activeIdx].id : nil
+        let slice = Array(computeVisibleSlice(items: allItems, activeIndex: activeIdx))
         let rowHeight = tickRowHeight(for: slice.count)
         let hoveredSliceIndex = hoveredID.flatMap { id in slice.firstIndex(where: { $0.id == id }) }
         let hoveredItem = hoveredSliceIndex.map { slice[$0] }
@@ -221,7 +213,7 @@ private struct TurnJumpRailView: View {
             #if targetEnvironment(macCatalyst)
             VStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
-                    let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
+                    let isActive = item.id == activeID
                     Button {
                         model.jumpToBlock(id: item.id)
                     } label: {
@@ -279,7 +271,7 @@ private struct TurnJumpRailView: View {
 
                 VStack(alignment: .trailing, spacing: 0) {
                     ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
-                        let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
+                        let isActive = item.id == activeID
                         HStack(spacing: 0) {
                             Spacer(minLength: 0)
                             RoundedRectangle(cornerRadius: 1.2, style: .continuous)
@@ -344,7 +336,7 @@ private struct TurnJumpRailView: View {
             }
             .opacity(isScrubbing || isRecentlyActive ? 1.0 : 0.52)
             .animation(.easeOut(duration: 0.2), value: isRecentlyActive)
-            .onChange(of: activeIndex) { _, _ in
+            .onChange(of: activeIdx) { _, _ in
                 wakeRailBriefly()
             }
             .onChange(of: model.showsJumpToLatest) { _, _ in

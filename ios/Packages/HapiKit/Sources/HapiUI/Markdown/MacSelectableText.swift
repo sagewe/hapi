@@ -147,7 +147,7 @@ public struct MacSelectableText: UIViewRepresentable {
 
     private func applyConfiguration(to view: SelectableUITextView, coordinator: Coordinator) {
         coordinator.onOpenURL = onOpenURL
-        view.textContainer.widthTracksTextView = wraps
+        view.wrapsText = wraps
         if let linkColor, view.lastLinkColor != linkColor {
             view.lastLinkColor = linkColor
             view.linkTextAttributes = [
@@ -180,14 +180,20 @@ public struct MacSelectableText: UIViewRepresentable {
             return CGSize(width: 0, height: 1)
         }
 
-        // Unspecified (ideal) or .infinity (maximum-width) probe from HStack/VStack:
-        // Never pass CGFloat.greatestFiniteMagnitude to UITextView.sizeThatFits, as UIKit
-        // falls back to NSTextContainer's default 100pt width when given CGFLOAT_MAX.
+        // Fast-path for full-width wrapping blocks (paragraphs, headings, list items):
+        // Avoid calling `measureUnwrapped()` on `.infinity` or `nil` probes, which
+        // mutates `textContainer.size.width` to 100,000 and invalidates TextKit layout
+        // right before the real finite-width measurement.
         guard let proposedWidth = proposal.width, proposedWidth.isFinite else {
-            let unwrapped = uiView.measureUnwrapped()
-            if fillsWidth, proposal.width == .infinity {
-                return CGSize(width: max(10_000, unwrapped.width), height: max(1, unwrapped.height))
+            if fillsWidth {
+                let fallbackWidth = uiView.bounds.width > 1 ? uiView.bounds.width : 640
+                let measured = uiView.measureWrapped(width: fallbackWidth)
+                if proposal.width == .infinity {
+                    return CGSize(width: 10_000, height: max(1, measured.height))
+                }
+                return CGSize(width: max(1, fallbackWidth), height: max(1, measured.height))
             }
+            let unwrapped = uiView.measureUnwrapped()
             return CGSize(width: max(1, unwrapped.width), height: max(1, unwrapped.height))
         }
 
@@ -205,6 +211,7 @@ public struct MacSelectableText: UIViewRepresentable {
         private let backingTextStorage: NSTextStorage
         var lastContent: Content?
         var lastLinkColor: UIColor?
+        var wrapsText: Bool = true
         private var cachedUnwrappedSize: CGSize?
         private var primaryWrappedCache = WrappedMeasurement()
         private var secondaryWrappedCache = WrappedMeasurement()
@@ -215,6 +222,7 @@ public struct MacSelectableText: UIViewRepresentable {
             storage.addLayoutManager(manager)
             let container = NSTextContainer(size: CGSize(width: 10_000, height: 100_000))
             container.lineFragmentPadding = 0
+            container.widthTracksTextView = false
             manager.addTextContainer(container)
             self.backingTextStorage = storage
             super.init(frame: .zero, textContainer: container)
@@ -223,6 +231,13 @@ public struct MacSelectableText: UIViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) {
             fatalError("init(coder:) has not been implemented")
+        }
+
+        public override func layoutSubviews() {
+            if wrapsText, bounds.width > 1, abs(textContainer.size.width - bounds.width) > 0.5 {
+                textContainer.size = CGSize(width: bounds.width, height: 100_000)
+            }
+            super.layoutSubviews()
         }
 
         func clearSizeCache() {
@@ -239,16 +254,11 @@ public struct MacSelectableText: UIViewRepresentable {
                 return empty
             }
             let maxDimension: CGFloat = 100_000
-            let previousTracks = textContainer.widthTracksTextView
-            let previousWidth = bounds.width > 0 ? bounds.width : textContainer.size.width
-            textContainer.widthTracksTextView = false
-            textContainer.size = CGSize(width: maxDimension, height: maxDimension)
+            if abs(textContainer.size.width - maxDimension) > 0.5 {
+                textContainer.size = CGSize(width: maxDimension, height: maxDimension)
+            }
             layoutManager.ensureLayout(for: textContainer)
             let raw = layoutManager.usedRect(for: textContainer).size
-            if previousTracks, previousWidth > 0 {
-                textContainer.size = CGSize(width: previousWidth, height: maxDimension)
-            }
-            textContainer.widthTracksTextView = previousTracks
             let size = CGSize(width: ceil(raw.width), height: ceil(raw.height))
             cachedUnwrappedSize = size
             return size
@@ -265,12 +275,11 @@ public struct MacSelectableText: UIViewRepresentable {
                 return empty
             }
             let maxDimension: CGFloat = 100_000
-            let previousTracks = textContainer.widthTracksTextView
-            textContainer.widthTracksTextView = false
-            textContainer.size = CGSize(width: width, height: maxDimension)
+            if abs(textContainer.size.width - width) > 0.5 {
+                textContainer.size = CGSize(width: width, height: maxDimension)
+            }
             layoutManager.ensureLayout(for: textContainer)
             let raw = layoutManager.usedRect(for: textContainer).size
-            textContainer.widthTracksTextView = previousTracks
             let size = CGSize(width: ceil(raw.width), height: ceil(raw.height))
             secondaryWrappedCache = primaryWrappedCache
             primaryWrappedCache = WrappedMeasurement(widthKey: key, size: size)

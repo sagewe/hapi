@@ -320,6 +320,32 @@ final class TranscriptLayout: UICollectionViewLayout {
             collectionViewContentSize.height - view.bounds.height + view.adjustedContentInset.bottom)
     }
 
+    func firstVisibleAnchor(top: CGFloat, bottom: CGFloat, excludingID: String?) -> ReadingAnchor? {
+        if dirtyFromIndex != nil { prepare() }
+        guard !frames.isEmpty, bottom > top else { return nil }
+        var lower = 0
+        var upper = frames.count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            if frames[middle].maxY <= top {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        var index = lower
+        while index < frames.count {
+            let frame = frames[index]
+            if frame.minY >= bottom { break }
+            let id = ids[index]
+            if id != excludingID, frame.maxY > top, frame.minY < bottom {
+                return ReadingAnchor(id: id, offset: frame.minY - top)
+            }
+            index += 1
+        }
+        return nil
+    }
+
     func correctOffset(to y: CGFloat) {
         guard let view = collectionView, abs(view.contentOffset.y - y) > 0.5 else { return }
         let context = UICollectionViewLayoutInvalidationContext()
@@ -342,8 +368,9 @@ private final class TranscriptCollectionView: UICollectionView {
 /// reinstalling every visible hosting configuration and measuring it again.
 @MainActor @Observable
 private final class TranscriptContent<Item> {
-    var render: (Item) -> AnyView = { _ in AnyView(EmptyView()) }
-    var environment = EnvironmentValues()
+    @ObservationIgnored var render: (Item) -> AnyView = { _ in AnyView(EmptyView()) }
+    @ObservationIgnored var environment = EnvironmentValues()
+    var revision: Int = 0
 }
 
 private struct TranscriptHostedRow<Item>: View {
@@ -351,6 +378,7 @@ private struct TranscriptHostedRow<Item>: View {
     let content: TranscriptContent<Item>
 
     var body: some View {
+        let _ = content.revision
         content.render(item).environment(\.self, content.environment)
     }
 }
@@ -436,13 +464,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private func captureAnchor() -> ReadingAnchor? {
         let top = collection.contentOffset.y + collection.adjustedContentInset.top
         let bottom = collection.contentOffset.y + collection.bounds.height - collection.adjustedContentInset.bottom
-        for index in collection.indexPathsForVisibleItems.sorted() {
-            guard let id = source.itemIdentifier(for: index), id != configuration?.historyControlID,
-                  let frame = layout.layoutAttributesForItem(at: index)?.frame,
-                  frame.maxY > top, frame.minY < bottom else { continue }
-            return ReadingAnchor(id: id, offset: frame.minY - top)
-        }
-        return nil
+        return layout.firstVisibleAnchor(top: top, bottom: bottom, excludingID: configuration?.historyControlID)
     }
 
     private func drain() {
@@ -475,6 +497,12 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
                 || $0.environment.locale != next.environment.locale
                 || $0.environment.layoutDirection != next.environment.layoutDirection
         } ?? true
+        let environmentChanged = configuration.map {
+            metricsChanged
+                || $0.environment.colorScheme != next.environment.colorScheme
+                || $0.environment.hapiTheme != next.environment.hapiTheme
+                || $0.environment.isEnabled != next.environment.isEnabled
+        } ?? true
         let spacing = next.items.enumerated().map { index, item in
             max(0, next.spacingBefore(index > 0 ? next.items[index - 1] : nil, item))
         }
@@ -503,10 +531,15 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             layout.anchorForUpdate = layout.followsTail ? nil : captureAnchor()
         }
         configuration = next
-        // Do not compare/whitelist EnvironmentValues: custom services and
-        // closure captures must propagate too, even when every Item is equal.
+        // Update the shared row builder & environment without firing @Observable
+        // across every visible cell when only a subset of items changed (`reconfigureItems`
+        // updates those cells directly). Bump `content.revision` only when environment
+        // or captured closures changed with no item diff.
         content.render = next.content
         content.environment = next.environment
+        if environmentChanged || (changed.isEmpty && !structureChanged && !jump && scrollTarget == nil) {
+            content.revision &+= 1
+        }
         items = next.items
         values = nextValues
         configuredWidth = collection.bounds.width

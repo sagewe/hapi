@@ -1,4 +1,34 @@
+import Foundation
 import SwiftUI
+
+private final class CodeHighlightMemoryCache: @unchecked Sendable {
+    static let shared = CodeHighlightMemoryCache()
+    private let lock = NSLock()
+    private var entries: [String: (value: AttributedString, tick: Int)] = [:]
+    private var clock = 0
+    private let maxEntries = 256
+
+    func get(_ key: String) -> AttributedString? {
+        lock.withLock {
+            guard var hit = entries[key] else { return nil }
+            clock &+= 1
+            hit.tick = clock
+            entries[key] = hit
+            return hit.value
+        }
+    }
+
+    func set(_ value: AttributedString, forKey key: String) {
+        lock.withLock {
+            clock &+= 1
+            entries[key] = (value, clock)
+            if entries.count > maxEntries,
+               let oldest = entries.min(by: { $0.value.tick < $1.value.tick })?.key {
+                entries.removeValue(forKey: oldest)
+            }
+        }
+    }
+}
 
 /// Fenced code block: rounded container with a header (language chip + copy
 /// button) and horizontally scrollable monospaced body. Highlighting runs off
@@ -36,13 +66,14 @@ public struct CodeBlockView: View {
     }
 
     public var body: some View {
+        let currentHighlighted = highlighted ?? CodeHighlightMemoryCache.shared.get(highlightID)
         VStack(alignment: .leading, spacing: 0) {
             header
             ScrollView(.horizontal, showsIndicators: false) {
                 #if targetEnvironment(macCatalyst)
                 MacSelectableText(
                     content: .code(
-                        highlighted: highlighted,
+                        highlighted: currentHighlighted,
                         fallbackCode: code,
                         size: typography.codeSize,
                         weight: typography.boldText ? .semibold : .regular,
@@ -54,7 +85,7 @@ public struct CodeBlockView: View {
                 )
                 .padding(12)
                 #else
-                Text(highlighted ?? AttributedString(code))
+                Text(currentHighlighted ?? AttributedString(code))
                     .font(typography.codeFont)
                     .lineSpacing(typography.codeLineSpacing)
                     .foregroundStyle(theme.textPrimary)
@@ -66,11 +97,20 @@ public struct CodeBlockView: View {
         .background(theme.codeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .task(id: highlightID) {
-            highlighted = await highlighter.highlightAsync(
+            if let cached = CodeHighlightMemoryCache.shared.get(highlightID) {
+                if highlighted != cached { highlighted = cached }
+                return
+            }
+            if let result = await highlighter.highlightAsync(
                 code,
                 language: language,
                 dark: theme.isDark
-            )
+            ) {
+                CodeHighlightMemoryCache.shared.set(result, forKey: highlightID)
+                highlighted = result
+            } else {
+                highlighted = nil
+            }
         }
     }
 

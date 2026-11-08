@@ -74,6 +74,7 @@ final class ChatModel {
     // MARK: Published render state
 
     private(set) var blocks: [VisibleChatBlock] = []
+    private(set) var messageRows: [TranscriptRow] = []
     private(set) var header: ChatHeaderUI
     /// Workspace root, for path display in tool cards.
     private(set) var basePath: String?
@@ -110,6 +111,11 @@ final class ChatModel {
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
     @ObservationIgnored private var olderTurnSeekTask: Task<Void, Never>?
     @ObservationIgnored private var hasAutoBackfilledTurns = false
+    @ObservationIgnored private var blockIndexByID: [String: Int] = [:]
+    @ObservationIgnored private var blockToUserTurnIndex: [String: Int] = [:]
+    @ObservationIgnored private var blockToRailIndex: [String: Int] = [:]
+    @ObservationIgnored private var snippetCache: [String: (utf8Count: Int, snippet: String)] = [:]
+    @ObservationIgnored private var cachedGroupPresentations: [String: (group: ToolGroupBlock, presentation: ToolGroupPresentation)] = [:]
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
     }
@@ -121,16 +127,10 @@ final class ChatModel {
             return userTurnItems.count - 1
         }
         guard let topID = topVisibleBlockID,
-              let blockIdx = blocks.firstIndex(where: { $0.stableId == topID }) else {
+              let turnIdx = blockToUserTurnIndex[topID] else {
             return userTurnItems.count - 1
         }
-        for idx in stride(from: blockIdx, through: 0, by: -1) {
-            if case .block(.userText(let user)) = blocks[idx],
-               let turnIdx = userTurnItems.firstIndex(where: { $0.id == user.id }) {
-                return turnIdx
-            }
-        }
-        return 0
+        return turnIdx
     }
 
     /// 0-based index in `railNavItems` corresponding to the item currently in view.
@@ -140,18 +140,10 @@ final class ChatModel {
             return railNavItems.count - 1
         }
         guard let topID = topVisibleBlockID,
-              let blockIdx = blocks.firstIndex(where: { $0.stableId == topID }) else {
+              let railIdx = blockToRailIndex[topID] else {
             return railNavItems.count - 1
         }
-        let railIDs = Set(railNavItems.map(\.id))
-        for idx in stride(from: blockIdx, through: 0, by: -1) {
-            let candidateID = blocks[idx].stableId
-            if railIDs.contains(candidateID),
-               let railIdx = railNavItems.firstIndex(where: { $0.id == candidateID }) {
-                return railIdx
-            }
-        }
-        return 0
+        return railIdx
     }
     let toolInspection = ToolInspectionState()
     private(set) var visibleSurfaces = Set<String>()
@@ -259,7 +251,7 @@ final class ChatModel {
     @ObservationIgnored let presentationState = ChatPresentationState()
     @ObservationIgnored let geometryCache = TranscriptGeometryCache()
     @ObservationIgnored let markdownCache = MarkdownRenderCache()
-    @ObservationIgnored private var previousMarkdownSources: Set<String> = []
+    @ObservationIgnored private var preparedMarkdownLengths: [String: Int] = [:]
     /// Authed thumbnail/viewer loader for scratchlist attachments (A-M4b).
     @ObservationIgnored let scratchlistAttachments: ScratchlistAttachmentLoader
 
@@ -390,6 +382,10 @@ final class ChatModel {
         chat.onSessionRemoved = { [weak self] in
             self?.toolInspection.invalidate()
             self?.blocks = []
+            self?.messageRows = []
+            self?.blockIndexByID = [:]
+            self?.blockToUserTurnIndex = [:]
+            self?.blockToRailIndex = [:]
             self?.isInitialLoading = false
             self?.hasMore = false
         }
@@ -650,18 +646,20 @@ final class ChatModel {
     }
 
     func jumpToBlock(id: String) {
-        guard blocks.contains(where: { $0.stableId == id }) else { return }
+        guard blockIndexByID[id] != nil else { return }
         scrollTargetToken += 1
         followsTail = false
         topVisibleBlockID = id
         scrollTarget = TranscriptScrollTarget(token: scrollTargetToken, itemID: id, topPadding: 14)
         highlightedBlockID = id
+        rebuildMessageRows()
         highlightTask?.cancel()
         highlightTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(1600))
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.25)) {
                 self?.highlightedBlockID = nil
+                self?.rebuildMessageRows()
             }
         }
     }
@@ -682,8 +680,8 @@ final class ChatModel {
         // jump to the top of the current turn's user prompt first.
         if topVisibleBlockID != turns[current].id,
            let topID = topVisibleBlockID,
-           let topBlockIdx = blocks.firstIndex(where: { $0.stableId == topID }),
-           let turnBlockIdx = blocks.firstIndex(where: { $0.stableId == turns[current].id }),
+           let topBlockIdx = blockIndexByID[topID],
+           let turnBlockIdx = blockIndexByID[turns[current].id],
            topBlockIdx > turnBlockIdx {
             jumpToBlock(id: turns[current].id)
             return
@@ -738,12 +736,13 @@ final class ChatModel {
     func seekOlderUserTurn(
         jumpWhenFound: Bool = true,
         loadAll: Bool = false,
-        maxPages: Int = 45
+        maxPages: Int = 45,
+        minTurns: Int? = nil
     ) {
         guard isActive, !isSeekingOlderTurn, hasMore, let controller = chat.windowController else { return }
         isSeekingOlderTurn = true
         let initialTurnCount = userTurnItems.count
-        let targetCount = initialTurnCount + 1
+        let targetCount = max(initialTurnCount + 1, minTurns ?? (initialTurnCount + 1))
         let initialFirstTurnID = userTurnItems.first?.id
         olderTurnSeekTask?.cancel()
         olderTurnSeekTask = Task { [weak self] in
@@ -873,17 +872,27 @@ final class ChatModel {
                     hasMoreMessages: window.hasMore,
                     directSendLocalIds: interactor.directSendLocalIds
                 )
-                let sources = Set(visible.flatMap { block -> [String] in
-                    guard case .block(let value) = block else { return [] }
-                    switch value {
-                    case .agentText(let text): return [text.text]
-                    case .agentReasoning(let text): return [text.text]
-                    case .toolCall(let block): return planProposalMarkdown(block.tool).map { [$0] } ?? []
-                    default: return []
+                var toPrepare: [String] = []
+                for block in visible {
+                    guard case .block(let value) = block else { continue }
+                    let id = value.id
+                    let markdown: String? = switch value {
+                    case .agentText(let text): text.text
+                    case .agentReasoning(let text): text.text
+                    case .toolCall(let block): planProposalMarkdown(block.tool)
+                    default: nil
                     }
-                })
-                await markdownCache.prepare(Array(sources.subtracting(previousMarkdownSources)))
-                previousMarkdownSources = sources
+                    if let markdown {
+                        let utf8Len = markdown.utf8.count
+                        if preparedMarkdownLengths[id] != utf8Len {
+                            preparedMarkdownLengths[id] = utf8Len
+                            toPrepare.append(markdown)
+                        }
+                    }
+                }
+                if !toPrepare.isEmpty {
+                    await markdownCache.prepare(toPrepare)
+                }
                 guard !Task.isCancelled else { return }
                 apply(visible, window: window, detail: detail, summary: summary, machines: machines)
             }
@@ -917,10 +926,14 @@ final class ChatModel {
         // Do not invalidate the entire lazy transcript for identical output.
         if blocks != visible {
             blocks = visible
-            let nav = Self.buildNavigationItems(from: visible)
+            let nav = buildNavigationItems(from: visible)
             userTurnItems = nav.turns
             allMessageNavItems = nav.messages
             railNavItems = nav.rail
+            blockIndexByID = nav.blockIndexByID
+            blockToUserTurnIndex = nav.blockToUserTurnIndex
+            blockToRailIndex = nav.blockToRailIndex
+            rebuildMessageRows()
             toolInspection.update(visible)
             var liveIDs = Set<String>()
             func collect(_ block: ChatBlock) {
@@ -964,10 +977,10 @@ final class ChatModel {
         isInitialLoading = isEmpty && !syncSettled && window.warning == nil
         loadFailed = isEmpty && syncSettled && (window.warning != nil || detailLoadFailed)
 
-        if syncSettled, (!hasAutoBackfilledTurns || (hasMore && userTurnItems.count < 4)), !isEmpty {
+        if syncSettled, !hasAutoBackfilledTurns, !isEmpty {
             hasAutoBackfilledTurns = true
-            if hasMore {
-                seekOlderUserTurn(jumpWhenFound: false, loadAll: true, maxPages: 45)
+            if hasMore, userTurnItems.count < 4 {
+                seekOlderUserTurn(jumpWhenFound: false, loadAll: false, maxPages: 3, minTurns: 4)
             }
         }
 
@@ -975,13 +988,60 @@ final class ChatModel {
         renderedReadState = SessionReadState.merge(detail?.readState, summary?.readState)
     }
 
+    private func rebuildMessageRows() {
+        var nextRows: [TranscriptRow] = []
+        nextRows.reserveCapacity(blocks.count)
+        let highlightedID = highlightedBlockID
+        var activeGroupIDs = Set<String>()
+        for block in blocks {
+            if case .toolGroup(let group) = block {
+                activeGroupIDs.insert(group.id)
+                let presentation: ToolGroupPresentation
+                if let cached = cachedGroupPresentations[group.id], cached.group == group {
+                    presentation = cached.presentation
+                } else {
+                    presentation = ToolGroupPresentation(group)
+                    cachedGroupPresentations[group.id] = (group, presentation)
+                }
+                nextRows.append(.group(presentation))
+            } else {
+                nextRows.append(.message(block, block.stableId == highlightedID))
+            }
+        }
+        if cachedGroupPresentations.count > activeGroupIDs.count + 32 {
+            cachedGroupPresentations = cachedGroupPresentations.filter { activeGroupIDs.contains($0.key) }
+        }
+        messageRows = nextRows
+    }
+
     // MARK: - Turn & Message Navigation Builder
 
-    private static func buildNavigationItems(
+    private func cachedSnippet(id: String, raw: String) -> String {
+        let len = raw.utf8.count
+        if let cached = snippetCache[id], cached.utf8Count == len {
+            return cached.snippet
+        }
+        let snippet = Self.cleanSnippet(raw)
+        snippetCache[id] = (len, snippet)
+        return snippet
+    }
+
+    private func buildNavigationItems(
         from visible: [VisibleChatBlock]
-    ) -> (turns: [ChatTurnNavItem], messages: [ChatMessageNavItem], rail: [ChatRailNavItem]) {
+    ) -> (
+        turns: [ChatTurnNavItem],
+        messages: [ChatMessageNavItem],
+        rail: [ChatRailNavItem],
+        blockIndexByID: [String: Int],
+        blockToUserTurnIndex: [String: Int],
+        blockToRailIndex: [String: Int]
+    ) {
         var turns: [ChatTurnNavItem] = []
         var messages: [ChatMessageNavItem] = []
+        var indexByID: [String: Int] = [:]
+        indexByID.reserveCapacity(visible.count)
+        var turnIndexByBlock: [String: Int] = [:]
+        turnIndexByBlock.reserveCapacity(visible.count)
 
         var currentUser: UserTextBlock?
         var currentTurnNumber = 0
@@ -993,14 +1053,16 @@ final class ChatModel {
             turns.append(ChatTurnNavItem(
                 id: user.id,
                 turnNumber: currentTurnNumber,
-                userText: Self.cleanSnippet(user.text),
+                userText: cachedSnippet(id: user.id, raw: user.text),
                 assistantPreview: currentAssistantPreview,
                 toolCount: currentToolCount,
                 createdAt: user.createdAt
             ))
         }
 
-        for item in visible {
+        for (blockIdx, item) in visible.enumerated() {
+            let blockID = item.stableId
+            indexByID[blockID] = blockIdx
             switch item {
             case .block(.userText(let user)):
                 flushCurrentTurn()
@@ -1012,11 +1074,11 @@ final class ChatModel {
                     id: user.id,
                     role: .user,
                     turnNumber: currentTurnNumber,
-                    text: Self.cleanSnippet(user.text),
+                    text: cachedSnippet(id: user.id, raw: user.text),
                     createdAt: user.createdAt
                 ))
             case .block(.agentText(let agent)):
-                let snippet = Self.cleanSnippet(agent.text)
+                let snippet = cachedSnippet(id: agent.id, raw: agent.text)
                 if !snippet.isEmpty {
                     currentAssistantPreview = snippet
                     messages.append(ChatMessageNavItem(
@@ -1034,17 +1096,12 @@ final class ChatModel {
             default:
                 break
             }
+            turnIndexByBlock[blockID] = max(0, currentTurnNumber - 1)
         }
         flushCurrentTurn()
 
-        // Build rail items:
-        // - When >= 3 user turns are loaded in the window, each rail tick is a User Turn.
-        // - When < 3 user turns are in the current window (e.g. a long coding turn with 100+ tool
-        //   calls where only 0-2 user prompts are in the 50-message tail window), include both
-        //   User Turns (primary ticks) and Assistant Replies (secondary ticks) so the rail is
-        //   always populated and navigable.
         let rail: [ChatRailNavItem]
-        if turns.count >= 3 {
+        if !turns.isEmpty {
             rail = turns.map { turn in
                 ChatRailNavItem(
                     id: turn.id,
@@ -1057,20 +1114,8 @@ final class ChatModel {
                 )
             }
         } else if !messages.isEmpty {
-            let turnByID = Dictionary(uniqueKeysWithValues: turns.map { ($0.id, $0) })
             rail = messages.map { msg in
-                if let turn = turnByID[msg.id] {
-                    return ChatRailNavItem(
-                        id: turn.id,
-                        isUserTurn: true,
-                        turnNumber: turn.turnNumber,
-                        title: turn.userText,
-                        subtitle: turn.assistantPreview,
-                        toolCount: turn.toolCount,
-                        createdAt: turn.createdAt
-                    )
-                }
-                return ChatRailNavItem(
+                ChatRailNavItem(
                     id: msg.id,
                     isUserTurn: msg.role == .user,
                     turnNumber: msg.turnNumber,
@@ -1084,20 +1129,54 @@ final class ChatModel {
             rail = []
         }
 
-        return (turns, messages, rail)
+        var railIndexByBlock: [String: Int] = [:]
+        if !turns.isEmpty {
+            railIndexByBlock = turnIndexByBlock
+        } else if !rail.isEmpty {
+            railIndexByBlock.reserveCapacity(visible.count)
+            let railPosByID = Dictionary(uniqueKeysWithValues: rail.enumerated().map { ($0.element.id, $0.offset) })
+            var activeRailPos = 0
+            for item in visible {
+                let blockID = item.stableId
+                if let pos = railPosByID[blockID] {
+                    activeRailPos = pos
+                }
+                railIndexByBlock[blockID] = activeRailPos
+            }
+        }
+
+        return (turns, messages, rail, indexByID, turnIndexByBlock, railIndexByBlock)
     }
 
     private static func cleanSnippet(_ raw: String) -> String {
-        let collapsed = raw
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        if collapsed.count <= 180 {
-            return collapsed
+        var result = String()
+        result.reserveCapacity(min(raw.utf8.count, 184))
+        var count = 0
+        var pendingSpace = false
+        for ch in raw {
+            if ch.isWhitespace || ch.isNewline {
+                if count > 0 {
+                    pendingSpace = true
+                }
+            } else {
+                if pendingSpace {
+                    if count >= 180 {
+                        result.append("…")
+                        return result
+                    }
+                    result.append(" ")
+                    count += 1
+                    pendingSpace = false
+                }
+                if count >= 180 {
+                    result.append("…")
+                    return result
+                }
+                result.append(ch)
+                count += 1
+            }
         }
-        return String(collapsed.prefix(180)) + "…"
+        return result
     }
 
     // MARK: - Header derivation (Android `buildHeader` port)
