@@ -702,28 +702,38 @@ final class ChatModel {
         return nil
     }
 
-    /// Pages older message batches from the Hub (up to `maxPages` pages of 50
-    /// messages) until at least `targetTurnCount` user turns appear in `userTurnItems`,
-    /// then optionally jumps to the newly loaded user prompt.
-    func seekOlderUserTurn(jumpWhenFound: Bool = true, minTurnCount: Int? = nil, maxPages: Int = 12) {
+    /// Pages older message batches from the Hub (up to `maxPages` pages of 200
+    /// messages). When `loadAll` is true, continues paging until all session
+    /// history is loaded (`!hasMore`); otherwise pages until at least one older
+    /// user turn appears and optionally jumps to it.
+    func seekOlderUserTurn(
+        jumpWhenFound: Bool = true,
+        loadAll: Bool = false,
+        maxPages: Int = 45
+    ) {
         guard isActive, !isSeekingOlderTurn, hasMore, let controller = chat.windowController else { return }
         isSeekingOlderTurn = true
         let initialTurnCount = userTurnItems.count
-        let targetCount = minTurnCount ?? (initialTurnCount + 1)
+        let targetCount = initialTurnCount + 1
         let initialFirstTurnID = userTurnItems.first?.id
         olderTurnSeekTask?.cancel()
         olderTurnSeekTask = Task { [weak self] in
             defer { self?.isSeekingOlderTurn = false }
-            for _ in 0..<maxPages {
+            var pagesLoaded = 0
+            var busyRetries = 0
+            while pagesLoaded < maxPages {
                 guard let self, !Task.isCancelled, self.hasMore else { break }
                 let outcome = await controller.fetchOlder()
                 guard !Task.isCancelled else { return }
                 switch outcome {
                 case .applied(_, let more, _):
+                    pagesLoaded += 1
+                    busyRetries = 0
                     // Wait one brief cycle for pipeline recompute to publish new `userTurnItems`
-                    try? await Task.sleep(for: .milliseconds(130))
+                    try? await Task.sleep(for: .milliseconds(90))
                     guard !Task.isCancelled else { return }
-                    if self.userTurnItems.count >= targetCount,
+                    if !loadAll,
+                       self.userTurnItems.count >= targetCount,
                        let newestOlderTurn = self.userTurnItems.first,
                        newestOlderTurn.id != initialFirstTurnID {
                         if jumpWhenFound {
@@ -732,11 +742,25 @@ final class ChatModel {
                         return
                     }
                     if !more { return }
+                case .stopped(.busy):
+                    busyRetries += 1
+                    if busyRetries > 10 { return }
+                    try? await Task.sleep(for: .milliseconds(120))
                 case .stopped, .failed:
                     return
                 }
             }
-            if let self, !Task.isCancelled, jumpWhenFound, let first = self.userTurnItems.first ?? self.railNavItems.first.map({ ChatTurnNavItem(id: $0.id, turnNumber: $0.turnNumber, userText: $0.title, assistantPreview: $0.subtitle, toolCount: $0.toolCount, createdAt: $0.createdAt) }) {
+            if let self, !Task.isCancelled, jumpWhenFound,
+               let first = self.userTurnItems.first ?? self.railNavItems.first.map({
+                   ChatTurnNavItem(
+                       id: $0.id,
+                       turnNumber: $0.turnNumber,
+                       userText: $0.title,
+                       assistantPreview: $0.subtitle,
+                       toolCount: $0.toolCount,
+                       createdAt: $0.createdAt
+                   )
+               }) {
                 self.jumpToBlock(id: first.id)
             }
         }
@@ -913,8 +937,8 @@ final class ChatModel {
 
         if syncSettled, !hasAutoBackfilledTurns, !isEmpty {
             hasAutoBackfilledTurns = true
-            if userTurnItems.count < 4, hasMore {
-                seekOlderUserTurn(jumpWhenFound: false, minTurnCount: 4, maxPages: 8)
+            if hasMore {
+                seekOlderUserTurn(jumpWhenFound: false, loadAll: true, maxPages: 45)
             }
         }
 

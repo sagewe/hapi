@@ -256,7 +256,7 @@ public enum MessageWindowLogic {
         let effectiveLimit = regularLimit
             ?? (previous.viewMode == .history
                 ? previous.historyRetentionLimit
-                : MessageWindowConstants.visibleWindowSize)
+                : previous.visibleRetentionLimit)
         let merged = MessageMerge.mergeMessages(previous.messages, retainedIncoming)
         let trim = trimPreservingQueued(merged, regularLimit: effectiveLimit, mode: effectiveMode)
         var next = settingMessages(previous, trim.kept)
@@ -305,7 +305,7 @@ public enum MessageWindowLogic {
         let incoming = MessageMerge.mergeMessages(authoritative, concurrentServerRows)
         let trim = trimPreservingQueued(
             incoming,
-            regularLimit: MessageWindowConstants.visibleWindowSize,
+            regularLimit: previous.visibleRetentionLimit,
             mode: .append
         )
         let snapshotHead = pagePosition(at: page.snapshotHeadAt, seq: page.snapshotHeadSeq)
@@ -396,7 +396,7 @@ public enum MessageWindowLogic {
     public static func enterTailMode(_ previous: MessageWindowState) -> MessageWindowState {
         let trim = trimPreservingQueued(
             previous.messages,
-            regularLimit: MessageWindowConstants.visibleWindowSize,
+            regularLimit: previous.visibleRetentionLimit,
             mode: .append
         )
         let forceLatest = previous.requiresLatestReset
@@ -438,7 +438,7 @@ public enum MessageWindowLogic {
     public static func activate(_ previous: MessageWindowState) -> Activation {
         let trim = trimPreservingQueued(
             previous.messages,
-            regularLimit: MessageWindowConstants.visibleWindowSize,
+            regularLimit: previous.visibleRetentionLimit,
             mode: .append
         )
         let forceLatest = previous.requiresLatestReset
@@ -536,7 +536,7 @@ public enum MessageWindowLogic {
             previous,
             incoming: responseMessages,
             mode: .prepend,
-            regularLimit: MessageWindowConstants.olderLoadWindowSize
+            regularLimit: max(previous.historyRetentionLimit, MessageWindowConstants.olderLoadWindowSize)
         )
         merged.hasMore = page.hasMore
         merged.epoch = page.epoch

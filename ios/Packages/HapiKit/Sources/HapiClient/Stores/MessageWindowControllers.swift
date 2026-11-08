@@ -11,13 +11,16 @@ import HapiProtocol
 public actor MessageWindowControllers {
     private let provider: any MessagesProviding
     private let snapshots: WindowSnapshotStore?
+    private let visibleRetentionLimit: Int
     private let historyRetentionLimit: Int
     private var controllers: [String: MessageWindowController] = [:]
 
     public init(provider: any MessagesProviding, snapshots: WindowSnapshotStore? = nil,
+                visibleRetentionLimit: Int = MessageWindowConstants.visibleWindowSize,
                 historyRetentionLimit: Int = MessageWindowConstants.historyWindowSize) {
         self.provider = provider
         self.snapshots = snapshots
+        self.visibleRetentionLimit = visibleRetentionLimit
         self.historyRetentionLimit = historyRetentionLimit
     }
 
@@ -34,6 +37,7 @@ public actor MessageWindowControllers {
             provider: provider,
             snapshots: snapshots,
             initialState: hydrated,
+            visibleRetentionLimit: visibleRetentionLimit,
             historyRetentionLimit: historyRetentionLimit
         )
         controllers[sessionId] = controller

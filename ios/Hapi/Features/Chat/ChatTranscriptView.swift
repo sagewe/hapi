@@ -173,7 +173,7 @@ private struct TurnJumpRailView: View {
     }
 
     private var visibleSlice: ArraySlice<ChatRailNavItem> {
-        let maxVisible = 18
+        let maxVisible = 64
         guard items.count > maxVisible else { return items[...] }
         let half = maxVisible / 2
         let start = max(0, min(activeIndex - half, items.count - maxVisible))
@@ -181,8 +181,18 @@ private struct TurnJumpRailView: View {
         return items[start..<end]
     }
 
+    private func tickRowHeight(for count: Int) -> CGFloat {
+        switch count {
+        case ...24: return 11
+        case 25...36: return 9
+        case 37...50: return 7.5
+        default: return 6.5
+        }
+    }
+
     var body: some View {
         let slice = Array(visibleSlice)
+        let rowHeight = tickRowHeight(for: slice.count)
         let hoveredSliceIndex = hoveredID.flatMap { id in slice.firstIndex(where: { $0.id == id }) }
         let hoveredItem = hoveredSliceIndex.map { slice[$0] }
 
@@ -207,7 +217,7 @@ private struct TurnJumpRailView: View {
                                     height: 2.5
                                 )
                         }
-                        .frame(width: 24, height: 11)
+                        .frame(width: 24, height: rowHeight)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -356,7 +366,7 @@ struct MessageJumpSheet: View {
                 if model.hasMore {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            model.seekOlderUserTurn(jumpWhenFound: false)
+                            model.seekOlderUserTurn(jumpWhenFound: false, loadAll: true)
                         } label: {
                             if model.isLoadingOlder || model.isSeekingOlderTurn {
                                 ProgressView().controlSize(.small)

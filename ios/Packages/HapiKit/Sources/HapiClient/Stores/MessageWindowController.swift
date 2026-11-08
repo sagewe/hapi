@@ -62,6 +62,7 @@ public actor MessageWindowController {
     public let sessionId: String
     private let provider: any MessagesProviding
     private let snapshots: WindowSnapshotStore?
+    private let visibleRetentionLimit: Int
     private let historyRetentionLimit: Int
 
     private var stateValue: MessageWindowState
@@ -74,13 +75,16 @@ public actor MessageWindowController {
         provider: any MessagesProviding,
         snapshots: WindowSnapshotStore? = nil,
         initialState: MessageWindowState? = nil,
+        visibleRetentionLimit: Int = MessageWindowConstants.visibleWindowSize,
         historyRetentionLimit: Int = MessageWindowConstants.historyWindowSize
     ) {
         self.sessionId = sessionId
         self.provider = provider
         self.snapshots = snapshots
+        self.visibleRetentionLimit = visibleRetentionLimit
         self.historyRetentionLimit = historyRetentionLimit
         self.stateValue = initialState ?? MessageWindowLogic.createState(sessionId: sessionId)
+        self.stateValue.visibleRetentionLimit = visibleRetentionLimit
         self.stateValue.historyRetentionLimit = historyRetentionLimit
     }
 
@@ -112,6 +116,7 @@ public actor MessageWindowController {
     ) -> MessageWindowState {
         let previous = stateValue
         var next = transform(previous)
+        next.visibleRetentionLimit = visibleRetentionLimit
         next.historyRetentionLimit = historyRetentionLimit
         stateValue = next
         if next != previous {

@@ -121,7 +121,8 @@ final class HubSession {
             snapshots: WindowSnapshotStore(
                 directory: snapshotDirectory.appendingPathComponent("windows", isDirectory: true)
             ),
-            historyRetentionLimit: MessageWindowConstants.olderLoadWindowSize
+            visibleRetentionLimit: 6_000,
+            historyRetentionLimit: 10_000
         )
         let scratchlist = ScratchlistStore(api: api)
         self.scratchlist = scratchlist

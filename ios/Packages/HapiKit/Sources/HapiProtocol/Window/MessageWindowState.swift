@@ -88,6 +88,8 @@ public struct MessageWindowState: Equatable, Sendable {
     public var isLoadingMore: Bool = false
     public var warning: String?
     public var viewMode: MessageViewMode = .tail
+    /// Local presentation policy for tail/visible retention; not persisted and not part of the wire.
+    public var visibleRetentionLimit = MessageWindowConstants.visibleWindowSize
     /// Local presentation policy; not persisted and not part of the wire.
     public var historyRetentionLimit = MessageWindowConstants.historyWindowSize
     /// Bumped whenever the ``messages`` list instance changes.
