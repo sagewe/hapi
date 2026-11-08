@@ -273,7 +273,7 @@ struct HomeView: View {
     }
 
     private func chat(_ sessionId: String) -> some View {
-        ChatView(session: session, sessionId: sessionId) { superseding in
+        ChatView(session: session, model: session.chatModel(for: sessionId)) { superseding in
             if usesSplitNavigation {
                 tabletNavigation.supersede(sessionId, with: superseding)
             } else if let last = path.indices.last, path[last] == sessionId {

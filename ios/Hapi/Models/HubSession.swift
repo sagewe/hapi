@@ -86,6 +86,12 @@ final class HubSession {
     /// way). Keyed by session id; never reused across hubs because the whole
     /// `HubSession` — cursors included — dies on hub switch.
     @ObservationIgnored private var chatCursors: [String: String] = [:]
+    /// In-memory LRU of warm `ChatModel` instances so switching between
+    /// sessions in the sidebar renders immediately with cached blocks,
+    /// turn navigation items, and pre-parsed Markdown.
+    @ObservationIgnored private var chatModels: [String: ChatModel] = [:]
+    @ObservationIgnored private var chatModelOrder: [String] = []
+    private static let maxCachedChatModels = 16
 
     init?(
         hubUrl: String,
@@ -119,7 +125,8 @@ final class HubSession {
         self.windows = MessageWindowControllers(
             provider: api,
             snapshots: WindowSnapshotStore(
-                directory: snapshotDirectory.appendingPathComponent("windows", isDirectory: true)
+                directory: snapshotDirectory.appendingPathComponent("windows", isDirectory: true),
+                maxSessions: 40
             ),
             visibleRetentionLimit: 6_000,
             historyRetentionLimit: 10_000
@@ -145,12 +152,44 @@ final class HubSession {
             if self.attachmentRecoverySessionIds.contains(sessionId) {
                 self.deferredAttachmentRemovals.insert(sessionId)
             } else {
+                self.evictCachedChatModel(sessionId: sessionId)
                 self.sessionRemoval = SessionRemoval(sessionId: sessionId)
             }
         }
     }
 
-    // MARK: - Per-chat sessions (M2f)
+    // MARK: - Per-chat models & sessions (M2f)
+
+    /// Returns a warm cached `ChatModel` for `sessionId` when available, or
+    /// creates and caches a new one (LRU-capped at `maxCachedChatModels`).
+    func chatModel(for sessionId: String) -> ChatModel {
+        if composerHandoff?.sessionId == sessionId {
+            evictCachedChatModel(sessionId: sessionId)
+        }
+        if let existing = chatModels[sessionId] {
+            chatModelOrder.removeAll { $0 == sessionId }
+            chatModelOrder.append(sessionId)
+            return existing
+        }
+        let model = ChatModel(session: self, sessionId: sessionId)
+        chatModels[sessionId] = model
+        chatModelOrder.append(sessionId)
+        while chatModelOrder.count > Self.maxCachedChatModels {
+            guard let candidateIndex = chatModelOrder.firstIndex(where: { $0 != openChatSessionId && $0 != sessionId }) else {
+                break
+            }
+            let evictedId = chatModelOrder.remove(at: candidateIndex)
+            chatModels.removeValue(forKey: evictedId)?.stop()
+            sessionStore.releaseDetail(evictedId)
+        }
+        return model
+    }
+
+    private func evictCachedChatModel(sessionId: String) {
+        chatModelOrder.removeAll { $0 == sessionId }
+        chatModels.removeValue(forKey: sessionId)?.stop()
+        sessionStore.releaseDetail(sessionId)
+    }
 
     /// Builds the per-session wiring for an opened chat: window controller
     /// access, the session-scope SSE pipe, and event routing into the shared
@@ -296,6 +335,11 @@ final class HubSession {
         lastSeenStore.shutdown()
         onTerminalAuthFailure = nil
         // Hub switch can outrun the chat view's disappear; stop is idempotent.
+        for (_, cachedModel) in chatModels {
+            cachedModel.stop()
+        }
+        chatModels.removeAll()
+        chatModelOrder.removeAll()
         activeChat?.stop()
         activeChat = nil
         openChatSessionId = nil

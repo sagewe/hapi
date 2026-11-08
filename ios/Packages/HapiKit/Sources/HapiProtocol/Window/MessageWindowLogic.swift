@@ -293,14 +293,44 @@ public enum MessageWindowLogic {
         requestBaseline: [String: WindowMessage]
     ) -> MessageWindowState {
         let retainedResponseMessages = responseMessages.filter { shouldRetainWindowMessage($0) }
+        let responseOldest = pagePosition(at: page.nextBeforeAt, seq: page.nextBeforeSeq)
+        // When `visibleRetentionLimit` is expanded beyond the 50-row default (e.g. 6,000 rows in
+        // HubSession) and `preferLatestOnActivation` triggers a `.latest` refresh on session
+        // re-entry or disk-snapshot hydration, preserve older cached server rows (`pos <= responseOldest`)
+        // whenever `epoch` matches and there is no gap between `previous.newestPosition` and
+        // `responseOldest`.
+        let olderContiguousServerRows: [WindowMessage] = {
+            guard previous.visibleRetentionLimit > MessageWindowConstants.visibleWindowSize,
+                  replaceServerRows,
+                  !previous.requiresLatestReset,
+                  !page.reset,
+                  let prevEpoch = previous.epoch,
+                  prevEpoch == page.epoch,
+                  let prevNewest = previous.newestPosition,
+                  let cutoff = responseOldest,
+                  cutoff <= prevNewest else {
+                return []
+            }
+            return previous.messages.filter { message in
+                guard !message.isOptimistic, let pos = messagePosition(message) else { return false }
+                return pos <= cutoff
+            }
+        }()
+        let hasPreservedOlderHistory = !olderContiguousServerRows.isEmpty
         let concurrentServerRows = previous.messages.filter { message in
             !message.isOptimistic && requestBaseline[message.id] !== message
         }
-        let preserved = replaceServerRows
-            ? previous.messages.filter { message in
+        let preserved: [WindowMessage]
+        if replaceServerRows {
+            let optimisticAndConcurrent = previous.messages.filter { message in
                 message.isOptimistic || requestBaseline[message.id] !== message
             }
-            : previous.messages
+            preserved = hasPreservedOlderHistory
+                ? MessageMerge.mergeMessages(olderContiguousServerRows, optimisticAndConcurrent)
+                : optimisticAndConcurrent
+        } else {
+            preserved = previous.messages
+        }
         let authoritative = MessageMerge.mergeMessages(preserved, retainedResponseMessages)
         let incoming = MessageMerge.mergeMessages(authoritative, concurrentServerRows)
         let trim = trimPreservingQueued(
@@ -312,10 +342,11 @@ public enum MessageWindowLogic {
             ?? derivePosition(responseMessages, .newest)
         let newestKept = derivePosition(trim.kept, .newest)
         let newest = maxPosition(snapshotHead, newestKept)
-        let responseOldest = pagePosition(at: page.nextBeforeAt, seq: page.nextBeforeSeq)
         let oldest: MessagePosition?
         if !trim.dropped.isEmpty {
             oldest = derivePosition(trim.kept, .oldest)
+        } else if hasPreservedOlderHistory {
+            oldest = previous.oldestPosition
         } else if replaceServerRows {
             oldest = responseOldest
         } else {
@@ -323,7 +354,11 @@ public enum MessageWindowLogic {
         }
         var next = settingMessages(previous, trim.kept)
         next.readThroughRevision = max(previous.readThroughRevision ?? 0, page.readThroughRevision ?? 0, trim.kept.compactMap(\.contentRevision).max() ?? 0)
-        next.hasMore = page.hasMore || (!replaceServerRows && previous.hasMore) || !trim.dropped.isEmpty
+        if hasPreservedOlderHistory {
+            next.hasMore = previous.hasMore || !trim.dropped.isEmpty
+        } else {
+            next.hasMore = page.hasMore || (!replaceServerRows && previous.hasMore) || !trim.dropped.isEmpty
+        }
         next.epoch = page.epoch
         next.oldestPosition = oldest
         next.newestPosition = newest

@@ -130,9 +130,6 @@ final class ChatSession {
         consumeTask?.cancel()
         consumeTask = nil
         reconnectNotice.update(.idle)
-        // Nobody observes the detail once the chat closes (mirror of the
-        // Android `sessionStore.releaseDetail`).
-        sessionStore.releaseDetail(sessionId)
         if let sse {
             self.sse = nil
             let save = saveCursor

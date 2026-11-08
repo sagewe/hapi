@@ -935,7 +935,7 @@ final class ChatModel {
         isInitialLoading = isEmpty && !syncSettled && window.warning == nil
         loadFailed = isEmpty && syncSettled && (window.warning != nil || detailLoadFailed)
 
-        if syncSettled, !hasAutoBackfilledTurns, !isEmpty {
+        if syncSettled, (!hasAutoBackfilledTurns || (hasMore && userTurnItems.count < 4)), !isEmpty {
             hasAutoBackfilledTurns = true
             if hasMore {
                 seekOlderUserTurn(jumpWhenFound: false, loadAll: true, maxPages: 45)
