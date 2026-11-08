@@ -14,6 +14,7 @@ import SwiftUI
 /// engine is present (A-M3a).
 struct UserTextBlockView: View {
     let block: UserTextBlock
+    var isHighlighted: Bool = false
     private let preview: MessageTextPage
 
     @Environment(\.chatInteractions) private var interactions
@@ -22,9 +23,19 @@ struct UserTextBlockView: View {
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.openChatMessage) private var openMessage
 
-    init(block: UserTextBlock) {
+    init(block: UserTextBlock, isHighlighted: Bool = false) {
         self.block = block
+        self.isHighlighted = isHighlighted
         preview = .preview(block.text)
+    }
+
+    private var bubbleShape: UnevenRoundedRectangle {
+        .rect(
+            topLeadingRadius: 16,
+            bottomLeadingRadius: 16,
+            bottomTrailingRadius: 4,
+            topTrailingRadius: 16
+        )
     }
 
     var body: some View {
@@ -83,15 +94,22 @@ struct UserTextBlockView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(.tint.opacity(0.16))
-                .clipShape(
-                    .rect(
-                        topLeadingRadius: 16,
-                        bottomLeadingRadius: 16,
-                        bottomTrailingRadius: 4,
-                        topTrailingRadius: 16
-                    )
+                .background(
+                    Color.accentColor.opacity(isHighlighted ? 0.28 : 0.16),
+                    in: bubbleShape
                 )
+                .overlay {
+                    if isHighlighted {
+                        bubbleShape
+                            .strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1.5)
+                    }
+                }
+                .shadow(
+                    color: isHighlighted ? Color.accentColor.opacity(0.22) : .clear,
+                    radius: 8,
+                    y: 2
+                )
+                .animation(.easeInOut(duration: 0.25), value: isHighlighted)
                 .contextMenu {
                     if !block.text.isEmpty {
                         Button("Copy Message", systemImage: "doc.on.doc") {
@@ -127,6 +145,7 @@ struct UserTextBlockView: View {
 /// Assistant prose: full-width markdown through the shared M2e renderer.
 struct AgentTextBlockView: View {
     let block: AgentTextBlock
+    var isHighlighted: Bool = false
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.hapiTheme) private var theme
     @State private var copied = false
@@ -161,6 +180,24 @@ struct AgentTextBlockView: View {
             }
             #endif
         }
+        .background {
+            if isHighlighted {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.07))
+                    .padding(.horizontal, -8)
+                    .padding(.vertical, -4)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if isHighlighted {
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, -2)
+                    .offset(x: -8)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: isHighlighted)
         .contextMenu {
             Button("Copy Message", systemImage: "doc.on.doc") {
                 pasteboard.copy(block.text)

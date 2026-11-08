@@ -81,7 +81,7 @@ struct ChatTranscriptView: View {
         .overlay(alignment: .trailing) {
             if !model.railNavItems.isEmpty {
                 TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
-                    .padding(.trailing, 14)
+                    .padding(.trailing, 8)
                     .padding(.vertical, 48)
             }
         }
@@ -108,55 +108,36 @@ struct ChatTranscriptView: View {
     @ViewBuilder
     private func rowView(_ row: TranscriptRow) -> some View {
         let isHighlighted = model.highlightedBlockID == row.id
-        Group {
-            switch row {
-            case .history(let phase, let hasMore):
-                Button(action: model.retryHistory) {
-                    HStack(spacing: 8) {
-                        if !hasMore {
-                            Text("Beginning of conversation")
-                        } else {
-                            switch phase {
-                            case .loading, .retrying, .awaitingLayout:
-                                ProgressView().controlSize(.small)
-                                Text("Loading older messages…")
-                            case .failed: Text("Couldn't load history. Tap to retry.")
-                            case .paused: Text("Continue loading history")
-                            default: Text("Load older messages")
-                            }
+        switch row {
+        case .history(let phase, let hasMore):
+            Button(action: model.retryHistory) {
+                HStack(spacing: 8) {
+                    if !hasMore {
+                        Text("Beginning of conversation")
+                    } else {
+                        switch phase {
+                        case .loading, .retrying, .awaitingLayout:
+                            ProgressView().controlSize(.small)
+                            Text("Loading older messages…")
+                        case .failed: Text("Couldn't load history. Tap to retry.")
+                        case .paused: Text("Continue loading history")
+                        default: Text("Load older messages")
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .disabled(!hasMore || model.isLoadingOlder || model.isSyncingTail)
-                .accessibilityIdentifier("chat-history")
-            case .message(let block):
-                ChatBlockCard(block: block, basePath: model.basePath)
-            case .group(let presentation):
-                ToolGroupBlockView(presentation: presentation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(!hasMore || model.isLoadingOlder || model.isSyncingTail)
+            .accessibilityIdentifier("chat-history")
+        case .message(let block):
+            ChatBlockCard(block: block, basePath: model.basePath, isHighlighted: isHighlighted)
+        case .group(let presentation):
+            ToolGroupBlockView(presentation: presentation)
         }
-        .background {
-            if isHighlighted {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, -2)
-            }
-        }
-        .overlay {
-            if isHighlighted {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 1.5)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, -2)
-            }
-        }
-        .animation(.easeInOut(duration: 0.25), value: isHighlighted)
     }
 }
 
@@ -184,34 +165,36 @@ private struct TurnJumpRailView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             if let item = hoveredItem {
                 railHoverPreview(item)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
 
-            VStack(spacing: 5) {
-                Button {
-                    model.jumpToPreviousUserTurn()
-                } label: {
-                    Group {
-                        if model.isSeekingOlderTurn || model.isLoadingOlder {
-                            ProgressView()
-                                .controlSize(.mini)
-                        } else {
-                            Image(systemName: "chevron.up")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.primary.opacity(0.78))
+            VStack(spacing: isRailHovered ? 4 : 3) {
+                if isRailHovered || model.isSeekingOlderTurn {
+                    Button {
+                        model.jumpToPreviousUserTurn()
+                    } label: {
+                        Group {
+                            if model.isSeekingOlderTurn || model.isLoadingOlder {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "chevron.up")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .frame(width: 22, height: 18)
+                        .contentShape(Rectangle())
                     }
-                    .frame(width: 28, height: 22)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .disabled((activeIndex == 0 && !model.hasMore) || model.isSeekingOlderTurn)
+                    .help(model.hasMore && activeIndex == 0 ? "Load & Jump to Previous User Turn (⌥↑)" : "Previous User Turn (⌥↑)")
                 }
-                .buttonStyle(.plain)
-                .disabled((activeIndex == 0 && !model.hasMore) || model.isSeekingOlderTurn)
-                .help(model.hasMore && activeIndex == 0 ? "Load & Jump to Previous User Turn (⌥↑)" : "Previous User Turn (⌥↑)")
 
-                VStack(spacing: 4) {
+                VStack(spacing: 3) {
                     ForEach(visibleSlice) { item in
                         let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
                         let isHovered = hoveredItem?.id == item.id
@@ -224,10 +207,10 @@ private struct TurnJumpRailView: View {
                                     .fill(tickColor(item: item, isActive: isActive, isHovered: isHovered))
                                     .frame(
                                         width: tickWidth(item: item, isActive: isActive, isHovered: isHovered),
-                                        height: isActive ? 5 : (item.isUserTurn ? 4 : 3)
+                                        height: isActive ? 4 : (item.isUserTurn ? 3 : 2.5)
                                     )
                             }
-                            .frame(width: 24, height: 10)
+                            .frame(width: isRailHovered ? 20 : 14, height: 9)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -244,52 +227,51 @@ private struct TurnJumpRailView: View {
                 }
                 .padding(.vertical, 2)
 
-                if let onOpenJumpSheet {
+                if isRailHovered, let onOpenJumpSheet {
                     Button(action: onOpenJumpSheet) {
-                        VStack(spacing: 2) {
-                            Image(systemName: "list.bullet")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text("\(min(activeIndex + 1, items.count))/\(items.count)")
-                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                                .monospacedDigit()
-                        }
-                        .foregroundStyle(.primary.opacity(0.78))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.primary.opacity(isRailHovered ? 0.10 : 0.05))
-                        )
+                        Text("\(min(activeIndex + 1, items.count))/\(items.count)")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.primary.opacity(0.08))
+                            )
                     }
                     .buttonStyle(.plain)
                     .help("Jump to Message… (⌘J)")
                 }
 
-                Button {
-                    model.jumpToNextUserTurn()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.primary.opacity(0.78))
-                        .frame(width: 28, height: 22)
-                        .contentShape(Rectangle())
+                if isRailHovered {
+                    Button {
+                        model.jumpToNextUserTurn()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
+                    .help("Next User Turn (⌥↓)")
                 }
-                .buttonStyle(.plain)
-                .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
-                .help("Next User Turn (⌥↓)")
             }
-            .padding(.vertical, 7)
-            .padding(.horizontal, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.regularMaterial)
-                    .opacity(isRailHovered ? 1.0 : 0.92)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(isRailHovered ? 0.22 : 0.14), lineWidth: 0.8)
-            )
-            .shadow(color: .black.opacity(isRailHovered ? 0.16 : 0.08), radius: 8, y: 2)
+            .padding(.vertical, isRailHovered ? 6 : 4)
+            .padding(.horizontal, isRailHovered ? 4 : 2)
+            .background {
+                if isRailHovered {
+                    Capsule()
+                        .fill(.regularMaterial)
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+                        )
+                        .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
+                }
+            }
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.15)) {
                     isRailHovered = hovering
@@ -303,14 +285,14 @@ private struct TurnJumpRailView: View {
 
     private func tickColor(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> Color {
         if isActive { return Color.accentColor }
-        if isHovered { return Color.primary.opacity(0.85) }
-        return item.isUserTurn ? Color.primary.opacity(0.55) : Color.secondary.opacity(0.38)
+        if isHovered { return Color.primary.opacity(0.82) }
+        return item.isUserTurn ? Color.primary.opacity(0.42) : Color.secondary.opacity(0.28)
     }
 
     private func tickWidth(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> CGFloat {
-        if isActive { return 18 }
-        if isHovered { return 15 }
-        return item.isUserTurn ? 13 : 8
+        if isActive { return isRailHovered ? 16 : 12 }
+        if isHovered { return 14 }
+        return item.isUserTurn ? (isRailHovered ? 11 : 8) : (isRailHovered ? 7 : 5)
     }
 
     private func railHoverPreview(_ item: ChatRailNavItem) -> some View {

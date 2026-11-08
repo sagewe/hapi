@@ -64,13 +64,14 @@ extension EnvironmentValues {
 struct ChatBlockCard: View {
     let block: VisibleChatBlock
     let basePath: String?
+    var isHighlighted: Bool = false
 
     var body: some View {
         switch block {
         case .toolGroup(let group):
             ToolGroupBlockView(presentation: ToolGroupPresentation(group))
         case .block(let chatBlock):
-            ChatSubBlockView(block: chatBlock, basePath: basePath)
+            ChatSubBlockView(block: chatBlock, basePath: basePath, isHighlighted: isHighlighted)
         }
     }
 }
@@ -80,13 +81,14 @@ struct ChatBlockCard: View {
 struct ChatSubBlockView: View {
     let block: ChatBlock
     let basePath: String?
+    var isHighlighted: Bool = false
 
     var body: some View {
         switch block {
         case .userText(let value):
-            UserTextBlockView(block: value)
+            UserTextBlockView(block: value, isHighlighted: isHighlighted)
         case .agentText(let value):
-            AgentTextBlockView(block: value)
+            AgentTextBlockView(block: value, isHighlighted: isHighlighted)
         case .agentReasoning(let value):
             AgentReasoningBlockView(block: value)
         case .agentEvent(let value):
