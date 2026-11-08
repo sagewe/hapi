@@ -62,6 +62,11 @@ public actor MessageWindowController {
     public let sessionId: String
     private let provider: any MessagesProviding
     private let snapshots: WindowSnapshotStore?
+    private let snapshotWriter: WindowSnapshotWriter?
+    private var persistenceTask: Task<Void, Never>?
+    private var persistenceRevision = 0
+    private var persistenceDirty = false
+    private let persistenceDelay: Duration
     private let visibleRetentionLimit: Int
     private let historyRetentionLimit: Int
 
@@ -76,11 +81,14 @@ public actor MessageWindowController {
         snapshots: WindowSnapshotStore? = nil,
         initialState: MessageWindowState? = nil,
         visibleRetentionLimit: Int = MessageWindowConstants.visibleWindowSize,
-        historyRetentionLimit: Int = MessageWindowConstants.historyWindowSize
+        historyRetentionLimit: Int = MessageWindowConstants.historyWindowSize,
+        persistenceDelay: Duration = .milliseconds(500)
     ) {
         self.sessionId = sessionId
         self.provider = provider
         self.snapshots = snapshots
+        self.snapshotWriter = snapshots.map { WindowSnapshotWriter(store: $0) }
+        self.persistenceDelay = persistenceDelay
         self.visibleRetentionLimit = visibleRetentionLimit
         self.historyRetentionLimit = historyRetentionLimit
         self.stateValue = initialState ?? MessageWindowLogic.createState(sessionId: sessionId)
@@ -96,7 +104,9 @@ public actor MessageWindowController {
     /// detection is instance-based (identity-`Equatable` rows), like the
     /// web's `next !== previous` publication gate.
     public func states() -> AsyncStream<MessageWindowState> {
-        let (stream, continuation) = AsyncStream.makeStream(of: MessageWindowState.self)
+        let (stream, continuation) = AsyncStream.makeStream(
+            of: MessageWindowState.self, bufferingPolicy: .bufferingNewest(1)
+        )
         let id = UUID()
         observers[id] = continuation
         continuation.yield(stateValue)
@@ -660,13 +670,13 @@ public actor MessageWindowController {
         runningRunId = nil
         runningPrefersLatest = false
         trailingRequested = false
-        snapshots?.delete(sessionId: sessionId)
         update { previous in
             var next = MessageWindowLogic.createState(sessionId: sessionId)
             next.syncGeneration = previous.syncGeneration + 1
             next.olderGeneration = previous.olderGeneration + 1
             return next
         }
+        persist(immediately: true)
     }
 
     /// Seed this window from another session's (web
@@ -703,17 +713,51 @@ public actor MessageWindowController {
         response.messages.map { WindowMessage(wire: $0) }
     }
 
-    private func persist() {
-        guard let snapshots else { return }
-        let state = stateValue
-        if MessageWindowLogic.shouldPersist(state) {
-            snapshots.save(sessionId: sessionId, snapshot: MessageWindowLogic.toPersisted(state))
-        } else {
-            snapshots.delete(sessionId: sessionId)
+    private func persist(immediately: Bool = false) {
+        guard snapshotWriter != nil else { return }
+        persistenceRevision += 1
+        persistenceDirty = true
+        if immediately { persistenceTask?.cancel(); persistenceTask = nil }
+        guard persistenceTask == nil else { return }
+        // Fixed window, not a trailing debounce: continuous output still saves.
+        // Retain until flushed, including when the last chat owner is released.
+        persistenceTask = Task { [self] in
+            if !immediately {
+                do { try await Task.sleep(for: persistenceDelay) }
+                catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            await flushPersistence()
         }
+    }
+
+    public func flushPersistence() async {
+        persistenceTask?.cancel()
+        persistenceTask = nil
+        guard let snapshotWriter else { return }
+        guard persistenceDirty else { await snapshotWriter.finishPendingWrites(); return }
+        persistenceDirty = false
+        let snapshot = MessageWindowLogic.shouldPersist(stateValue)
+            ? MessageWindowLogic.toPersisted(stateValue) : nil
+        await snapshotWriter.write(sessionId: sessionId, snapshot: snapshot, revision: persistenceRevision)
     }
 
     private static func warningMessage(_ error: any Error, fallback: String) -> String {
         (error as? LocalizedError)?.errorDescription ?? fallback
     }
+}
+
+/// Disk encoding/writes must not occupy the message-processing actor. Revision
+/// fencing also prevents an older save from resurrecting an invalidated window.
+private actor WindowSnapshotWriter {
+    let store: WindowSnapshotStore
+    private var revision = -1
+    init(store: WindowSnapshotStore) { self.store = store }
+    func write(sessionId: String, snapshot: PersistedMessageWindow?, revision: Int) {
+        guard revision > self.revision else { return }
+        self.revision = revision
+        if let snapshot { store.save(sessionId: sessionId, snapshot: snapshot) }
+        else { store.delete(sessionId: sessionId) }
+    }
+    func finishPendingWrites() {}
 }

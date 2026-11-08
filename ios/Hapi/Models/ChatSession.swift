@@ -127,6 +127,9 @@ final class ChatSession {
         unregisterActive(self)
         onStoreActivity = nil
         onSessionRemoved = nil
+        if let controller = windowController {
+            Task { await controller.flushPersistence() }
+        }
         consumeTask?.cancel()
         consumeTask = nil
         reconnectNotice.update(.idle)
@@ -150,6 +153,9 @@ final class ChatSession {
     }
 
     func enterBackground() {
+        if let controller = windowController {
+            Task { await controller.flushPersistence() }
+        }
         guard let sse else { return }
         Task { await sse.suspend() }
     }

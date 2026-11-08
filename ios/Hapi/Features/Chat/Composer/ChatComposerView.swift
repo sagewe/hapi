@@ -861,7 +861,14 @@ struct ChatComposerView: View {
                 }
             }
         } label: {
-            toolGlyph("cpu", active: hasCustomEffort ? AnyShapeStyle(.tint) : nil)
+            HStack(spacing: 4) {
+                toolGlyph("cpu", active: hasCustomEffort ? AnyShapeStyle(.tint) : nil)
+                #if targetEnvironment(macCatalyst)
+                Text(verbatim: configModel.modelSummaryValue)
+                    .font(.caption).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 180)
+                #endif
+            }
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -928,7 +935,14 @@ struct ChatComposerView: View {
                 }
             }
         } label: {
-            toolGlyph(permissionIconName, active: permissionIconStyle)
+            HStack(spacing: 4) {
+                toolGlyph(permissionIconName, active: permissionIconStyle)
+                #if targetEnvironment(macCatalyst)
+                Text(verbatim: configModel.permissionSummaryValue)
+                    .font(.caption).lineLimit(1)
+                    .frame(maxWidth: 140)
+                #endif
+            }
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

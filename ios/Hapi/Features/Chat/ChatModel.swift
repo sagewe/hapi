@@ -17,7 +17,7 @@ struct ChatHeaderUI: Equatable {
     var thinking: Bool
 }
 
-struct ChatTurnNavItem: Identifiable, Equatable {
+struct ChatTurnNavItem: Identifiable, Equatable, Sendable {
     let id: String
     let turnNumber: Int
     let userText: String
@@ -26,8 +26,8 @@ struct ChatTurnNavItem: Identifiable, Equatable {
     let createdAt: Int
 }
 
-struct ChatMessageNavItem: Identifiable, Equatable {
-    enum Role: String, Equatable {
+struct ChatMessageNavItem: Identifiable, Equatable, Sendable {
+    enum Role: String, Equatable, Sendable {
         case user
         case assistant
     }
@@ -38,7 +38,7 @@ struct ChatMessageNavItem: Identifiable, Equatable {
     let createdAt: Int
 }
 
-struct ChatRailNavItem: Identifiable, Equatable {
+struct ChatRailNavItem: Identifiable, Equatable, Sendable {
     let id: String
     let isUserTurn: Bool
     let turnNumber: Int
@@ -114,7 +114,6 @@ final class ChatModel {
     @ObservationIgnored private var blockIndexByID: [String: Int] = [:]
     @ObservationIgnored private var blockToUserTurnIndex: [String: Int] = [:]
     @ObservationIgnored private var blockToRailIndex: [String: Int] = [:]
-    @ObservationIgnored private var snippetCache: [String: (utf8Count: Int, snippet: String)] = [:]
     @ObservationIgnored private var cachedGroupPresentations: [String: (group: ToolGroupBlock, presentation: ToolGroupPresentation, row: TranscriptRow)] = [:]
     @ObservationIgnored private var cachedMessageRows: [String: (block: VisibleChatBlock, isHighlighted: Bool, row: TranscriptRow)] = [:]
     var showsJumpToLatest: Bool {
@@ -252,7 +251,8 @@ final class ChatModel {
     @ObservationIgnored let presentationState = ChatPresentationState()
     @ObservationIgnored let geometryCache = TranscriptGeometryCache()
     @ObservationIgnored let markdownCache = MarkdownRenderCache()
-    @ObservationIgnored private var preparedMarkdownLengths: [String: Int] = [:]
+    @ObservationIgnored private let renderPreparation = ChatRenderPreparation()
+    @ObservationIgnored private var lastPipelineStart: ContinuousClock.Instant?
     /// Authed thumbnail/viewer loader for scratchlist attachments (A-M4b).
     @ObservationIgnored let scratchlistAttachments: ScratchlistAttachmentLoader
 
@@ -437,6 +437,7 @@ final class ChatModel {
         // deallocates with this model.
         dictation.cancel()
         interactor.deactivate()
+        mediaLoader.clearCachedImages()
         hub.scratchlist.release(sessionId)
         chat.stop()
     }
@@ -862,6 +863,12 @@ final class ChatModel {
     /// itself hops onto the pipeline actor.
     private func pipelineLoop() async {
         while !Task.isCancelled {
+            if let lastPipelineStart {
+                do { try await ContinuousClock().sleep(until: lastPipelineStart.advanced(by: .milliseconds(100))) }
+                catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            lastPipelineStart = .now
             let revision = inputRevision
             if let window = windowState {
                 let detail = hub.sessionStore.detail(for: sessionId)
@@ -873,29 +880,9 @@ final class ChatModel {
                     hasMoreMessages: window.hasMore,
                     directSendLocalIds: interactor.directSendLocalIds
                 )
-                var toPrepare: [String] = []
-                for block in visible {
-                    guard case .block(let value) = block else { continue }
-                    let id = value.id
-                    let markdown: String? = switch value {
-                    case .agentText(let text): text.text
-                    case .agentReasoning(let text): text.text
-                    case .toolCall(let block): planProposalMarkdown(block.tool)
-                    default: nil
-                    }
-                    if let markdown {
-                        let utf8Len = markdown.utf8.count
-                        if preparedMarkdownLengths[id] != utf8Len {
-                            preparedMarkdownLengths[id] = utf8Len
-                            toPrepare.append(markdown)
-                        }
-                    }
-                }
-                if !toPrepare.isEmpty {
-                    await markdownCache.prepare(toPrepare)
-                }
+                let prepared = await renderPreparation.prepare(visible, previous: blocks, markdownCache: markdownCache)
                 guard !Task.isCancelled else { return }
-                apply(visible, window: window, detail: detail, summary: summary, machines: machines)
+                apply(visible, prepared: prepared, window: window, detail: detail, summary: summary, machines: machines)
             }
             // No suspension between this check and parking, so a concurrent
             // scheduleRecompute either lands before it (loop again) or finds
@@ -904,12 +891,12 @@ final class ChatModel {
                 pipelineTask = nil
                 return
             }
-            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
     private func apply(
         _ visible: [VisibleChatBlock],
+        prepared: PreparedChatRender,
         window: MessageWindowState,
         detail: Session?,
         summary: SessionSummary?,
@@ -925,35 +912,40 @@ final class ChatModel {
         if let epoch = window.epoch { lastEpoch = epoch }
         // Session/machine status events can arrive without new messages.
         // Do not invalidate the entire lazy transcript for identical output.
-        if blocks != visible {
+        if let nav = prepared.navigation {
             blocks = visible
-            let nav = buildNavigationItems(from: visible)
             userTurnItems = nav.turns
             allMessageNavItems = nav.messages
             railNavItems = nav.rail
             blockIndexByID = nav.blockIndexByID
             blockToUserTurnIndex = nav.blockToUserTurnIndex
             blockToRailIndex = nav.blockToRailIndex
-            rebuildMessageRows()
-            toolInspection.update(visible)
-            var liveIDs = Set<String>()
-            func collect(_ block: ChatBlock) {
-                liveIDs.insert(block.id)
-                if case .toolCall(let tool) = block {
-                    if let request = tool.tool.permission?.id { liveIDs.insert(request) }
-                    tool.children.forEach(collect)
+            if let changed = prepared.changedIndices, messageRows.count == visible.count {
+                // Stable structure: update only changed rows. Array COW is still
+                // linear, but unchanged rows need no deep comparisons or rebuilding.
+                var next = messageRows
+                for index in changed {
+                    let block = visible[index]
+                    if case .toolGroup(let group) = block {
+                        let presentation = ToolGroupPresentation(group)
+                        let row = TranscriptRow.group(presentation)
+                        cachedGroupPresentations[group.id] = (group, presentation, row)
+                        next[index] = row
+                    } else {
+                        let highlighted = block.stableId == highlightedBlockID
+                        let row = TranscriptRow.message(block, highlighted)
+                        cachedMessageRows[block.stableId] = (block, highlighted, row)
+                        next[index] = row
+                    }
                 }
+                messageRows = next
+            } else {
+                rebuildMessageRows()
             }
-            for block in visible {
-                switch block {
-                case .block(let value): collect(value)
-                case .toolGroup(let group):
-                    liveIDs.insert(group.id)
-                    group.tools.forEach { collect(.toolCall($0)) }
-                }
-            }
-            presentationState.prune(to: liveIDs)
+            if prepared.toolsChanged { toolInspection.update(visible) }
+            presentationState.prune(to: prepared.liveIDs)
         }
+
         header = Self.buildHeader(
             sessionId: sessionId,
             detail: detail,
@@ -1030,28 +1022,173 @@ final class ChatModel {
         messageRows = nextRows
     }
 
+    // MARK: - Header derivation (Android `buildHeader` port)
+
+    private static func buildHeader(
+        sessionId: String,
+        detail: Session?,
+        summary: SessionSummary?,
+        machines: [Machine]
+    ) -> ChatHeaderUI {
+        // Detail first — the fresher source once loaded (this pipe patches
+        // it live); a detail without usable metadata falls through to the
+        // list summary, then to the id prefix (`getSessionTitle` cascade).
+        let title = detail.flatMap(detailTitle)
+            ?? summary.map(SessionListModel.sessionTitle)
+            ?? String(sessionId.prefix(8))
+
+        let flavor = detail?.metadata?.flavor ?? summary?.metadata?.flavor
+        let machineId = detail?.metadata?.machineId ?? summary?.metadata?.machineId
+        let machineLabel: String? = machineId.map { id in
+            guard let metadata = machines.first(where: { $0.id == id })?.metadata else {
+                return String(id.prefix(8))
+            }
+            if let displayName = metadata.displayName,
+               !displayName.trimmingCharacters(in: .whitespaces).isEmpty {
+                return displayName
+            }
+            return metadata.host
+        }
+        let worktree = (detail?.metadata?.worktree ?? summary?.metadata?.worktree).map { tree in
+            tree.name.trimmingCharacters(in: .whitespaces).isEmpty ? tree.branch : tree.name
+        }
+        let parts: [String] = [
+            flavor.map { flavorLabel(forFlavor: $0) },
+            machineLabel,
+            worktree,
+        ].compactMap { $0 }
+
+        return ChatHeaderUI(
+            title: title,
+            subtitle: parts.isEmpty ? nil : parts.joined(separator: " · "),
+            flavor: flavor,
+            active: detail?.active ?? summary?.active ?? false,
+            thinking: detail?.thinking ?? summary?.thinking ?? false
+        )
+    }
+
+    /// Detail-side title cascade; nil when the metadata carries nothing usable.
+    private static func detailTitle(_ detail: Session) -> String? {
+        guard let metadata = detail.metadata else { return nil }
+        if let name = metadata.name, !name.isEmpty {
+            return name
+        }
+        if let text = metadata.summary?.text, !text.isEmpty {
+            return text
+        }
+        if let tail = metadata.path.split(separator: "/").last(where: { !$0.isEmpty }) {
+            return String(tail)
+        }
+        return nil
+    }
+}
+
+/// The export as a Files document (`fileExporter`); never read back.
+struct SessionExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json, UTType(filenameExtension: "md") ?? .plainText] }
+    var contentType: UTType { file.filename.hasSuffix(".md") ? (UTType(filenameExtension: "md") ?? .plainText) : .json }
+
+    let file: SessionExportFile
+
+    init(file: SessionExportFile) {
+        self.file = file
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        throw CocoaError(.featureUnsupported)
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: file.data)
+    }
+}
+
+struct ChatNavigationProjection: Sendable {
+    let turns: [ChatTurnNavItem]
+    let messages: [ChatMessageNavItem]
+    let rail: [ChatRailNavItem]
+    let blockIndexByID: [String: Int]
+    let blockToUserTurnIndex: [String: Int]
+    let blockToRailIndex: [String: Int]
+}
+
+struct PreparedChatRender: Sendable {
+    let navigation: ChatNavigationProjection?
+    let changedIndices: [Int]?
+    let liveIDs: Set<String>
+    let toolsChanged: Bool
+}
+
+/// Whole-window comparison, navigation and Markdown preparation run off-main.
+/// Compare against the last *published* blocks, never a cancelled preparation.
+actor ChatRenderPreparation {
+    private var snippetCache: [String: (source: String, snippet: String)] = [:]
+
+    func prepare(_ visible: [VisibleChatBlock], previous: [VisibleChatBlock],
+                 markdownCache: MarkdownRenderCache) async -> PreparedChatRender {
+        var changes: [Int] = []
+        var sameStructure = visible.count == previous.count
+        for (index, block) in visible.enumerated() {
+            if index >= previous.count || block != previous[index] { changes.append(index) }
+            if index < previous.count, block.stableId != previous[index].stableId { sameStructure = false }
+        }
+        guard !sameStructure || !changes.isEmpty else {
+            return PreparedChatRender(navigation: nil, changedIndices: [], liveIDs: [], toolsChanged: false)
+        }
+        var sources: [String] = []
+        for index in changes {
+            guard case .block(let block) = visible[index] else { continue }
+            switch block {
+            case .agentText(let value): sources.append(value.text)
+            case .agentReasoning(let value): sources.append(value.text)
+            case .toolCall(let value):
+                if let source = planProposalMarkdown(value.tool) { sources.append(source) }
+            default: break
+            }
+        }
+        if !sources.isEmpty { await markdownCache.prepare(sources) }
+        let nav = buildNavigationItems(from: visible)
+        var liveIDs = Set<String>()
+        func collect(_ block: ChatBlock) {
+            liveIDs.insert(block.id)
+            if case .toolCall(let tool) = block {
+                if let request = tool.tool.permission?.id { liveIDs.insert(request) }
+                tool.children.forEach(collect)
+            }
+        }
+        for block in visible {
+            switch block {
+            case .block(let value): collect(value)
+            case .toolGroup(let group):
+                liveIDs.insert(group.id)
+                group.tools.forEach { collect(.toolCall($0)) }
+            }
+        }
+        snippetCache = snippetCache.filter { liveIDs.contains($0.key) }
+        func isTool(_ block: VisibleChatBlock) -> Bool {
+            switch block {
+            case .toolGroup, .block(.toolCall): return true
+            default: return false
+            }
+        }
+        let toolsChanged = !sameStructure || changes.contains { isTool(visible[$0]) || isTool(previous[$0]) }
+        return PreparedChatRender(navigation: nav, changedIndices: sameStructure ? changes : nil,
+                                  liveIDs: liveIDs, toolsChanged: toolsChanged)
+    }
     // MARK: - Turn & Message Navigation Builder
 
     private func cachedSnippet(id: String, raw: String) -> String {
-        let len = raw.utf8.count
-        if let cached = snippetCache[id], cached.utf8Count == len {
+        if let cached = snippetCache[id], cached.source == raw {
             return cached.snippet
         }
         let snippet = Self.cleanSnippet(raw)
-        snippetCache[id] = (len, snippet)
+        snippetCache[id] = (raw, snippet)
         return snippet
     }
 
     private func buildNavigationItems(
         from visible: [VisibleChatBlock]
-    ) -> (
-        turns: [ChatTurnNavItem],
-        messages: [ChatMessageNavItem],
-        rail: [ChatRailNavItem],
-        blockIndexByID: [String: Int],
-        blockToUserTurnIndex: [String: Int],
-        blockToRailIndex: [String: Int]
-    ) {
+    ) -> ChatNavigationProjection {
         var turns: [ChatTurnNavItem] = []
         var messages: [ChatMessageNavItem] = []
         var indexByID: [String: Int] = [:]
@@ -1161,7 +1298,7 @@ final class ChatModel {
             }
         }
 
-        return (turns, messages, rail, indexByID, turnIndexByBlock, railIndexByBlock)
+        return ChatNavigationProjection(turns: turns, messages: messages, rail: rail, blockIndexByID: indexByID, blockToUserTurnIndex: turnIndexByBlock, blockToRailIndex: railIndexByBlock)
     }
 
     private static func cleanSnippet(_ raw: String) -> String {
@@ -1195,83 +1332,4 @@ final class ChatModel {
         return result
     }
 
-    // MARK: - Header derivation (Android `buildHeader` port)
-
-    private static func buildHeader(
-        sessionId: String,
-        detail: Session?,
-        summary: SessionSummary?,
-        machines: [Machine]
-    ) -> ChatHeaderUI {
-        // Detail first — the fresher source once loaded (this pipe patches
-        // it live); a detail without usable metadata falls through to the
-        // list summary, then to the id prefix (`getSessionTitle` cascade).
-        let title = detail.flatMap(detailTitle)
-            ?? summary.map(SessionListModel.sessionTitle)
-            ?? String(sessionId.prefix(8))
-
-        let flavor = detail?.metadata?.flavor ?? summary?.metadata?.flavor
-        let machineId = detail?.metadata?.machineId ?? summary?.metadata?.machineId
-        let machineLabel: String? = machineId.map { id in
-            guard let metadata = machines.first(where: { $0.id == id })?.metadata else {
-                return String(id.prefix(8))
-            }
-            if let displayName = metadata.displayName,
-               !displayName.trimmingCharacters(in: .whitespaces).isEmpty {
-                return displayName
-            }
-            return metadata.host
-        }
-        let worktree = (detail?.metadata?.worktree ?? summary?.metadata?.worktree).map { tree in
-            tree.name.trimmingCharacters(in: .whitespaces).isEmpty ? tree.branch : tree.name
-        }
-        let parts: [String] = [
-            flavor.map { flavorLabel(forFlavor: $0) },
-            machineLabel,
-            worktree,
-        ].compactMap { $0 }
-
-        return ChatHeaderUI(
-            title: title,
-            subtitle: parts.isEmpty ? nil : parts.joined(separator: " · "),
-            flavor: flavor,
-            active: detail?.active ?? summary?.active ?? false,
-            thinking: detail?.thinking ?? summary?.thinking ?? false
-        )
-    }
-
-    /// Detail-side title cascade; nil when the metadata carries nothing usable.
-    private static func detailTitle(_ detail: Session) -> String? {
-        guard let metadata = detail.metadata else { return nil }
-        if let name = metadata.name, !name.isEmpty {
-            return name
-        }
-        if let text = metadata.summary?.text, !text.isEmpty {
-            return text
-        }
-        if let tail = metadata.path.split(separator: "/").last(where: { !$0.isEmpty }) {
-            return String(tail)
-        }
-        return nil
-    }
-}
-
-/// The export as a Files document (`fileExporter`); never read back.
-struct SessionExportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.json, UTType(filenameExtension: "md") ?? .plainText] }
-    var contentType: UTType { file.filename.hasSuffix(".md") ? (UTType(filenameExtension: "md") ?? .plainText) : .json }
-
-    let file: SessionExportFile
-
-    init(file: SessionExportFile) {
-        self.file = file
-    }
-
-    init(configuration: ReadConfiguration) throws {
-        throw CocoaError(.featureUnsupported)
-    }
-
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: file.data)
-    }
 }

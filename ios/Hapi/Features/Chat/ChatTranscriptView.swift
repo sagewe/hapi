@@ -86,6 +86,7 @@ struct ChatTranscriptView: View {
             jumpToken: model.jumpToLatestToken,
             scrollTarget: model.scrollTarget,
             geometryCache: model.geometryCache,
+            contentRevision: basePath ?? "",
             historyControlID: TranscriptRow.historyID,
             isInspectionPresented: model.isInspectingContent,
             onViewport: { viewport in

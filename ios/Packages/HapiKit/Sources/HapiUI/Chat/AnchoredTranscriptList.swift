@@ -39,6 +39,9 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
     public var jumpToken: Int
     public var scrollTarget: TranscriptScrollTarget?
     public var geometryCache: TranscriptGeometryCache?
+    /// Changes to non-row builder captures (e.g. workspace root / actions).
+    /// Explicit identity avoids invalidating every cell for every new closure.
+    public var contentRevision: String
     public var historyControlID: String
     public var isInspectionPresented: Bool
     public var onViewport: (TranscriptViewport) -> Void
@@ -52,6 +55,7 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
     public init(items: [Item], historyVersion: Int, jumpToken: Int,
                 scrollTarget: TranscriptScrollTarget? = nil,
                 geometryCache: TranscriptGeometryCache? = nil,
+                contentRevision: String = "",
                 historyControlID: String,
                 isInspectionPresented: Bool = false,
                 onViewport: @escaping (TranscriptViewport) -> Void,
@@ -65,6 +69,7 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
         self.jumpToken = jumpToken
         self.scrollTarget = scrollTarget
         self.geometryCache = geometryCache
+        self.contentRevision = contentRevision
         self.historyControlID = historyControlID
         self.isInspectionPresented = isInspectionPresented
         self.onViewport = onViewport
@@ -383,6 +388,33 @@ private struct TranscriptHostedRow<Item>: View {
     }
 }
 
+private struct TranscriptEnvironmentSignature: Equatable {
+    let dynamicTypeSize: DynamicTypeSize
+    let legibilityWeight: LegibilityWeight?
+    let typography: HapiTypography
+    let locale: Locale
+    let layoutDirection: LayoutDirection
+    let colorScheme: ColorScheme
+    let theme: HapiTheme
+    let isEnabled: Bool
+
+    init(_ environment: EnvironmentValues) {
+        dynamicTypeSize = environment.dynamicTypeSize
+        legibilityWeight = environment.legibilityWeight
+        typography = environment.hapiTypography
+        locale = environment.locale
+        layoutDirection = environment.layoutDirection
+        colorScheme = environment.colorScheme
+        theme = environment.hapiTheme
+        isEnabled = environment.isEnabled
+    }
+
+    func hasSameMetrics(as other: Self) -> Bool {
+        dynamicTypeSize == other.dynamicTypeSize && legibilityWeight == other.legibilityWeight
+            && typography == other.typography && locale == other.locale && layoutDirection == other.layoutDirection
+    }
+}
+
 public final class TranscriptCollectionController<Item: Identifiable & Equatable>: UIViewController, UICollectionViewDelegate where Item.ID == String {
     private let layout = TranscriptLayout()
     private lazy var collection = TranscriptCollectionView(frame: .zero, collectionViewLayout: layout)
@@ -394,6 +426,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var itemIDSet: Set<String> = []
     private var values: [String: Item] = [:]
     private var applying = false
+    private var environmentSignature: TranscriptEnvironmentSignature?
     private var configuredWidth: CGFloat = 0
     private var configuredSpacing: [CGFloat] = []
     private var renderedHistoryVersion = -1
@@ -495,19 +528,13 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         let widthChanged = abs(configuredWidth - collection.bounds.width) > 0.5
         let contentWidthChanged = abs(HapiReadingLayout.contentWidth(in: configuredWidth)
             - HapiReadingLayout.contentWidth(in: collection.bounds.width)) > 0.5
-        let metricsChanged = configuration.map {
-            $0.environment.dynamicTypeSize != next.environment.dynamicTypeSize
-                || $0.environment.legibilityWeight != next.environment.legibilityWeight
-                || $0.environment.hapiTypography != next.environment.hapiTypography
-                || $0.environment.locale != next.environment.locale
-                || $0.environment.layoutDirection != next.environment.layoutDirection
-        } ?? true
-        let environmentChanged = configuration.map {
-            metricsChanged
-                || $0.environment.colorScheme != next.environment.colorScheme
-                || $0.environment.hapiTheme != next.environment.hapiTheme
-                || $0.environment.isEnabled != next.environment.isEnabled
-        } ?? true
+        // EnvironmentValues may contain live trait-backed storage. Compare
+        // captured values, not two reads of that mutable environment storage.
+        let nextSignature = TranscriptEnvironmentSignature(next.environment)
+        let metricsChanged = environmentSignature.map { !$0.hasSameMetrics(as: nextSignature) } ?? true
+        let environmentChanged = environmentSignature != nextSignature
+            || configuration?.contentRevision != next.contentRevision
+        environmentSignature = nextSignature
         var spacing: [CGFloat] = []
         spacing.reserveCapacity(next.items.count)
         var changed: [String] = []

@@ -16,6 +16,9 @@ struct HapiApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                    model.session?.releaseInactiveCaches()
+                }
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }

@@ -78,7 +78,8 @@ private struct GeneratedMediaCard: View {
             if phase != .active { content.pause() }
         }
         .fullScreenCover(isPresented: $imageOpen) {
-            ImageViewer(image: content.image, title: content.block.fileName)
+            ImageViewer(image: content.image, title: content.block.fileName,
+                        imageId: content.block.imageId, loader: loader)
         }
         .sheet(isPresented: $previewOpen) {
             if let file = content.file {
@@ -193,12 +194,17 @@ private struct GeneratedMediaPreview: UIViewControllerRepresentable {
 private struct ImageViewer: View {
     let image: UIImage?
     let title: String
+    let imageId: String
+    let loader: GeneratedMediaLoader?
+    @State private var original: UIImage?
+    @State private var failed = false
+    @State private var attempt = 0
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            if let image {
+            if let image = original ?? image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -214,7 +220,24 @@ private struct ImageViewer: View {
                     .padding(16)
             }
             .accessibilityLabel("Close")
+            if failed {
+                Button("Retry loading original") { attempt += 1 }
+                    .foregroundStyle(.white)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .padding()
+            }
         }
         .onTapGesture { dismiss() }
+        .task(id: attempt) {
+            guard let loader else { return }
+            failed = false
+            do {
+                let loaded = try await loader.originalImage(for: imageId)
+                try Task.checkCancellation()
+                original = loaded
+            } catch {
+                if !Task.isCancelled { failed = true }
+            }
+        }
     }
 }

@@ -310,6 +310,11 @@ struct SettingsView: View {
     private var aboutSection: some View {
         Section("About") {
             LabeledContent("App version", value: appVersion)
+            if let revision = Bundle.main.object(forInfoDictionaryKey: "HAPISourceRevision") as? String,
+               !revision.isEmpty {
+                LabeledContent("Source revision", value: revision)
+                    .textSelection(.enabled)
+            }
             LabeledContent("Protocol version", value: String(ProtocolVersion.supported))
             hubRow
             PrivacyPolicyLink()
@@ -356,7 +361,8 @@ struct SettingsView: View {
 
     private var appVersion: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        return short ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        return "\(short ?? "—") (\(build ?? "—"))"
     }
 }
 

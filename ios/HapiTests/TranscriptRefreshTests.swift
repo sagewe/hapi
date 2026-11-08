@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 import XCTest
 @testable import HapiUI
+@testable import Hapi
+@testable import HapiProtocol
 
 @MainActor
 final class TranscriptRefreshTests: XCTestCase {
@@ -55,6 +57,7 @@ final class TranscriptRefreshTests: XCTestCase {
             let basePath = driver.basePath
             AnchoredTranscriptList(
                 items: driver.rows, historyVersion: driver.version, jumpToken: 0,
+                contentRevision: "\(basePath):\(driver.actionToken)",
                 historyControlID: "history", onViewport: { _ in },
                 onLayout: { version, _ in driver.layouts.append(version) }
             ) { row in
@@ -174,6 +177,25 @@ final class TranscriptRefreshTests: XCTestCase {
         XCTAssertEqual(cell.frame.height, 180, accuracy: 1, "A system text size change must re-measure rows")
     }
 
+    func testCaptureOnlyChangesRefreshWithoutReinstallingCells() async throws {
+        let driver = Driver()
+        let (window, controller, view) = try host(driver)
+        defer { window.isHidden = true }
+        await settle { driver.layouts.contains(0) }
+        await browse(view, index: 25)
+        #if DEBUG
+        let configurations = controller.cellConfigurationCount
+        #endif
+        driver.basePath = "/changed"
+        driver.actionToken = 2
+        await settle { driver.samples["25"]?.basePath == "/changed" }
+        try XCTUnwrap(driver.actions["25"])(URL(string: "hapi-file://?path=test")!)
+        await settle { driver.lastAction == 2 }
+        #if DEBUG
+        XCTAssertEqual(controller.cellConfigurationCount, configurations)
+        #endif
+    }
+
     func testEqualItemsReceiveLatestEnvironmentValueCapturesAndActions() async throws {
         let driver = Driver()
         let (window, controller, view) = try host(driver)
@@ -214,5 +236,43 @@ private extension UIWindow {
     /// `context.environment`, and the app never overrides it above the list.
     func setDynamicTypeSize(_ size: DynamicTypeSize) {
         traitOverrides.preferredContentSizeCategory = UIContentSizeCategory(size)
+    }
+}
+
+@MainActor
+final class ChatRenderPreparationTests: XCTestCase {
+    private func block(_ id: String, _ text: String) -> VisibleChatBlock {
+        .block(.agentText(AgentTextBlock(id: id, localId: nil, createdAt: 1, invokedAt: nil,
+                                       durationMs: nil, usage: nil, model: nil, text: text, meta: nil)))
+    }
+
+    func testSameLengthReplacementUpdatesNavigationAndOnlyChangedRow() async throws {
+        let preparation = ChatRenderPreparation()
+        let cache = MarkdownRenderCache()
+        let original = [block("a", "hello"), block("b", "first")]
+        _ = await preparation.prepare(original, previous: [], markdownCache: cache)
+        let updated = [original[0], block("b", "other")]
+        let result = await preparation.prepare(updated, previous: original, markdownCache: cache)
+        XCTAssertEqual(result.changedIndices, [1])
+        XCTAssertEqual(result.navigation?.messages.last?.text, "other")
+        XCTAssertNotNil(cache.cached("other"))
+        let unchanged = await preparation.prepare(updated, previous: updated, markdownCache: cache)
+        XCTAssertNil(unchanged.navigation)
+        // A previous preparation may have been cancelled before publication.
+        let retry = await preparation.prepare(updated, previous: original, markdownCache: cache)
+        XCTAssertEqual(retry.changedIndices, [1])
+        XCTAssertNotNil(retry.navigation)
+    }
+
+    func testPrependAndRemovalRequireStructuralRebuild() async {
+        let preparation = ChatRenderPreparation()
+        let cache = MarkdownRenderCache()
+        let first = [block("a", "one"), block("b", "two")]
+        let prepended = await preparation.prepare([block("z", "older")] + first, previous: first, markdownCache: cache)
+        XCTAssertNil(prepended.changedIndices)
+        XCTAssertEqual(prepended.navigation?.blockIndexByID["a"], 1)
+        let removed = await preparation.prepare([], previous: first, markdownCache: cache)
+        XCTAssertNotNil(removed.navigation)
+        XCTAssertTrue(removed.liveIDs.isEmpty)
     }
 }

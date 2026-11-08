@@ -8,9 +8,16 @@ config="${HAPI_MAC_CONFIGURATION:-Release}"
 if [[ "$mode" == "--debug" ]]; then
   config="Debug"
 fi
+revision=$(git rev-parse --short=12 HEAD)
+if ! git diff --quiet HEAD -- ios script; then
+  diff_hash=$(git diff --binary HEAD -- ios script | shasum -a 256 | cut -c1-12)
+  revision="${revision}-dirty-${diff_hash}"
+fi
+build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 xcodebuild -project ios/Hapi.xcodeproj -scheme Hapi -configuration "$config" \
   -destination "platform=macOS,variant=Mac Catalyst,arch=$(uname -m)" \
-  -derivedDataPath "$derived" -allowProvisioningUpdates build
+  -derivedDataPath "$derived" -allowProvisioningUpdates \
+  HAPI_SOURCE_REVISION="$revision" HAPI_BUILD_DATE="$build_date" build
 built="$derived/Build/Products/${config}-maccatalyst/Hapi.app"
 if [[ -e "$installed" ]]; then
   bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$installed/Contents/Info.plist")

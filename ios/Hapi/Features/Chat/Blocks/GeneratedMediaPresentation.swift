@@ -56,7 +56,7 @@ final class GeneratedMediaPresentation {
         }
         do {
             if kind == .image {
-                let image = try await loader.image(for: block.imageId)
+                let image = try await loader.image(for: block.imageId, fileName: block.fileName, mimeType: block.mimeType)
                 try Task.checkCancellation()
                 guard loadGeneration == generation else { return }
                 self.image = image

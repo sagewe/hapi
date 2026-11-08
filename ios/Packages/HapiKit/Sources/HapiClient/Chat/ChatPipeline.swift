@@ -40,6 +40,11 @@ public actor ChatPipeline {
 
     private var normalizeCache: [String: NormalizeCacheEntry] = [:]
     private var previousGroups: [ToolGroupBlock] = []
+    private var lastMessages: [WindowMessage]?
+    private var lastAgentState: AgentState?
+    private var lastHasMore = false
+    private var lastDirectSendIDs: Set<String> = []
+    private var lastOutput: [VisibleChatBlock] = []
 
     public init() {}
 
@@ -51,6 +56,10 @@ public actor ChatPipeline {
         hasMoreMessages: Bool,
         directSendLocalIds: Set<String> = []
     ) -> [VisibleChatBlock] {
+        if lastMessages == messages, lastAgentState == agentState,
+           lastHasMore == hasMoreMessages, lastDirectSendIDs == directSendLocalIds {
+            return lastOutput
+        }
         // Composer-owned rows out, except sends the idle agent is about to
         // consume (`ChatInteractor.directSendLocalIds`); duplicate ids keep
         // the first occurrence (merge output cannot contain duplicates —
@@ -102,6 +111,11 @@ public actor ChatPipeline {
             if case .toolGroup(let group) = block { return group }
             return nil
         }
+        lastMessages = messages
+        lastAgentState = agentState
+        lastHasMore = hasMoreMessages
+        lastDirectSendIDs = directSendLocalIds
+        lastOutput = visible
         return visible
     }
 

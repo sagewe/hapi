@@ -11,6 +11,52 @@ import Testing
 @Suite("MessageWindowController")
 struct MessageWindowControllerTests {
 
+    @Test func registrySharesLiveWindowsAndEvictsClosedWindows() async {
+        let registry = MessageWindowControllers(provider: GatedMessagesProvider(), maxCachedWindows: 2)
+        var controller: MessageWindowController? = await registry.open(sessionId: "a")
+        weak var released = controller
+        #expect(await registry.open(sessionId: "a") === controller)
+        controller = nil
+        _ = await registry.open(sessionId: "b")
+        _ = await registry.open(sessionId: "c")
+        #expect(released == nil)
+        #expect(await registry.peek(sessionId: "a") == nil)
+    }
+
+    @Test func burstPersistenceCoalescesAndFlushKeepsLatestState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = WindowSnapshotStore(directory: directory)
+        let controller = MessageWindowController(sessionId: "s", provider: GatedMessagesProvider(),
+                                                snapshots: store, persistenceDelay: .seconds(60))
+        for index in 1...20 {
+            await controller.ingestSSEMessages([WindowMessage(wire: agentRow(id: "row-\(index)", seq: index, at: index))])
+        }
+        #expect(store.load(sessionId: "s") == nil, "The burst must not synchronously write each event")
+        await controller.flushPersistence()
+        let saved = try #require(store.load(sessionId: "s"))
+        #expect(saved.messages.count == 20)
+        #expect(saved.messages.last?.id == "row-20")
+        await controller.ingestSSEMessages([WindowMessage(wire: agentRow(id: "later", seq: 21, at: 21))])
+        await controller.clear()
+        await controller.flushPersistence()
+        #expect(store.load(sessionId: "s") == nil, "Pending saves must not resurrect a cleared window")
+        await controller.ingestSSEMessages([WindowMessage(wire: agentRow(id: "fresh", seq: 22, at: 22))])
+        await controller.flushPersistence()
+        #expect(store.load(sessionId: "s")?.messages.map(\.id) == ["fresh"])
+    }
+
+    @Test func slowObserversReceiveLatestStateWithoutQueuedHistoryCopies() async throws {
+        let controller = MessageWindowController(sessionId: "s", provider: GatedMessagesProvider())
+        let states = await controller.states()
+        var iterator = states.makeAsyncIterator()
+        for index in 1...20 {
+            await controller.ingestSSEMessages([WindowMessage(wire: agentRow(id: "row-\(index)", seq: index, at: index))])
+        }
+        let latest = await iterator.next()
+        #expect(latest?.messages.count == 20)
+    }
+
     // MARK: - Response builders
 
     private func agentRow(id: String, seq: Int, at: Int) -> DecryptedMessage {

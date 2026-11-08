@@ -36,6 +36,28 @@ final class GeneratedMediaTests: XCTestCase {
                             imageId: id, fileName: name, mimeType: mime)
     }
 
+    func testLargeImageUsesThumbnailButOriginalAndDownloadPreserveResolution() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let pixels = UIGraphicsImageRenderer(size: CGSize(width: 3200, height: 2400), format: format).image { context in
+            UIColor.blue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 3200, height: 2400))
+        }
+        let bytes = try XCTUnwrap(pixels.jpegData(compressionQuality: 0.8))
+        let source = Source(data: bytes, mime: "image/jpeg")
+        let loader = GeneratedMediaLoader(fetch: source.fetch)
+        let thumbnail = try await loader.image(for: "large")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(thumbnail.cgImage).width, 1280)
+        let original = try await loader.originalImage(for: "large")
+        XCTAssertEqual(try XCTUnwrap(original.cgImage).width, 3200)
+        let file = try await loader.file(for: "large", fileName: "original.jpg", mimeType: "image/jpeg")
+        XCTAssertEqual(try Data(contentsOf: file.url), bytes)
+        loader.clearCachedImages()
+        _ = try await loader.image(for: "large")
+        let calls = await source.calls
+        XCTAssertEqual(calls, 1, "Thumbnail and explicit original share the compressed download")
+    }
+
     func testMIMESelectsRendererNotFilenameOrToolName() {
         XCTAssertEqual(GeneratedMediaKind(mimeType: nil), .image)
         XCTAssertEqual(GeneratedMediaKind(mimeType: "image/png"), .image)

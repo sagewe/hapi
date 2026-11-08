@@ -191,6 +191,13 @@ final class HubSession {
         sessionStore.releaseDetail(sessionId)
     }
 
+    func releaseInactiveCaches() {
+        let inactive = chatModels.filter { $0.value.visibleSurfaces.isEmpty }.map(\.key)
+        for id in inactive { evictCachedChatModel(sessionId: id) }
+        let windows = windows
+        Task { await windows.releaseCachedWindows() }
+    }
+
     /// Builds the per-session wiring for an opened chat: window controller
     /// access, the session-scope SSE pipe, and event routing into the shared
     /// stores. The caller (ChatModel) drives `start()`/`stop()` with the
@@ -320,10 +327,12 @@ final class HubSession {
         let sessionStore = sessionStore
         let machineStore = machineStore
         let lastSeenStore = lastSeenStore
+        let windows = windows
         Task {
             await sessionStore.flushPersistence()
             await machineStore.flushPersistence()
             await lastSeenStore.flushPersistence()
+            await windows.flushPersistence()
         }
     }
 

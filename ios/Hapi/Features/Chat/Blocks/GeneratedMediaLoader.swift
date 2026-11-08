@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import HapiClient
 import UIKit
 import UniformTypeIdentifiers
@@ -66,29 +67,51 @@ final class GeneratedMediaLoader {
     init(fetch: @escaping Fetch) {
         self.fetch = fetch
         images.countLimit = 40
+        images.totalCostLimit = 16 * 1024 * 1024
         files.countLimit = 8
         files.totalCostLimit = 100 * 1024 * 1024
     }
 
-    func image(for imageId: String) async throws -> UIImage {
+    func image(for imageId: String, fileName: String = "image", mimeType: String? = nil) async throws -> UIImage {
         if let cached = images.object(forKey: imageId as NSString) { return cached }
         if let task = imageTasks[imageId] { return try await task.value }
-        let fetch = fetch
         let task = Task {
-            let payload = try await fetch(imageId)
+            let file = try await file(for: imageId, fileName: fileName, mimeType: mimeType)
             return try await Task.detached(priority: .utility) {
-                guard let image = UIImage(data: payload.data)?.preparingForDisplay() else {
+                guard let source = CGImageSourceCreateWithURL(file.url as CFURL,
+                    [kCGImageSourceShouldCache: false] as CFDictionary),
+                    let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceShouldCacheImmediately: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 1280
+                    ] as CFDictionary) else {
                     throw CocoaError(.fileReadCorruptFile)
                 }
-                return image
+                return UIImage(cgImage: thumbnail)
             }.value
         }
         imageTasks[imageId] = task
         defer { imageTasks[imageId] = nil }
         let image = try await task.value
-        images.setObject(image, forKey: imageId as NSString)
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        images.setObject(image, forKey: imageId as NSString, cost: cost)
         return image
     }
+
+    /// Full resolution is requested only by an explicitly opened viewer and
+    /// never retained in the thumbnail cache. Original compressed bytes stay intact.
+    func originalImage(for imageId: String) async throws -> UIImage {
+        let file = try await file(for: imageId, fileName: "image", mimeType: nil)
+        return try await Task.detached(priority: .utility) {
+            guard let image = UIImage(contentsOfFile: file.url.path)?.preparingForDisplay() else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return image
+        }.value
+    }
+
+    func clearCachedImages() { images.removeAllObjects() }
 
     func file(for imageId: String, fileName: String, mimeType: String?) async throws -> GeneratedMediaFile {
         if let cached = files.object(forKey: imageId as NSString) { return cached }

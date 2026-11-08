@@ -1,6 +1,18 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Source revision" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "源码版本" } }
+      }
+    },
+    "Retry loading original" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试加载原图" } }
+      }
+    },
     "— Canceled" : {
       "extractionState" : "manual",
       "localizations" : {
