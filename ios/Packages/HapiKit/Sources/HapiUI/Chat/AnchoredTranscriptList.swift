@@ -107,6 +107,8 @@ final class TranscriptLayout: UICollectionViewLayout {
     // visible while invalidated measurements are replaced. This is not a
     // cached measurement and must never be used to clamp a reading offset.
     private var anchorHeightEstimate: (id: String, height: CGFloat)?
+    var isTransitioningSnapshot = false
+    private var previousFrames: [CGRect] = []
     private var frames: [CGRect] = []
     private var attributes: [UICollectionViewLayoutAttributes?] = []
     private var width: CGFloat = 0
@@ -120,6 +122,7 @@ final class TranscriptLayout: UICollectionViewLayout {
 
     func setItems(_ ids: [String], width: CGFloat, spacingBefore: [CGFloat]? = nil,
                   invalidateMeasurements: Bool = false) {
+        if dirtyFromIndex != nil { prepare() }
         let spacing = spacingBefore ?? Array(repeating: CGFloat(12), count: ids.count)
         precondition(spacing.count == ids.count)
         let structureChanged = self.ids != ids
@@ -134,6 +137,7 @@ final class TranscriptLayout: UICollectionViewLayout {
         self.width = width
         self.spacingBefore = spacing
         if structureChanged {
+            previousFrames = frames
             self.ids = ids
             indicesByID.removeAll(keepingCapacity: true)
             for (index, id) in ids.enumerated() { indicesByID[id] = index }
@@ -172,9 +176,13 @@ final class TranscriptLayout: UICollectionViewLayout {
         contentHeight = y + 12
     }
 
-    override var collectionViewContentSize: CGSize { CGSize(width: width, height: contentHeight) }
+    override var collectionViewContentSize: CGSize {
+        if dirtyFromIndex != nil { prepare() }
+        return CGSize(width: width, height: contentHeight)
+    }
 
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
+        if dirtyFromIndex != nil { prepare() }
         guard !rect.isNull, !frames.isEmpty else { return [] }
         // Positive, non-overlapping rows: binary-search the first possible
         // intersection, then inspect only the viewport/prefetch range.
@@ -203,8 +211,30 @@ final class TranscriptLayout: UICollectionViewLayout {
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
-        guard indexPath.section == 0, frames.indices.contains(indexPath.item) else { return nil }
-        return attributesForItem(at: indexPath.item)
+        if dirtyFromIndex != nil { prepare() }
+        guard indexPath.section == 0, indexPath.item >= 0 else { return nil }
+        if frames.indices.contains(indexPath.item) {
+            return attributesForItem(at: indexPath.item)
+        }
+        // During diffable snapshot application (`_beginUpdates` -> `_setupCellAnimations`),
+        // UIKit queries `layoutAttributesForItem(at:)` for existing visible views using
+        // their pre-update `indexPath`s before the new item count is committed. When a
+        // snapshot shrinks (e.g. `history-control` disappears or tool blocks coalesce),
+        // returning `nil` triggers an `NSInternalInconsistencyException` abort in UIKit.
+        guard isTransitioningSnapshot else { return nil }
+        let fallback = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+        if previousFrames.indices.contains(indexPath.item), previousFrames[indexPath.item].height > 0 {
+            fallback.frame = previousFrames[indexPath.item]
+        } else {
+            let contentWidth = HapiReadingLayout.contentWidth(in: width)
+            fallback.frame = CGRect(
+                x: (width - contentWidth) / 2,
+                y: max(0, contentHeight - 1),
+                width: max(1, contentWidth),
+                height: 1
+            )
+        }
+        return fallback
     }
 
     private func attributesForItem(at index: Int) -> UICollectionViewLayoutAttributes {
@@ -472,6 +502,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             return
         }
         applying = true
+        layout.isTransitioningSnapshot = true
         layout.setItems(items.map(\.id), width: configuredWidth, spacingBefore: spacing,
                         invalidateMeasurements: metricsChanged)
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
@@ -481,6 +512,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         source.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             self.collection.layoutIfNeeded()
+            self.layout.isTransitioningSnapshot = false
             if let scrollTarget {
                 self.scrollToTarget(scrollTarget)
             } else {

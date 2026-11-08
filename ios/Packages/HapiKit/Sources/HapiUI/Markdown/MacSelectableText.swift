@@ -197,11 +197,17 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public final class SelectableUITextView: UITextView {
+        private struct WrappedMeasurement {
+            var widthKey: Int = -1
+            var size: CGSize = .zero
+        }
+
         private let backingTextStorage: NSTextStorage
         var lastContent: Content?
         var lastLinkColor: UIColor?
         private var cachedUnwrappedSize: CGSize?
-        private var cachedWrappedSizes: [Int: CGSize] = [:]
+        private var primaryWrappedCache = WrappedMeasurement()
+        private var secondaryWrappedCache = WrappedMeasurement()
 
         public init() {
             let storage = NSTextStorage()
@@ -221,7 +227,8 @@ public struct MacSelectableText: UIViewRepresentable {
 
         func clearSizeCache() {
             cachedUnwrappedSize = nil
-            cachedWrappedSizes.removeAll(keepingCapacity: true)
+            primaryWrappedCache = WrappedMeasurement()
+            secondaryWrappedCache = WrappedMeasurement()
         }
 
         func measureUnwrapped() -> CGSize {
@@ -249,10 +256,12 @@ public struct MacSelectableText: UIViewRepresentable {
 
         func measureWrapped(width: CGFloat) -> CGSize {
             let key = Int((width * 2).rounded())
-            if let cached = cachedWrappedSizes[key] { return cached }
+            if primaryWrappedCache.widthKey == key { return primaryWrappedCache.size }
+            if secondaryWrappedCache.widthKey == key { return secondaryWrappedCache.size }
             guard attributedText.length > 0 else {
                 let empty = CGSize(width: 1, height: 1)
-                cachedWrappedSizes[key] = empty
+                secondaryWrappedCache = primaryWrappedCache
+                primaryWrappedCache = WrappedMeasurement(widthKey: key, size: empty)
                 return empty
             }
             let maxDimension: CGFloat = 100_000
@@ -263,7 +272,8 @@ public struct MacSelectableText: UIViewRepresentable {
             let raw = layoutManager.usedRect(for: textContainer).size
             textContainer.widthTracksTextView = previousTracks
             let size = CGSize(width: ceil(raw.width), height: ceil(raw.height))
-            cachedWrappedSizes[key] = size
+            secondaryWrappedCache = primaryWrappedCache
+            primaryWrappedCache = WrappedMeasurement(widthKey: key, size: size)
             return size
         }
     }
