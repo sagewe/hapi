@@ -80,13 +80,13 @@ struct ChatTranscriptView: View {
         }
         .overlay(alignment: .trailing) {
             if !model.railNavItems.isEmpty {
-                TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
-                    .padding(.trailing, 8)
+                TurnJumpRailView(model: model)
+                    .padding(.trailing, 10)
                     .padding(.vertical, 48)
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if model.railNavItems.isEmpty && model.showsJumpToLatest {
+            if model.showsJumpToLatest {
                 Button(action: model.jumpToLatest) {
                     HStack(spacing: 6) {
                         if model.isJumpingToLatest { ProgressView().controlSize(.small) }
@@ -145,18 +145,35 @@ struct ChatTranscriptView: View {
 
 private struct TurnJumpRailView: View {
     let model: ChatModel
-    var onOpenJumpSheet: (() -> Void)?
 
-    @State private var hoveredItem: ChatRailNavItem?
-    @State private var isLatestHovered = false
+    @State private var hoveredID: String?
 
-    private var items: [ChatRailNavItem] { model.railNavItems }
-    private var activeIndex: Int { model.activeRailIndex ?? max(0, items.count - 1) }
+    private var items: [ChatRailNavItem] {
+        if !model.userTurnItems.isEmpty {
+            return model.userTurnItems.map { turn in
+                ChatRailNavItem(
+                    id: turn.id,
+                    isUserTurn: true,
+                    turnNumber: turn.turnNumber,
+                    title: turn.userText,
+                    subtitle: turn.assistantPreview,
+                    toolCount: turn.toolCount,
+                    createdAt: turn.createdAt
+                )
+            }
+        }
+        return model.railNavItems
+    }
 
-    /// Caps visible tick marks to a sliding window of up to 14 items around
-    /// the active item so long threads stay compact and clickable.
+    private var activeIndex: Int {
+        if !model.userTurnItems.isEmpty {
+            return model.activeUserTurnIndex ?? max(0, items.count - 1)
+        }
+        return model.activeRailIndex ?? max(0, items.count - 1)
+    }
+
     private var visibleSlice: ArraySlice<ChatRailNavItem> {
-        let maxVisible = 14
+        let maxVisible = 18
         guard items.count > maxVisible else { return items[...] }
         let half = maxVisible / 2
         let start = max(0, min(activeIndex - half, items.count - maxVisible))
@@ -165,241 +182,107 @@ private struct TurnJumpRailView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        let slice = Array(visibleSlice)
+        let hoveredSliceIndex = hoveredID.flatMap { id in slice.firstIndex(where: { $0.id == id }) }
+        let hoveredItem = hoveredSliceIndex.map { slice[$0] }
+
+        HStack(alignment: .center, spacing: 10) {
             if let item = hoveredItem {
                 railHoverPreview(item)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
-            } else if isLatestHovered && model.showsJumpToLatest {
-                latestHoverBadge
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
             }
 
-            VStack(spacing: 3) {
-                Button {
-                    model.jumpToPreviousUserTurn()
-                } label: {
-                    Group {
-                        if model.isSeekingOlderTurn || model.isLoadingOlder {
-                            ProgressView()
-                                .controlSize(.mini)
-                        } else {
-                            Image(systemName: "chevron.up")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 0) {
+                ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
+                    let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
+                    Button {
+                        model.jumpToBlock(id: item.id)
+                    } label: {
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                                .fill(tickColor(index: idx, hoveredIndex: hoveredSliceIndex, isActive: isActive))
+                                .frame(
+                                    width: tickWidth(index: idx, hoveredIndex: hoveredSliceIndex),
+                                    height: 2.5
+                                )
                         }
-                    }
-                    .frame(width: 22, height: 18)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled((activeIndex == 0 && !model.hasMore) || model.isSeekingOlderTurn)
-                .help(model.hasMore && activeIndex == 0 ? "Load & Jump to Previous User Turn (⌥↑)" : "Previous User Turn (⌥↑)")
-
-                VStack(spacing: 3) {
-                    ForEach(visibleSlice) { item in
-                        let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
-                        let isHovered = hoveredItem?.id == item.id
-                        Button {
-                            model.jumpToBlock(id: item.id)
-                        } label: {
-                            HStack(spacing: 0) {
-                                Spacer(minLength: 0)
-                                Capsule()
-                                    .fill(tickColor(item: item, isActive: isActive, isHovered: isHovered))
-                                    .frame(
-                                        width: tickWidth(item: item, isActive: isActive),
-                                        height: isActive ? 3.5 : (item.isUserTurn ? 3 : 2.5)
-                                    )
-                            }
-                            .frame(width: 18, height: 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hovering in
-                            withAnimation(.easeOut(duration: 0.12)) {
-                                if hovering {
-                                    hoveredItem = item
-                                    isLatestHovered = false
-                                } else if hoveredItem?.id == item.id {
-                                    hoveredItem = nil
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 2)
-
-                if let onOpenJumpSheet {
-                    Button(action: onOpenJumpSheet) {
-                        Text("\(min(activeIndex + 1, items.count))/\(items.count)")
-                            .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Jump to Message… (⌘J)")
-                }
-
-                Button {
-                    model.jumpToNextUserTurn()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 18)
+                        .frame(width: 24, height: 11)
                         .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
-                .help("Next User Turn (⌥↓)")
-
-                if model.showsJumpToLatest {
-                    Divider()
-                        .frame(width: 14)
-                        .padding(.vertical, 1)
-
-                    Button(action: model.jumpToLatest) {
-                        Group {
-                            if model.isJumpingToLatest {
-                                ProgressView()
-                                    .controlSize(.mini)
-                            } else {
-                                Image(systemName: "arrow.down.to.line")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
-                        }
-                        .frame(width: 20, height: 20)
-                        .background(
-                            Circle()
-                                .fill(Color.accentColor)
-                        )
-                        .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.isJumpingToLatest)
-                    .accessibilityIdentifier("chat-latest")
-                    .help("Back to latest")
                     .onHover { hovering in
                         withAnimation(.easeOut(duration: 0.12)) {
-                            isLatestHovered = hovering
-                            if hovering { hoveredItem = nil }
+                            if hovering {
+                                hoveredID = item.id
+                            } else if hoveredID == item.id {
+                                hoveredID = nil
+                            }
                         }
                     }
                 }
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 3)
-            .background(
-                Capsule()
-                    .fill(.regularMaterial)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
-                    )
-                    .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
-            )
             .onHover { hovering in
                 if !hovering {
                     withAnimation(.easeOut(duration: 0.12)) {
-                        hoveredItem = nil
-                        isLatestHovered = false
+                        hoveredID = nil
                     }
                 }
             }
         }
     }
 
-    private var latestHoverBadge: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "arrow.down.to.line")
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(Color.accentColor)
-            Text("Back to latest")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
+    private func tickWidth(index: Int, hoveredIndex: Int?) -> CGFloat {
+        guard let hoveredIndex else { return 9 }
+        let distance = abs(index - hoveredIndex)
+        switch distance {
+        case 0: return 22
+        case 1: return 15
+        case 2: return 11
+        default: return 8
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(
-            Capsule()
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-        .allowsHitTesting(false)
     }
 
-    private func tickColor(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> Color {
-        if isActive { return Color.accentColor }
-        if isHovered { return Color.primary.opacity(0.85) }
-        return item.isUserTurn ? Color.primary.opacity(0.48) : Color.secondary.opacity(0.32)
-    }
-
-    private func tickWidth(item: ChatRailNavItem, isActive: Bool) -> CGFloat {
-        if isActive { return 14 }
-        return item.isUserTurn ? 10 : 6
+    private func tickColor(index: Int, hoveredIndex: Int?, isActive: Bool) -> Color {
+        if let hoveredIndex {
+            if index == hoveredIndex {
+                return Color.primary.opacity(0.78)
+            }
+            return Color.primary.opacity(0.20)
+        }
+        return isActive ? Color.primary.opacity(0.55) : Color.primary.opacity(0.20)
     }
 
     private func railHoverPreview(_ item: ChatRailNavItem) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Label(
-                    item.isUserTurn ? "Turn #\(item.turnNumber)" : "Reply #\(item.turnNumber)",
-                    systemImage: item.isUserTurn ? "person.fill" : "sparkles"
-                )
-                .font(.caption2.weight(.bold).monospacedDigit())
-                .foregroundStyle(item.isUserTurn ? Color.accentColor : .secondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    (item.isUserTurn ? Color.accentColor : Color.secondary).opacity(0.14),
-                    in: Capsule()
-                )
-                if item.toolCount > 0 {
-                    Label("\(item.toolCount)", systemImage: "wrench.and.screwdriver")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                Text(Self.timeString(from: item.createdAt))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
-
+        VStack(alignment: .leading, spacing: 6) {
             Text(item.title)
-                .font(.caption.weight(.medium))
+                .font(.system(size: 13.5, weight: .semibold))
                 .foregroundStyle(.primary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .multilineTextAlignment(.leading)
 
             if let reply = item.subtitle, !reply.isEmpty {
                 Text(reply)
-                    .font(.caption2)
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineSpacing(3)
+                    .lineLimit(3)
                     .multilineTextAlignment(.leading)
             }
         }
-        .padding(10)
-        .frame(width: 248, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(width: 272, alignment: .leading)
+        .background(
+            Color(uiColor: .secondarySystemGroupedBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.6)
+                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.8)
         )
-        .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.08), radius: 14, y: 4)
         .allowsHitTesting(false)
-    }
-
-    private static func timeString(from rawTimestamp: Int) -> String {
-        guard rawTimestamp > 0 else { return "" }
-        let seconds = rawTimestamp > 10_000_000_000 ? Double(rawTimestamp) / 1000.0 : Double(rawTimestamp)
-        let date = Date(timeIntervalSince1970: seconds)
-        return date.formatted(date: .omitted, time: .shortened)
     }
 }
 

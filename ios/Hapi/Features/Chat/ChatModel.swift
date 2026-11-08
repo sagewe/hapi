@@ -109,6 +109,7 @@ final class ChatModel {
     @ObservationIgnored private var scrollTargetToken = 0
     @ObservationIgnored private var highlightTask: Task<Void, Never>?
     @ObservationIgnored private var olderTurnSeekTask: Task<Void, Never>?
+    @ObservationIgnored private var hasAutoBackfilledTurns = false
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
     }
@@ -702,12 +703,13 @@ final class ChatModel {
     }
 
     /// Pages older message batches from the Hub (up to `maxPages` pages of 50
-    /// messages) until at least one earlier user turn appears in `userTurnItems`,
-    /// then optionally jumps to that newly loaded user prompt.
-    func seekOlderUserTurn(jumpWhenFound: Bool = true, maxPages: Int = 12) {
+    /// messages) until at least `targetTurnCount` user turns appear in `userTurnItems`,
+    /// then optionally jumps to the newly loaded user prompt.
+    func seekOlderUserTurn(jumpWhenFound: Bool = true, minTurnCount: Int? = nil, maxPages: Int = 12) {
         guard isActive, !isSeekingOlderTurn, hasMore, let controller = chat.windowController else { return }
         isSeekingOlderTurn = true
         let initialTurnCount = userTurnItems.count
+        let targetCount = minTurnCount ?? (initialTurnCount + 1)
         let initialFirstTurnID = userTurnItems.first?.id
         olderTurnSeekTask?.cancel()
         olderTurnSeekTask = Task { [weak self] in
@@ -721,7 +723,7 @@ final class ChatModel {
                     // Wait one brief cycle for pipeline recompute to publish new `userTurnItems`
                     try? await Task.sleep(for: .milliseconds(130))
                     guard !Task.isCancelled else { return }
-                    if self.userTurnItems.count > initialTurnCount,
+                    if self.userTurnItems.count >= targetCount,
                        let newestOlderTurn = self.userTurnItems.first,
                        newestOlderTurn.id != initialFirstTurnID {
                         if jumpWhenFound {
@@ -908,6 +910,13 @@ final class ChatModel {
         let syncSettled = !window.isSyncingTail && window.syncGeneration > 0
         isInitialLoading = isEmpty && !syncSettled && window.warning == nil
         loadFailed = isEmpty && syncSettled && (window.warning != nil || detailLoadFailed)
+
+        if syncSettled, !hasAutoBackfilledTurns, !isEmpty {
+            hasAutoBackfilledTurns = true
+            if userTurnItems.count < 4, hasMore {
+                seekOlderUserTurn(jumpWhenFound: false, minTurnCount: 4, maxPages: 8)
+            }
+        }
 
         readThroughRevision = window.readThroughRevision
         renderedReadState = SessionReadState.merge(detail?.readState, summary?.readState)
