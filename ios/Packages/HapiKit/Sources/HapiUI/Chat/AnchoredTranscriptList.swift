@@ -12,6 +12,13 @@ public struct TranscriptViewport: Equatable {
     public let isAwayFromBottom: Bool
 }
 
+@MainActor
+public final class TranscriptGeometryCache {
+    public var width: CGFloat = 0
+    public var heights: [String: CGFloat] = [:]
+    public init() {}
+}
+
 public struct TranscriptScrollTarget: Equatable, Sendable {
     public let token: Int
     public let itemID: String
@@ -31,6 +38,7 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
     public var historyVersion: Int
     public var jumpToken: Int
     public var scrollTarget: TranscriptScrollTarget?
+    public var geometryCache: TranscriptGeometryCache?
     public var historyControlID: String
     public var isInspectionPresented: Bool
     public var onViewport: (TranscriptViewport) -> Void
@@ -43,6 +51,7 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
 
     public init(items: [Item], historyVersion: Int, jumpToken: Int,
                 scrollTarget: TranscriptScrollTarget? = nil,
+                geometryCache: TranscriptGeometryCache? = nil,
                 historyControlID: String,
                 isInspectionPresented: Bool = false,
                 onViewport: @escaping (TranscriptViewport) -> Void,
@@ -55,6 +64,7 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
         self.historyVersion = historyVersion
         self.jumpToken = jumpToken
         self.scrollTarget = scrollTarget
+        self.geometryCache = geometryCache
         self.historyControlID = historyControlID
         self.isInspectionPresented = isInspectionPresented
         self.onViewport = onViewport
@@ -100,6 +110,7 @@ struct ReadingAnchor {
 final class TranscriptLayout: UICollectionViewLayout {
     var anchorForUpdate: ReadingAnchor?
     var followsTail = true
+    var geometryCache: TranscriptGeometryCache?
     private var ids: [String] = []
     private var indicesByID: [String: Int] = [:]
     private var heights: [String: CGFloat] = [:]
@@ -123,6 +134,11 @@ final class TranscriptLayout: UICollectionViewLayout {
     func setItems(_ ids: [String], width: CGFloat, spacingBefore: [CGFloat]? = nil,
                   invalidateMeasurements: Bool = false) {
         if dirtyFromIndex != nil { prepare() }
+        if heights.isEmpty, let cache = geometryCache, !cache.heights.isEmpty,
+           abs(HapiReadingLayout.contentWidth(in: cache.width) - HapiReadingLayout.contentWidth(in: width)) <= 0.5 {
+            heights = cache.heights
+            self.width = width
+        }
         let spacing = spacingBefore ?? Array(repeating: CGFloat(12), count: ids.count)
         precondition(spacing.count == ids.count)
         let structureChanged = self.ids != ids
@@ -133,8 +149,10 @@ final class TranscriptLayout: UICollectionViewLayout {
                 return (anchor.id, max(frames[index].height, 1 - anchor.offset))
             }
             heights.removeAll()
+            geometryCache?.heights.removeAll()
         }
         self.width = width
+        geometryCache?.width = width
         self.spacingBefore = spacing
         if structureChanged {
             previousFrames = frames
@@ -142,6 +160,7 @@ final class TranscriptLayout: UICollectionViewLayout {
             indicesByID.removeAll(keepingCapacity: true)
             for (index, id) in ids.enumerated() { indicesByID[id] = index }
             heights = heights.filter { indicesByID[$0.key] != nil }
+            geometryCache?.heights = heights
             frames = Array(repeating: .zero, count: ids.count)
             attributes = Array(repeating: nil, count: ids.count)
         }
@@ -265,6 +284,8 @@ final class TranscriptLayout: UICollectionViewLayout {
         let height = max(1, preferredAttributes.size.height)
         let delta = height - estimatedHeight(for: ids[index])
         heights[ids[index]] = height
+        geometryCache?.width = width
+        geometryCache?.heights[ids[index]] = height
         if anchorHeightEstimate?.id == ids[index] { anchorHeightEstimate = nil }
         dirtyFromIndex = min(dirtyFromIndex ?? index, index)
         context.invalidateItems(at: [preferredAttributes.indexPath])
@@ -502,6 +523,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             return
         }
         applying = true
+        layout.geometryCache = next.geometryCache
         layout.isTransitioningSnapshot = true
         layout.setItems(items.map(\.id), width: configuredWidth, spacingBefore: spacing,
                         invalidateMeasurements: metricsChanged)

@@ -257,6 +257,7 @@ final class ChatModel {
     @ObservationIgnored private let pipeline = ChatPipeline()
     @ObservationIgnored let mediaLoader: GeneratedMediaLoader
     @ObservationIgnored let presentationState = ChatPresentationState()
+    @ObservationIgnored let geometryCache = TranscriptGeometryCache()
     @ObservationIgnored let markdownCache = MarkdownRenderCache()
     @ObservationIgnored private var previousMarkdownSources: Set<String> = []
     /// Authed thumbnail/viewer loader for scratchlist attachments (A-M4b).
