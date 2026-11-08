@@ -390,6 +390,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var configuration: AnchoredTranscriptList<Item>?
     private var pending: AnchoredTranscriptList<Item>?
     private var items: [Item] = []
+    private var itemIDs: [String] = []
+    private var itemIDSet: Set<String> = []
     private var values: [String: Item] = [:]
     private var applying = false
     private var configuredWidth: CGFloat = 0
@@ -475,17 +477,20 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         // at the first occurrence's position. Normalize ALL consumers, not
         // only the dictionary: diffable snapshots also reject duplicate IDs.
         var order: [String] = []
+        order.reserveCapacity(next.items.count)
         var nextValues: [String: Item] = [:]
+        nextValues.reserveCapacity(next.items.count)
         for item in next.items {
-            if nextValues[item.id] == nil { order.append(item.id) }
-            nextValues[item.id] = item
+            let id = item.id
+            if nextValues[id] == nil { order.append(id) }
+            nextValues[id] = item
         }
         let duplicates = next.items.count - order.count
         if duplicates > 0 {
             logger.error("Coalesced \(duplicates) duplicate transcript row IDs")
             next.items = order.compactMap { nextValues[$0] }
         }
-        let oldIDs = Set(items.map(\.id))
+        let oldIDs = itemIDSet
         let oldHeight = layout.collectionViewContentSize.height
         let widthChanged = abs(configuredWidth - collection.bounds.width) > 0.5
         let contentWidthChanged = abs(HapiReadingLayout.contentWidth(in: configuredWidth)
@@ -503,12 +508,21 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
                 || $0.environment.hapiTheme != next.environment.hapiTheme
                 || $0.environment.isEnabled != next.environment.isEnabled
         } ?? true
-        let spacing = next.items.enumerated().map { index, item in
-            max(0, next.spacingBefore(index > 0 ? next.items[index - 1] : nil, item))
+        var spacing: [CGFloat] = []
+        spacing.reserveCapacity(next.items.count)
+        var changed: [String] = []
+        let invalidateAll = contentWidthChanged || metricsChanged
+        var previousItem: Item? = nil
+        for item in next.items {
+            spacing.append(max(0, next.spacingBefore(previousItem, item)))
+            previousItem = item
+            let id = item.id
+            if invalidateAll || values[id] != item {
+                changed.append(id)
+            }
         }
         let spacingChanged = configuredSpacing != spacing
-        let changed = next.items.filter { contentWidthChanged || metricsChanged || values[$0.id] != $0 }.map(\.id)
-        let structureChanged = items.map(\.id) != next.items.map(\.id)
+        let structureChanged = itemIDs != order
         let jump = next.jumpToken != lastJumpToken
         lastJumpToken = next.jumpToken
         let scrollTarget = next.scrollTarget.flatMap { target -> TranscriptScrollTarget? in
@@ -534,13 +548,17 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         // Update the shared row builder & environment without firing @Observable
         // across every visible cell when only a subset of items changed (`reconfigureItems`
         // updates those cells directly). Bump `content.revision` only when environment
-        // or captured closures changed with no item diff.
+        // actually changed.
         content.render = next.content
         content.environment = next.environment
-        if environmentChanged || (changed.isEmpty && !structureChanged && !jump && scrollTarget == nil) {
+        if environmentChanged {
             content.revision &+= 1
         }
         items = next.items
+        itemIDs = order
+        if structureChanged {
+            itemIDSet = Set(order)
+        }
         values = nextValues
         configuredWidth = collection.bounds.width
         configuredSpacing = spacing
@@ -558,11 +576,11 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         applying = true
         layout.geometryCache = next.geometryCache
         layout.isTransitioningSnapshot = true
-        layout.setItems(items.map(\.id), width: configuredWidth, spacingBefore: spacing,
+        layout.setItems(order, width: configuredWidth, spacingBefore: spacing,
                         invalidateMeasurements: metricsChanged)
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
-        snapshot.appendItems(items.map(\.id))
+        snapshot.appendItems(order)
         snapshot.reconfigureItems(changed.filter { oldIDs.contains($0) })
         source.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
@@ -576,7 +594,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             }
             self.layout.anchorForUpdate = nil
             self.applying = false
-            let addedRows = self.items.contains { $0.id != next.historyControlID && !oldIDs.contains($0.id) }
+            let addedRows = structureChanged && order.contains { $0 != next.historyControlID && !oldIDs.contains($0) }
             let grew = self.layout.collectionViewContentSize.height > oldHeight + 1
             self.acknowledgeLayout(version: next.historyVersion, madeProgress: addedRows || grew)
             self.reportViewport()

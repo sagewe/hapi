@@ -115,7 +115,8 @@ final class ChatModel {
     @ObservationIgnored private var blockToUserTurnIndex: [String: Int] = [:]
     @ObservationIgnored private var blockToRailIndex: [String: Int] = [:]
     @ObservationIgnored private var snippetCache: [String: (utf8Count: Int, snippet: String)] = [:]
-    @ObservationIgnored private var cachedGroupPresentations: [String: (group: ToolGroupBlock, presentation: ToolGroupPresentation)] = [:]
+    @ObservationIgnored private var cachedGroupPresentations: [String: (group: ToolGroupBlock, presentation: ToolGroupPresentation, row: TranscriptRow)] = [:]
+    @ObservationIgnored private var cachedMessageRows: [String: (block: VisibleChatBlock, isHighlighted: Bool, row: TranscriptRow)] = [:]
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
     }
@@ -992,24 +993,39 @@ final class ChatModel {
         var nextRows: [TranscriptRow] = []
         nextRows.reserveCapacity(blocks.count)
         let highlightedID = highlightedBlockID
-        var activeGroupIDs = Set<String>()
+        var activeIDs = Set<String>()
+        activeIDs.reserveCapacity(blocks.count)
         for block in blocks {
             if case .toolGroup(let group) = block {
-                activeGroupIDs.insert(group.id)
-                let presentation: ToolGroupPresentation
+                activeIDs.insert(group.id)
                 if let cached = cachedGroupPresentations[group.id], cached.group == group {
-                    presentation = cached.presentation
+                    nextRows.append(cached.row)
                 } else {
-                    presentation = ToolGroupPresentation(group)
-                    cachedGroupPresentations[group.id] = (group, presentation)
+                    let presentation = ToolGroupPresentation(group)
+                    let row = TranscriptRow.group(presentation)
+                    cachedGroupPresentations[group.id] = (group, presentation, row)
+                    nextRows.append(row)
                 }
-                nextRows.append(.group(presentation))
             } else {
-                nextRows.append(.message(block, block.stableId == highlightedID))
+                let id = block.stableId
+                activeIDs.insert(id)
+                let isHighlighted = (id == highlightedID)
+                if let cached = cachedMessageRows[id],
+                   cached.isHighlighted == isHighlighted,
+                   cached.block == block {
+                    nextRows.append(cached.row)
+                } else {
+                    let row = TranscriptRow.message(block, isHighlighted)
+                    cachedMessageRows[id] = (block, isHighlighted, row)
+                    nextRows.append(row)
+                }
             }
         }
-        if cachedGroupPresentations.count > activeGroupIDs.count + 32 {
-            cachedGroupPresentations = cachedGroupPresentations.filter { activeGroupIDs.contains($0.key) }
+        if cachedGroupPresentations.count > activeIDs.count + 32 {
+            cachedGroupPresentations = cachedGroupPresentations.filter { activeIDs.contains($0.key) }
+        }
+        if cachedMessageRows.count > activeIDs.count + 64 {
+            cachedMessageRows = cachedMessageRows.filter { activeIDs.contains($0.key) }
         }
         messageRows = nextRows
     }

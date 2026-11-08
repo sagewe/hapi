@@ -4,28 +4,60 @@ import HapiUI
 import SwiftUI
 
 /// Tool groups contribute only their displayed summary to transcript diffs.
-enum TranscriptRow: Identifiable, Equatable {
-    case history(ChatHistoryPagingState.Phase, Bool, Bool)
-    case message(VisibleChatBlock, Bool)
-    case group(ToolGroupPresentation)
+/// Wraps the large value payload in a reference box so copying `TranscriptRow`
+/// across arrays/dictionaries is a single pointer retain (32 bytes instead of
+/// 602 bytes) and equality on unchanged rows short-circuits via `===` in O(1).
+struct TranscriptRow: Identifiable, Equatable {
+    enum Kind: Equatable {
+        case history(ChatHistoryPagingState.Phase, Bool, Bool)
+        case message(VisibleChatBlock, Bool)
+        case group(ToolGroupPresentation)
+    }
 
-    static let historyID = "chat-history-control"
-    var role: TranscriptRowRole {
-        switch self {
-        case .history: .history
-        case .group: .tool
-        case .message(.toolGroup, _): .tool
-        case .message(.block(.userText), _): .user
-        case .message(.block(.toolCall), _): .tool
-        default: .content
+    final class Box: Equatable {
+        let kind: Kind
+        init(_ kind: Kind) { self.kind = kind }
+        static func == (lhs: Box, rhs: Box) -> Bool {
+            if lhs === rhs { return true }
+            return lhs.kind == rhs.kind
         }
     }
-    var id: String {
-        switch self {
-        case .history: Self.historyID
-        case .message(let block, _): block.stableId
-        case .group(let group): group.id
+
+    static let historyID = "chat-history-control"
+    let id: String
+    let role: TranscriptRowRole
+    let box: Box
+
+    var kind: Kind { box.kind }
+
+    static func history(_ phase: ChatHistoryPagingState.Phase, _ hasMore: Bool, _ isDisabled: Bool) -> TranscriptRow {
+        TranscriptRow(
+            id: Self.historyID,
+            role: .history,
+            box: Box(.history(phase, hasMore, isDisabled))
+        )
+    }
+
+    static func message(_ block: VisibleChatBlock, _ isHighlighted: Bool) -> TranscriptRow {
+        let role: TranscriptRowRole = switch block {
+        case .toolGroup: .tool
+        case .block(.userText): .user
+        case .block(.toolCall): .tool
+        default: .content
         }
+        return TranscriptRow(
+            id: block.stableId,
+            role: role,
+            box: Box(.message(block, isHighlighted))
+        )
+    }
+
+    static func group(_ group: ToolGroupPresentation) -> TranscriptRow {
+        TranscriptRow(
+            id: group.id,
+            role: .tool,
+            box: Box(.group(group))
+        )
     }
 
     func spacing(after previous: TranscriptRow?) -> CGFloat {
@@ -86,7 +118,7 @@ struct ChatTranscriptView: View {
 
     @ViewBuilder
     private func rowView(_ row: TranscriptRow, basePath: String?) -> some View {
-        switch row {
+        switch row.kind {
         case .history(let phase, let hasMore, let isDisabled):
             Button(action: model.retryHistory) {
                 HStack(spacing: 8) {
