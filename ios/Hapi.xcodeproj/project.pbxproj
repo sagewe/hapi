@@ -57,6 +57,7 @@
 		A100000000000000000000C6 /* Exceptions for "Hapi" folder in "Hapi" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				AppIcon.icon,
 				Info.plist,
 			);
 			target = A100000000000000000000A5 /* Hapi */;
