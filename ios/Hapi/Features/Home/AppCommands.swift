@@ -24,6 +24,9 @@ struct ChatCommandActions {
     var focusComposer: (() -> Void)?
     var toggleScratchlist: (() -> Void)?
     var jumpToLatest: (() -> Void)?
+    var jumpToMessage: (() -> Void)?
+    var previousMessage: (() -> Void)?
+    var nextMessage: (() -> Void)?
     var openSessionSettings: () -> Void
     var openFiles: () -> Void
     var openTerminal: (() -> Void)?
@@ -109,6 +112,15 @@ struct HapiCommands: Commands {
             Button("Toggle Scratchlist") { chat?.toggleScratchlist?() }
                 .configurableShortcut(.toggleScratchlist, prefs: shortcuts)
                 .disabled(chat?.toggleScratchlist == nil)
+            Button("Jump to Message…") { chat?.jumpToMessage?() }
+                .configurableShortcut(.jumpToMessage, prefs: shortcuts)
+                .disabled(chat?.jumpToMessage == nil)
+            Button("Previous User Message") { chat?.previousMessage?() }
+                .configurableShortcut(.previousMessage, prefs: shortcuts)
+                .disabled(chat?.previousMessage == nil)
+            Button("Next User Message") { chat?.nextMessage?() }
+                .configurableShortcut(.nextMessage, prefs: shortcuts)
+                .disabled(chat?.nextMessage == nil)
             Button("Jump to Latest Message") { chat?.jumpToLatest?() }
                 .configurableShortcut(.jumpToLatest, prefs: shortcuts)
                 .disabled(chat?.jumpToLatest == nil)

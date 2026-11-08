@@ -17,6 +17,27 @@ struct ChatHeaderUI: Equatable {
     var thinking: Bool
 }
 
+struct ChatTurnNavItem: Identifiable, Equatable {
+    let id: String
+    let turnNumber: Int
+    let userText: String
+    let assistantPreview: String?
+    let toolCount: Int
+    let createdAt: Int
+}
+
+struct ChatMessageNavItem: Identifiable, Equatable {
+    enum Role: String, Equatable {
+        case user
+        case assistant
+    }
+    let id: String
+    let role: Role
+    let turnNumber: Int
+    let text: String
+    let createdAt: Int
+}
+
 /// Presentation state machine for the read-only chat screen (M2f) — the iOS
 /// counterpart of the Android `ChatViewModel`'s pipeline half. It combines
 /// the message window's UI state with the cached session detail (whose
@@ -65,11 +86,37 @@ final class ChatModel {
     private(set) var historyPaging = ChatHistoryPagingState()
     private(set) var followsTail = true
     private(set) var jumpToLatestToken = 0
+    private(set) var scrollTarget: TranscriptScrollTarget?
+    private(set) var highlightedBlockID: String?
+    private(set) var topVisibleBlockID: String?
+    private(set) var userTurnItems: [ChatTurnNavItem] = []
+    private(set) var allMessageNavItems: [ChatMessageNavItem] = []
     private(set) var isJumpingToLatest = false
     private(set) var hasTrimmedTail = false
     private var isAwayFromBottom = false
+    @ObservationIgnored private var scrollTargetToken = 0
+    @ObservationIgnored private var highlightTask: Task<Void, Never>?
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
+    }
+
+    /// 0-based index in `userTurnItems` corresponding to the user turn currently in view.
+    var activeUserTurnIndex: Int? {
+        guard !userTurnItems.isEmpty else { return nil }
+        if followsTail {
+            return userTurnItems.count - 1
+        }
+        guard let topID = topVisibleBlockID,
+              let blockIdx = blocks.firstIndex(where: { $0.stableId == topID }) else {
+            return userTurnItems.count - 1
+        }
+        for idx in stride(from: blockIdx, through: 0, by: -1) {
+            if case .block(.userText(let user)) = blocks[idx],
+               let turnIdx = userTurnItems.firstIndex(where: { $0.id == user.id }) {
+                return turnIdx
+            }
+        }
+        return 0
     }
     let toolInspection = ToolInspectionState()
     private(set) var visibleSurfaces = Set<String>()
@@ -342,6 +389,8 @@ final class ChatModel {
         jumpTask?.cancel()
         jumpTask = nil
         isJumpingToLatest = false
+        highlightTask?.cancel()
+        highlightTask = nil
         noticeTask?.cancel()
         noticeTask = nil
         // Discard an in-flight take — the mic must not stay hot off-screen
@@ -528,6 +577,74 @@ final class ChatModel {
         }
     }
 
+    func topVisibleRowChanged(_ rowID: String?) {
+        guard topVisibleBlockID != rowID else { return }
+        topVisibleBlockID = rowID
+    }
+
+    func jumpToBlock(id: String) {
+        guard blocks.contains(where: { $0.stableId == id }) else { return }
+        scrollTargetToken += 1
+        followsTail = false
+        topVisibleBlockID = id
+        scrollTarget = TranscriptScrollTarget(token: scrollTargetToken, itemID: id, topPadding: 14)
+        highlightedBlockID = id
+        highlightTask?.cancel()
+        highlightTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1600))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) {
+                self?.highlightedBlockID = nil
+            }
+        }
+    }
+
+    func jumpToPreviousUserTurn() {
+        let turns = userTurnItems
+        guard !turns.isEmpty else {
+            if hasMore {
+                retryHistory()
+                showNotice(String(localized: "Loading older messages…"))
+            }
+            return
+        }
+        let current = activeUserTurnIndex ?? (turns.count - 1)
+        // If we are scrolled down into the assistant output of the current turn
+        // (so the current turn's user prompt is above the top of the viewport),
+        // jump to the top of the current turn's user prompt first.
+        if topVisibleBlockID != turns[current].id,
+           let topID = topVisibleBlockID,
+           let topBlockIdx = blocks.firstIndex(where: { $0.stableId == topID }),
+           let turnBlockIdx = blocks.firstIndex(where: { $0.stableId == turns[current].id }),
+           topBlockIdx > turnBlockIdx {
+            jumpToBlock(id: turns[current].id)
+            return
+        }
+        if current > 0 {
+            jumpToBlock(id: turns[current - 1].id)
+        } else if hasMore {
+            jumpToBlock(id: turns[0].id)
+            retryHistory()
+            showNotice(String(localized: "Loading older messages…"))
+        } else {
+            jumpToBlock(id: turns[0].id)
+        }
+    }
+
+    func jumpToNextUserTurn() {
+        let turns = userTurnItems
+        guard !turns.isEmpty else {
+            jumpToLatest()
+            return
+        }
+        let current = activeUserTurnIndex ?? 0
+        if current + 1 < turns.count {
+            jumpToBlock(id: turns[current + 1].id)
+        } else {
+            jumpToLatest()
+        }
+    }
+
     func jumpToLatest() {
         guard isActive, !isJumpingToLatest, let controller = chat.windowController else { return }
         cancelHistory()
@@ -650,6 +767,9 @@ final class ChatModel {
         // Do not invalidate the entire lazy transcript for identical output.
         if blocks != visible {
             blocks = visible
+            let nav = Self.buildNavigationItems(from: visible)
+            userTurnItems = nav.turns
+            allMessageNavItems = nav.messages
             toolInspection.update(visible)
             var liveIDs = Set<String>()
             func collect(_ block: ChatBlock) {
@@ -695,6 +815,83 @@ final class ChatModel {
 
         readThroughRevision = window.readThroughRevision
         renderedReadState = SessionReadState.merge(detail?.readState, summary?.readState)
+    }
+
+    // MARK: - Turn & Message Navigation Builder
+
+    private static func buildNavigationItems(
+        from visible: [VisibleChatBlock]
+    ) -> (turns: [ChatTurnNavItem], messages: [ChatMessageNavItem]) {
+        var turns: [ChatTurnNavItem] = []
+        var messages: [ChatMessageNavItem] = []
+
+        var currentUser: UserTextBlock?
+        var currentTurnNumber = 0
+        var currentAssistantPreview: String?
+        var currentToolCount = 0
+
+        func flushCurrentTurn() {
+            guard let user = currentUser else { return }
+            turns.append(ChatTurnNavItem(
+                id: user.id,
+                turnNumber: currentTurnNumber,
+                userText: Self.cleanSnippet(user.text),
+                assistantPreview: currentAssistantPreview,
+                toolCount: currentToolCount,
+                createdAt: user.createdAt
+            ))
+        }
+
+        for item in visible {
+            switch item {
+            case .block(.userText(let user)):
+                flushCurrentTurn()
+                currentTurnNumber += 1
+                currentUser = user
+                currentAssistantPreview = nil
+                currentToolCount = 0
+                messages.append(ChatMessageNavItem(
+                    id: user.id,
+                    role: .user,
+                    turnNumber: currentTurnNumber,
+                    text: Self.cleanSnippet(user.text),
+                    createdAt: user.createdAt
+                ))
+            case .block(.agentText(let agent)):
+                let snippet = Self.cleanSnippet(agent.text)
+                if !snippet.isEmpty {
+                    currentAssistantPreview = snippet
+                    messages.append(ChatMessageNavItem(
+                        id: agent.id,
+                        role: .assistant,
+                        turnNumber: max(1, currentTurnNumber),
+                        text: snippet,
+                        createdAt: agent.createdAt
+                    ))
+                }
+            case .block(.toolCall):
+                currentToolCount += 1
+            case .toolGroup(let group):
+                currentToolCount += group.tools.count
+            default:
+                break
+            }
+        }
+        flushCurrentTurn()
+        return (turns, messages)
+    }
+
+    private static func cleanSnippet(_ raw: String) -> String {
+        let collapsed = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if collapsed.count <= 180 {
+            return collapsed
+        }
+        return String(collapsed.prefix(180)) + "…"
     }
 
     // MARK: - Header derivation (Android `buildHeader` port)

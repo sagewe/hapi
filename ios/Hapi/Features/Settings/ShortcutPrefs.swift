@@ -12,6 +12,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     case focusComposer
     case toggleScratchlist
     case jumpToLatest
+    case jumpToMessage
+    case previousMessage
+    case nextMessage
     case sessionSettings
     case sessionFiles
     case remoteTerminal
@@ -36,6 +39,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .focusComposer: "Focus Composer"
         case .toggleScratchlist: "Toggle Scratchlist"
         case .jumpToLatest: "Jump to Latest Message"
+        case .jumpToMessage: "Jump to Message…"
+        case .previousMessage: "Previous User Message"
+        case .nextMessage: "Next User Message"
         case .sessionSettings: "Session Settings"
         case .sessionFiles: "Session Files"
         case .remoteTerminal: "Remote Terminal"
@@ -60,6 +66,9 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
         case .focusComposer: .init(key: "l", command: true)
         case .toggleScratchlist: .init(key: "d", command: true, shift: true)
         case .jumpToLatest: .init(key: "downArrow", command: true, shift: true)
+        case .jumpToMessage: .init(key: "j", command: true)
+        case .previousMessage: .init(key: "upArrow", option: true)
+        case .nextMessage: .init(key: "downArrow", option: true)
         case .sessionSettings: .init(key: "i", command: true)
         case .sessionFiles: .init(key: "o", command: true, shift: true)
         case .remoteTerminal: .init(key: "t", command: true)

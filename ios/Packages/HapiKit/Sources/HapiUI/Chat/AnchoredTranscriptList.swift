@@ -12,24 +12,41 @@ public struct TranscriptViewport: Equatable {
     public let isAwayFromBottom: Bool
 }
 
+public struct TranscriptScrollTarget: Equatable, Sendable {
+    public let token: Int
+    public let itemID: String
+    public let topPadding: CGFloat
+
+    public init(token: Int, itemID: String, topPadding: CGFloat = 12) {
+        self.token = token
+        self.itemID = itemID
+        self.topPadding = topPadding
+    }
+}
+
 /// SwiftUI owns message content; UIKit owns scrolling, recycling and layout
 /// transactions. In particular, a prepend never issues scrollToItem.
 public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewControllerRepresentable where Item.ID == String {
     public var items: [Item]
     public var historyVersion: Int
     public var jumpToken: Int
+    public var scrollTarget: TranscriptScrollTarget?
     public var historyControlID: String
     public var isInspectionPresented: Bool
     public var onViewport: (TranscriptViewport) -> Void
+    public var onTopVisibleItemChanged: ((String?) -> Void)?
     public var onLayout: (Int, Bool) -> Void
     public var onTailDisplayed: () -> Void
     public var spacingBefore: (Item?, Item) -> CGFloat
     public var content: (Item) -> AnyView
     fileprivate var environment = EnvironmentValues()
 
-    public init(items: [Item], historyVersion: Int, jumpToken: Int, historyControlID: String,
+    public init(items: [Item], historyVersion: Int, jumpToken: Int,
+                scrollTarget: TranscriptScrollTarget? = nil,
+                historyControlID: String,
                 isInspectionPresented: Bool = false,
                 onViewport: @escaping (TranscriptViewport) -> Void,
+                onTopVisibleItemChanged: ((String?) -> Void)? = nil,
                 onLayout: @escaping (Int, Bool) -> Void,
                 onTailDisplayed: @escaping () -> Void = {},
                 spacingBefore: @escaping (Item?, Item) -> CGFloat = { _, _ in 12 },
@@ -37,9 +54,11 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
         self.items = items
         self.historyVersion = historyVersion
         self.jumpToken = jumpToken
+        self.scrollTarget = scrollTarget
         self.historyControlID = historyControlID
         self.isInspectionPresented = isInspectionPresented
         self.onViewport = onViewport
+        self.onTopVisibleItemChanged = onTopVisibleItemChanged
         self.onLayout = onLayout
         self.onTailDisplayed = onTailDisplayed
         self.spacingBefore = spacingBefore
@@ -298,6 +317,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var configuredSpacing: [CGFloat] = []
     private var renderedHistoryVersion = -1
     private var lastJumpToken = 0
+    private var lastScrollTargetToken = 0
+    private var lastTopVisibleItemID: String?
     private var reportScheduled = false
     private var lastViewport: TranscriptViewport?
     private var bottomProximity = TranscriptBottomProximity()
@@ -411,12 +432,25 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         let structureChanged = items.map(\.id) != next.items.map(\.id)
         let jump = next.jumpToken != lastJumpToken
         lastJumpToken = next.jumpToken
-        if jump { layout.followsTail = true }
+        let scrollTarget = next.scrollTarget.flatMap { target -> TranscriptScrollTarget? in
+            guard target.token != lastScrollTargetToken else { return nil }
+            lastScrollTargetToken = target.token
+            return target
+        }
+        if jump {
+            layout.followsTail = true
+        } else if scrollTarget != nil {
+            layout.followsTail = false
+        }
         // Opening an inspector expresses reading intent, even at the tail.
         // Closing it does not silently opt back into following new messages.
         if next.isInspectionPresented { layout.followsTail = false }
         // Capture at COMMIT, after any reader motion during the request.
-        layout.anchorForUpdate = layout.followsTail ? nil : captureAnchor()
+        if let scrollTarget {
+            layout.anchorForUpdate = ReadingAnchor(id: scrollTarget.itemID, offset: scrollTarget.topPadding)
+        } else {
+            layout.anchorForUpdate = layout.followsTail ? nil : captureAnchor()
+        }
         configuration = next
         // Do not compare/whitelist EnvironmentValues: custom services and
         // closure captures must propagate too, even when every Item is equal.
@@ -427,7 +461,11 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         configuredWidth = collection.bounds.width
         configuredSpacing = spacing
         guard structureChanged || widthChanged || metricsChanged || spacingChanged || !changed.isEmpty else {
-            if jump { layout.correctOffset(to: layout.bottomOffset(collection)) }
+            if jump {
+                layout.correctOffset(to: layout.bottomOffset(collection))
+            } else if let scrollTarget {
+                scrollToTarget(scrollTarget)
+            }
             layout.anchorForUpdate = nil
             acknowledgeLayout(version: next.historyVersion, madeProgress: false)
             reportViewport()
@@ -443,8 +481,12 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         source.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             self.collection.layoutIfNeeded()
-            let target = self.layout.targetContentOffset(forProposedContentOffset: self.collection.contentOffset)
-            self.layout.correctOffset(to: target.y)
+            if let scrollTarget {
+                self.scrollToTarget(scrollTarget)
+            } else {
+                let target = self.layout.targetContentOffset(forProposedContentOffset: self.collection.contentOffset)
+                self.layout.correctOffset(to: target.y)
+            }
             self.layout.anchorForUpdate = nil
             self.applying = false
             let addedRows = self.items.contains { $0.id != next.historyControlID && !oldIDs.contains($0.id) }
@@ -453,6 +495,23 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             self.reportViewport()
             self.drain()
         }
+    }
+
+    private func scrollToTarget(_ target: TranscriptScrollTarget) {
+        guard let index = items.firstIndex(where: { $0.id == target.itemID }) else { return }
+        let indexPath = IndexPath(item: index, section: 0)
+        collection.layoutIfNeeded()
+        for _ in 0..<3 {
+            guard let frame = layout.layoutAttributesForItem(at: indexPath)?.frame else { break }
+            let minOffset = -collection.adjustedContentInset.top
+            let maxOffset = layout.bottomOffset(collection)
+            let desiredY = min(maxOffset, max(minOffset, frame.minY - target.topPadding - collection.adjustedContentInset.top))
+            if abs(collection.contentOffset.y - desiredY) <= 0.5 { break }
+            collection.setContentOffset(CGPoint(x: collection.contentOffset.x, y: desiredY), animated: false)
+            collection.layoutIfNeeded()
+        }
+        let bottomDistance = layout.bottomOffset(collection) - collection.contentOffset.y
+        layout.followsTail = configuration?.isInspectionPresented != true && bottomDistance <= 1
     }
 
     private func acknowledgeLayout(version: Int, madeProgress: Bool) {
@@ -490,6 +549,11 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         if viewport.isAtBottom && viewport.followsTail && configuration?.isInspectionPresented != true
             && !collection.isDragging && !collection.isDecelerating {
             configuration?.onTailDisplayed()
+        }
+        let topID = captureAnchor()?.id
+        if topID != lastTopVisibleItemID {
+            lastTopVisibleItemID = topID
+            configuration?.onTopVisibleItemChanged?(topID)
         }
         guard viewport != lastViewport else { return }
         lastViewport = viewport

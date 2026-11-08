@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var deleteOpen = false
     @State private var forkConfirmOpen = false
     @State private var historyOpen = false
+    @State private var jumpOpen = false
     @State private var isDropTargeted = false
 
     /// Resume/reopen handed back a superseding session id — the host swaps
@@ -96,7 +97,7 @@ struct ChatView: View {
                         }
                     }
             } else {
-                ChatTranscriptView(model: model)
+                ChatTranscriptView(model: model, onOpenJumpSheet: { jumpOpen = true })
             }
         }
         // Reconnection must not resize the transcript and trigger its
@@ -277,6 +278,10 @@ struct ChatView: View {
             ConversationHistorySheet(model: model)
                 .macSheetSizing()
         }
+        .sheet(isPresented: $jumpOpen) {
+            MessageJumpSheet(model: model)
+                .macSheetSizing()
+        }
         .toolPresentations(model: model, session: session, owner: "chat") { path in
             viewerRoute = FileViewerRoute(sessionId: sessionId, path: path, mode: .file)
         }
@@ -363,6 +368,13 @@ struct ChatView: View {
 
     private var moreActionsMenu: some View {
         Menu {
+            Button {
+                jumpOpen = true
+            } label: {
+                Label("Jump to Message…", systemImage: "list.bullet.indent")
+            }
+            .disabled(model.userTurnItems.isEmpty && model.allMessageNavItems.isEmpty)
+            Divider()
             Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
             if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
                 Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
@@ -464,6 +476,9 @@ struct ChatView: View {
                 model.interactor.focusComposer()
             } : nil,
             jumpToLatest: { model.jumpToLatest() },
+            jumpToMessage: { jumpOpen = true },
+            previousMessage: (model.userTurnItems.isEmpty && !model.hasMore) ? nil : { model.jumpToPreviousUserTurn() },
+            nextMessage: (model.userTurnItems.isEmpty && !model.showsJumpToLatest) ? nil : { model.jumpToNextUserTurn() },
             openSessionSettings: { configOpen = true },
             openFiles: { filesOpen = true },
             openTerminal: canOpenTerminal ? { terminalOpen.toggle() } : nil,

@@ -36,6 +36,7 @@ enum TranscriptRow: Identifiable, Equatable {
 struct ChatTranscriptView: View {
     @Environment(\.scenePhase) private var scenePhase
     let model: ChatModel
+    var onOpenJumpSheet: (() -> Void)? = nil
 
     private var rows: [TranscriptRow] {
         var rows: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore)]
@@ -56,6 +57,7 @@ struct ChatTranscriptView: View {
             items: rows,
             historyVersion: model.historyVersion,
             jumpToken: model.jumpToLatestToken,
+            scrollTarget: model.scrollTarget,
             historyControlID: TranscriptRow.historyID,
             isInspectionPresented: model.isInspectingContent,
             onViewport: { viewport in
@@ -63,6 +65,9 @@ struct ChatTranscriptView: View {
                     followsTail: viewport.followsTail, needsOlder: viewport.needsOlder,
                     isAwayFromBottom: viewport.isAwayFromBottom
                 )
+            },
+            onTopVisibleItemChanged: { topID in
+                model.topVisibleRowChanged(topID)
             },
             onLayout: { version, progress in model.historyLaidOut(version: version, madeProgress: progress) },
             onTailDisplayed: {
@@ -72,6 +77,13 @@ struct ChatTranscriptView: View {
         ) { row in
             // The list bridges the current environment into its hosting roots.
             AnyView(rowView(row))
+        }
+        .overlay(alignment: .trailing) {
+            if !model.userTurnItems.isEmpty {
+                TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 48)
+            }
         }
         .overlay(alignment: .bottomTrailing) {
             if model.showsJumpToLatest {
@@ -95,35 +107,616 @@ struct ChatTranscriptView: View {
 
     @ViewBuilder
     private func rowView(_ row: TranscriptRow) -> some View {
-        switch row {
-        case .history(let phase, let hasMore):
-            Button(action: model.retryHistory) {
-                HStack(spacing: 8) {
-                    if !hasMore {
-                        Text("Beginning of conversation")
-                    } else {
-                        switch phase {
-                        case .loading, .retrying, .awaitingLayout:
-                            ProgressView().controlSize(.small)
-                            Text("Loading older messages…")
-                        case .failed: Text("Couldn't load history. Tap to retry.")
-                        case .paused: Text("Continue loading history")
-                        default: Text("Load older messages")
+        let isHighlighted = model.highlightedBlockID == row.id
+        Group {
+            switch row {
+            case .history(let phase, let hasMore):
+                Button(action: model.retryHistory) {
+                    HStack(spacing: 8) {
+                        if !hasMore {
+                            Text("Beginning of conversation")
+                        } else {
+                            switch phase {
+                            case .loading, .retrying, .awaitingLayout:
+                                ProgressView().controlSize(.small)
+                                Text("Loading older messages…")
+                            case .failed: Text("Couldn't load history. Tap to retry.")
+                            case .paused: Text("Continue loading history")
+                            default: Text("Load older messages")
+                            }
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasMore || model.isLoadingOlder || model.isSyncingTail)
+                .accessibilityIdentifier("chat-history")
+            case .message(let block):
+                ChatBlockCard(block: block, basePath: model.basePath)
+            case .group(let presentation):
+                ToolGroupBlockView(presentation: presentation)
+            }
+        }
+        .background {
+            if isHighlighted {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.10))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, -2)
+            }
+        }
+        .overlay {
+            if isHighlighted {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 1.5)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, -2)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: isHighlighted)
+    }
+}
+
+// MARK: - Mini Turn Navigation Rail
+
+private struct TurnJumpRailView: View {
+    let model: ChatModel
+    var onOpenJumpSheet: (() -> Void)?
+
+    @State private var hoveredTurn: ChatTurnNavItem?
+    @State private var isRailHovered = false
+
+    private var turns: [ChatTurnNavItem] { model.userTurnItems }
+    private var activeIndex: Int { model.activeUserTurnIndex ?? max(0, turns.count - 1) }
+
+    /// Caps visible tick marks to a sliding window of up to 14 turns around
+    /// the active turn so 50+ turn threads stay compact and clickable.
+    private var visibleSlice: ArraySlice<ChatTurnNavItem> {
+        let maxVisible = 14
+        guard turns.count > maxVisible else { return turns[...] }
+        let half = maxVisible / 2
+        let start = max(0, min(activeIndex - half, turns.count - maxVisible))
+        let end = min(turns.count, start + maxVisible)
+        return turns[start..<end]
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if let turn = hoveredTurn {
+                turnHoverPreview(turn)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            }
+
+            VStack(spacing: 4) {
+                Button {
+                    model.jumpToPreviousUserTurn()
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(activeIndex == 0 && !model.hasMore)
+                .help("Previous User Turn (⌥↑)")
+
+                VStack(spacing: 3) {
+                    ForEach(visibleSlice) { turn in
+                        let isActive = turns.indices.contains(activeIndex) && turns[activeIndex].id == turn.id
+                        let isHovered = hoveredTurn?.id == turn.id
+                        Button {
+                            model.jumpToBlock(id: turn.id)
+                        } label: {
+                            HStack(spacing: 0) {
+                                Spacer(minLength: 0)
+                                Capsule()
+                                    .fill(isActive ? Color.accentColor : (isHovered ? Color.primary.opacity(0.65) : Color.secondary.opacity(0.38)))
+                                    .frame(
+                                        width: isActive ? 14 : (isHovered ? 12 : 8),
+                                        height: isActive ? 4 : 3
+                                    )
+                            }
+                            .frame(width: 22, height: 9)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hovering in
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                if hovering {
+                                    hoveredTurn = turn
+                                } else if hoveredTurn?.id == turn.id {
+                                    hoveredTurn = nil
+                                }
+                            }
                         }
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
+                .padding(.vertical, 2)
+
+                if let onOpenJumpSheet {
+                    Button(action: onOpenJumpSheet) {
+                        Text("\(min(activeIndex + 1, turns.count))/\(turns.count)")
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.primary.opacity(isRailHovered ? 0.08 : 0.0))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Jump to Message… (⌘J)")
+                }
+
+                Button {
+                    model.jumpToNextUserTurn()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(activeIndex >= turns.count - 1 && !model.showsJumpToLatest)
+                .help("Next User Turn (⌥↓)")
             }
-            .buttonStyle(.plain)
-            .disabled(!hasMore || model.isLoadingOlder || model.isSyncingTail)
-            .accessibilityIdentifier("chat-history")
-        case .message(let block):
-            ChatBlockCard(block: block, basePath: model.basePath)
-        case .group(let presentation):
-            ToolGroupBlockView(presentation: presentation)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 3)
+            .background(
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .opacity(isRailHovered ? 0.96 : 0.65)
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.primary.opacity(isRailHovered ? 0.14 : 0.06), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(isRailHovered ? 0.10 : 0.03), radius: 6, y: 2)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isRailHovered = hovering
+                    if !hovering {
+                        hoveredTurn = nil
+                    }
+                }
+            }
         }
+    }
+
+    private func turnHoverPreview(_ turn: ChatTurnNavItem) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text("#\(turn.turnNumber)")
+                    .font(.caption2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1.5)
+                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+                if turn.toolCount > 0 {
+                    Label("\(turn.toolCount)", systemImage: "wrench.and.screwdriver")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Text(Self.timeString(from: turn.createdAt))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(turn.userText)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            if let reply = turn.assistantPreview, !reply.isEmpty {
+                Text(reply)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .padding(10)
+        .frame(width: 240, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+        .allowsHitTesting(false)
+    }
+
+    private static func timeString(from rawTimestamp: Int) -> String {
+        guard rawTimestamp > 0 else { return "" }
+        let seconds = rawTimestamp > 10_000_000_000 ? Double(rawTimestamp) / 1000.0 : Double(rawTimestamp)
+        let date = Date(timeIntervalSince1970: seconds)
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+// MARK: - ⌘J Message Jump Palette
+
+struct MessageJumpSheet: View {
+    enum FilterMode: String, CaseIterable, Identifiable {
+        case userTurns
+        case allMessages
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .userTurns: "User Turns"
+            case .allMessages: "All Messages"
+            }
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    let model: ChatModel
+
+    @State private var query = ""
+    @State private var mode: FilterMode = .userTurns
+    @State private var selectedID: String?
+    @FocusState private var searchFocused: Bool
+
+    private var filteredTurns: [ChatTurnNavItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let base = model.userTurnItems
+        guard !needle.isEmpty else { return base }
+        return base.filter { turn in
+            turn.userText.lowercased().contains(needle)
+                || (turn.assistantPreview?.lowercased().contains(needle) ?? false)
+                || "#\(turn.turnNumber)".contains(needle)
+        }
+    }
+
+    private var filteredMessages: [ChatMessageNavItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let base = model.allMessageNavItems
+        guard !needle.isEmpty else { return base }
+        return base.filter { item in
+            item.text.lowercased().contains(needle)
+                || "#\(item.turnNumber)".contains(needle)
+        }
+    }
+
+    private var currentIDs: [String] {
+        switch mode {
+        case .userTurns: filteredTurns.map(\.id)
+        case .allMessages: filteredMessages.map(\.id)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                headerBar
+                Divider()
+                contentList
+                Divider()
+                footerBar
+            }
+            .navigationTitle("Jump to Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+                if model.hasMore {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            model.retryHistory()
+                        } label: {
+                            if model.isLoadingOlder {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label("Load Older", systemImage: "clock.arrow.circlepath")
+                            }
+                        }
+                        .disabled(model.isLoadingOlder)
+                    }
+                }
+            }
+            .onAppear {
+                searchFocused = true
+                syncInitialSelection()
+            }
+            .onChange(of: query) { _, _ in
+                ensureValidSelection()
+            }
+            .onChange(of: mode) { _, _ in
+                ensureValidSelection()
+            }
+            .onKeyPress(.upArrow) {
+                moveSelection(delta: -1)
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                moveSelection(delta: 1)
+                return .handled
+            }
+            .onKeyPress(.return) {
+                commitSelection()
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                dismiss()
+                return .handled
+            }
+        }
+    }
+
+    private var headerBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search user prompts or assistant replies…", text: $query)
+                    .textFieldStyle(.plain)
+                    .focused($searchFocused)
+                    .onSubmit {
+                        commitSelection()
+                    }
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(.secondarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack {
+                Picker("Mode", selection: $mode) {
+                    ForEach(FilterMode.allCases) { item in
+                        Text(item.label).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Spacer()
+
+                Text("\(currentIDs.count) items")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder
+    private var contentList: some View {
+        if currentIDs.isEmpty {
+            ContentUnavailableView(
+                query.isEmpty ? "No Messages Yet" : "No Matching Messages",
+                systemImage: "text.magnifyingglass",
+                description: Text(query.isEmpty ? "Messages in this conversation will appear here." : "Try a different keyword or load older history.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollViewReader { proxy in
+                List(selection: $selectedID) {
+                    switch mode {
+                    case .userTurns:
+                        ForEach(filteredTurns) { turn in
+                            turnRow(turn)
+                                .tag(turn.id)
+                                .id(turn.id)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                        }
+                    case .allMessages:
+                        ForEach(filteredMessages) { item in
+                            messageRow(item)
+                                .tag(item.id)
+                                .id(item.id)
+                                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                        }
+                    }
+                }
+                .listStyle(.plain)
+                .onAppear {
+                    if let selectedID {
+                        proxy.scrollTo(selectedID, anchor: .center)
+                    }
+                }
+                .onChange(of: selectedID) { _, newID in
+                    if let newID {
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            proxy.scrollTo(newID, anchor: .center)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func turnRow(_ turn: ChatTurnNavItem) -> some View {
+        let isCurrentTurn: Bool = {
+            guard let activeIdx = model.activeUserTurnIndex,
+                  model.userTurnItems.indices.contains(activeIdx) else { return false }
+            return model.userTurnItems[activeIdx].id == turn.id
+        }()
+        let isSelected = selectedID == turn.id
+
+        return Button {
+            selectedID = turn.id
+            jumpAndDismiss(turn.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text("#\(turn.turnNumber)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(isCurrentTurn ? .white : Color.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            isCurrentTurn ? Color.accentColor : Color.accentColor.opacity(0.14),
+                            in: Capsule()
+                        )
+
+                    if isCurrentTurn {
+                        Text("Current View")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+
+                    if turn.toolCount > 0 {
+                        Label("\(turn.toolCount) tools", systemImage: "wrench.and.screwdriver")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text(Self.formatTimestamp(turn.createdAt))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(turn.userText)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if let preview = turn.assistantPreview, !preview.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 2)
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func messageRow(_ item: ChatMessageNavItem) -> some View {
+        let isUser = item.role == .user
+        let isSelected = selectedID == item.id
+
+        return Button {
+            selectedID = item.id
+            jumpAndDismiss(item.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Label(
+                        isUser ? "User #\(item.turnNumber)" : "Assistant #\(item.turnNumber)",
+                        systemImage: isUser ? "person.fill" : "sparkles"
+                    )
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isUser ? Color.accentColor : .secondary)
+
+                    Spacer()
+
+                    Text(Self.formatTimestamp(item.createdAt))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(item.text)
+                    .font(isUser ? .subheadline.weight(.medium) : .caption)
+                    .foregroundStyle(isUser ? .primary : .secondary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var footerBar: some View {
+        HStack(spacing: 14) {
+            Label("↑↓ Select", systemImage: "arrow.up.arrow.down")
+            Label("↩ Jump", systemImage: "return")
+            Label("⌥↑ / ⌥↓ Quick Step", systemImage: "command")
+            Spacer()
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func syncInitialSelection() {
+        if let activeIdx = model.activeUserTurnIndex,
+           model.userTurnItems.indices.contains(activeIdx) {
+            selectedID = model.userTurnItems[activeIdx].id
+        } else {
+            selectedID = currentIDs.last
+        }
+    }
+
+    private func ensureValidSelection() {
+        let ids = currentIDs
+        if let selectedID, ids.contains(selectedID) { return }
+        selectedID = ids.last
+    }
+
+    private func moveSelection(delta: Int) {
+        let ids = currentIDs
+        guard !ids.isEmpty else { return }
+        guard let current = selectedID, let idx = ids.firstIndex(of: current) else {
+            selectedID = delta > 0 ? ids.first : ids.last
+            return
+        }
+        let next = max(0, min(ids.count - 1, idx + delta))
+        selectedID = ids[next]
+    }
+
+    private func commitSelection() {
+        guard let target = selectedID ?? currentIDs.first else { return }
+        jumpAndDismiss(target)
+    }
+
+    private func jumpAndDismiss(_ id: String) {
+        dismiss()
+        model.jumpToBlock(id: id)
+    }
+
+    private static func formatTimestamp(_ rawTimestamp: Int) -> String {
+        guard rawTimestamp > 0 else { return "" }
+        let seconds = rawTimestamp > 10_000_000_000 ? Double(rawTimestamp) / 1000.0 : Double(rawTimestamp)
+        let date = Date(timeIntervalSince1970: seconds)
+        if Calendar.current.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
