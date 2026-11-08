@@ -127,6 +127,8 @@ struct ChatView: View {
                 ChatComposerView(
                     interactor: model.interactor,
                     dictation: model.dictation,
+                    api: session.api,
+                    machineId: currentMachineId,
                     hugsBottomEdge: isFoldedOuterScreen
                 ) { entry, editing in
                     scratchlistEntry = entry
@@ -150,22 +152,18 @@ struct ChatView: View {
                     headerTitle
                 }
             }
-            // Two icons max (device feedback: a crowded trailing edge
-            // squeezed the title out): gear for the frequent config
-            // switches, everything else behind one menu.
-            ToolbarItem(placement: .topBarTrailing) {
-                SessionConfigButton(isPresented: $configOpen) {
-                    SessionConfigView(
-                        interactor: model.interactor,
-                        notice: model.notice,
-                        api: session.api,
-                        machineId: currentMachineId
-                    )
-                }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 moreActionsMenu
             }
+        }
+        .sheet(isPresented: $configOpen) {
+            SessionConfigView(
+                interactor: model.interactor,
+                notice: model.notice,
+                api: session.api,
+                machineId: currentMachineId
+            )
+            .macSheetSizing()
         }
         .navigationBarTitleDisplayMode(.inline)
         .focusedSceneValue(\.chatCommands, chatCommandActions)

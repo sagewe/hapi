@@ -244,6 +244,25 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertEqual(result.groups?.count, 2)
         XCTAssertEqual(result.fiveHour?.usedPercentInt, 20)
         XCTAssertEqual(result.fiveHour?.remainingPercentInt, 80)
+        XCTAssertEqual(quotaModel.quotaPeakUsedPercent, 20)
+        XCTAssertTrue(quotaModel.showsComposerModelMenu)
+        XCTAssertTrue(quotaModel.showsComposerPermissionMenu)
+
+        let claude = try await SessionConfigTestHarness(flavor: "claude", model: "sonnet")
+        XCTAssertTrue(claude.model.showsComposerModelMenu)
+        XCTAssertTrue(claude.model.showsComposerPermissionMenu)
+        XCTAssertFalse(claude.model.showsQuota)
+        XCTAssertEqual(claude.model.modelSummaryValue, "Sonnet · Auto")
+        XCTAssertEqual(claude.model.permissionSummaryValue, "Default")
+
+        let gemini = try await SessionConfigTestHarness(flavor: "gemini")
+        XCTAssertFalse(gemini.model.showsComposerModelMenu)
+        XCTAssertFalse(gemini.model.showsQuota)
+
+        let dsh = try await SessionConfigTestHarness(flavor: "dsh")
+        XCTAssertTrue(dsh.model.showsComposerModelMenu)
+        XCTAssertFalse(dsh.model.showsComposerPermissionMenu)
+        XCTAssertFalse(dsh.model.showsQuota)
     }
 }
 

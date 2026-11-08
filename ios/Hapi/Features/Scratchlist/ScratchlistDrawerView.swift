@@ -8,14 +8,17 @@ private struct ScratchlistAccessibilityProbe: UIViewRepresentable {
     let identifier: String
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
-        view.accessibilityIdentifier = identifier
-        view.isAccessibilityElement = false
-        return view
+        let container = UIView(frame: .zero)
+        container.isAccessibilityElement = false
+        let probe = UIView(frame: .zero)
+        probe.accessibilityIdentifier = identifier
+        probe.isAccessibilityElement = false
+        container.addSubview(probe)
+        return container
     }
 
     func updateUIView(_ view: UIView, context: Context) {
-        view.accessibilityIdentifier = identifier
+        view.subviews.first?.accessibilityIdentifier = identifier
     }
 }
 

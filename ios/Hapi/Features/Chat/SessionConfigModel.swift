@@ -16,7 +16,7 @@ final class SessionConfigModel {
 
     let interactor: ChatInteractor
     let api: APIClient?
-    let machineId: String?
+    var machineId: String?
     private(set) var quotaState: QuotaLoadState = .idle
 
     init(interactor: ChatInteractor, api: APIClient? = nil, machineId: String? = nil) {
@@ -34,6 +34,67 @@ final class SessionConfigModel {
     var quotaAgent: UsageQueryAgent? { UsageQueryAgent.from(flavor: config.flavor) }
     var showsQuota: Bool { api != nil && machineId != nil && quotaAgent != nil }
     var hasSettings: Bool { !config.permissionModes.isEmpty || showsModel || showsEffort || showsCollaborationMode }
+
+    var canDiscoverModels: Bool {
+        guard config.active, let raw = config.flavor else { return false }
+        let agent = AgentFlavor(rawValue: raw)
+        guard AgentModelCatalog.scope(for: agent) != nil else { return false }
+        if agent == .agy && machineId == nil { return false }
+        if config.controlledByUser && (agent == .grok || agent == .copilot) { return false }
+        return true
+    }
+
+    var showsComposerModelMenu: Bool {
+        showsModel || showsEffort || canDiscoverModels
+    }
+
+    var showsComposerPermissionMenu: Bool {
+        !config.permissionModes.isEmpty || showsCollaborationMode
+    }
+
+    var currentEffortLabel: String {
+        effortOptions.first { $0.value == currentEffort }?.label ?? "Default"
+    }
+
+    var modelSummaryValue: String {
+        if showsEffort {
+            return "\(modelLabel) · \(currentEffortLabel)"
+        }
+        return modelLabel
+    }
+
+    var modelSummaryHelp: String {
+        if showsEffort {
+            return String(localized: "Model: \(modelLabel) · Effort: \(currentEffortLabel)")
+        }
+        return String(localized: "Model: \(modelLabel)")
+    }
+
+    var permissionSummaryValue: String {
+        if showsCollaborationMode, collaborationMode != .default {
+            return "\(permission.label) · \(collaborationMode.label)"
+        }
+        return permission.label
+    }
+
+    var permissionSummaryHelp: String {
+        if showsCollaborationMode {
+            return String(localized: "Permission: \(permission.label) · Collaboration: \(collaborationMode.label)")
+        }
+        return String(localized: "Permission: \(permission.label)")
+    }
+
+    var quotaPeakUsedPercent: Int? {
+        guard case .loaded(let result) = quotaState else { return nil }
+        var values: [Int] = []
+        if let five = result.fiveHour?.usedPercentInt { values.append(five) }
+        if let seven = result.sevenDay?.usedPercentInt { values.append(seven) }
+        for group in result.groups ?? [] {
+            if let five = group.fiveHour?.usedPercentInt { values.append(five) }
+            if let seven = group.sevenDay?.usedPercentInt { values.append(seven) }
+        }
+        return values.max()
+    }
 
     var permission: PermissionMode { config.permissionMode ?? .default }
     var collaborationMode: CodexCollaborationMode { config.collaborationMode ?? .default }
