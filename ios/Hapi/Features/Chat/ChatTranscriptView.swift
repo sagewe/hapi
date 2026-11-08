@@ -86,7 +86,7 @@ struct ChatTranscriptView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            if model.showsJumpToLatest {
+            if model.railNavItems.isEmpty && model.showsJumpToLatest {
                 Button(action: model.jumpToLatest) {
                     HStack(spacing: 6) {
                         if model.isJumpingToLatest { ProgressView().controlSize(.small) }
@@ -148,6 +148,7 @@ private struct TurnJumpRailView: View {
     var onOpenJumpSheet: (() -> Void)?
 
     @State private var hoveredItem: ChatRailNavItem?
+    @State private var isLatestHovered = false
     @State private var isRailHovered = false
 
     private var items: [ChatRailNavItem] { model.railNavItems }
@@ -168,6 +169,9 @@ private struct TurnJumpRailView: View {
         HStack(alignment: .center, spacing: 8) {
             if let item = hoveredItem {
                 railHoverPreview(item)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
+            } else if isLatestHovered && model.showsJumpToLatest {
+                latestHoverBadge
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             }
 
@@ -218,6 +222,7 @@ private struct TurnJumpRailView: View {
                             withAnimation(.easeOut(duration: 0.12)) {
                                 if hovering {
                                     hoveredItem = item
+                                    isLatestHovered = false
                                 } else if hoveredItem?.id == item.id {
                                     hoveredItem = nil
                                 }
@@ -258,6 +263,50 @@ private struct TurnJumpRailView: View {
                     .disabled(activeIndex >= items.count - 1 && !model.showsJumpToLatest)
                     .help("Next User Turn (⌥↓)")
                 }
+
+                if model.showsJumpToLatest {
+                    if isRailHovered {
+                        Divider()
+                            .frame(width: 14)
+                            .padding(.vertical, 1)
+                    }
+                    Button(action: model.jumpToLatest) {
+                        Group {
+                            if model.isJumpingToLatest {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.down.to.line")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(isRailHovered ? .white : Color.accentColor)
+                            }
+                        }
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle()
+                                .fill(isRailHovered ? Color.accentColor : Color.accentColor.opacity(0.15))
+                        )
+                        .overlay {
+                            if !isRailHovered {
+                                Circle()
+                                    .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.6)
+                            }
+                        }
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isJumpingToLatest)
+                    .accessibilityIdentifier("chat-latest")
+                    .help("Back to latest")
+                    .padding(.top, isRailHovered ? 0 : 2)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            isLatestHovered = hovering
+                            if hovering { hoveredItem = nil }
+                        }
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
             .padding(.vertical, isRailHovered ? 6 : 4)
             .padding(.horizontal, isRailHovered ? 4 : 2)
@@ -272,15 +321,37 @@ private struct TurnJumpRailView: View {
                         .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
                 }
             }
+            .animation(.easeOut(duration: 0.18), value: model.showsJumpToLatest)
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.15)) {
                     isRailHovered = hovering
                     if !hovering {
                         hoveredItem = nil
+                        isLatestHovered = false
                     }
                 }
             }
         }
+    }
+
+    private var latestHoverBadge: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.down.to.line")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+            Text("Back to latest")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .allowsHitTesting(false)
     }
 
     private func tickColor(item: ChatRailNavItem, isActive: Bool, isHovered: Bool) -> Color {
