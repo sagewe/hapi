@@ -80,8 +80,12 @@ struct ChatTranscriptView: View {
         }
         .overlay(alignment: .trailing) {
             if !model.railNavItems.isEmpty {
-                TurnJumpRailView(model: model)
+                TurnJumpRailView(model: model, onOpenJumpSheet: onOpenJumpSheet)
+                    #if targetEnvironment(macCatalyst)
                     .padding(.trailing, 10)
+                    #else
+                    .padding(.trailing, 4)
+                    #endif
                     .padding(.vertical, 48)
             }
         }
@@ -145,8 +149,15 @@ struct ChatTranscriptView: View {
 
 private struct TurnJumpRailView: View {
     let model: ChatModel
+    var onOpenJumpSheet: (() -> Void)? = nil
 
     @State private var hoveredID: String?
+    #if !targetEnvironment(macCatalyst)
+    @State private var isScrubbing = false
+    @State private var isRecentlyActive = false
+    @State private var fadeTask: Task<Void, Never>?
+    @State private var didTriggerOutlineDuringDrag = false
+    #endif
 
     private var items: [ChatRailNavItem] {
         if !model.userTurnItems.isEmpty {
@@ -173,7 +184,11 @@ private struct TurnJumpRailView: View {
     }
 
     private var visibleSlice: ArraySlice<ChatRailNavItem> {
+        #if targetEnvironment(macCatalyst)
         let maxVisible = 64
+        #else
+        let maxVisible = 42
+        #endif
         guard items.count > maxVisible else { return items[...] }
         let half = maxVisible / 2
         let start = max(0, min(activeIndex - half, items.count - maxVisible))
@@ -202,6 +217,7 @@ private struct TurnJumpRailView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .trailing)))
             }
 
+            #if targetEnvironment(macCatalyst)
             VStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
                     let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
@@ -213,7 +229,7 @@ private struct TurnJumpRailView: View {
                             RoundedRectangle(cornerRadius: 1.2, style: .continuous)
                                 .fill(tickColor(index: idx, hoveredIndex: hoveredSliceIndex, isActive: isActive))
                                 .frame(
-                                    width: tickWidth(index: idx, hoveredIndex: hoveredSliceIndex),
+                                    width: tickWidth(index: idx, hoveredIndex: hoveredSliceIndex, isActive: isActive),
                                     height: 2.5
                                 )
                         }
@@ -239,11 +255,127 @@ private struct TurnJumpRailView: View {
                     }
                 }
             }
+            #else
+            VStack(alignment: .trailing, spacing: 6) {
+                if let onOpenJumpSheet, isScrubbing || isRecentlyActive || model.showsJumpToLatest {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onOpenJumpSheet()
+                    } label: {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.6)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+
+                VStack(alignment: .trailing, spacing: 0) {
+                    ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
+                        let isActive = items.indices.contains(activeIndex) && items[activeIndex].id == item.id
+                        HStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            RoundedRectangle(cornerRadius: 1.2, style: .continuous)
+                                .fill(tickColor(index: idx, hoveredIndex: hoveredSliceIndex, isActive: isActive))
+                                .frame(
+                                    width: tickWidth(index: idx, hoveredIndex: hoveredSliceIndex, isActive: isActive),
+                                    height: 2.5
+                                )
+                        }
+                        .frame(width: 24, height: rowHeight)
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { value in
+                            guard !slice.isEmpty else { return }
+                            if !didTriggerOutlineDuringDrag,
+                               let onOpenJumpSheet,
+                               value.translation.width < -38,
+                               abs(value.translation.height) < 32 {
+                                didTriggerOutlineDuringDrag = true
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                withAnimation(.easeOut(duration: 0.12)) {
+                                    hoveredID = nil
+                                    isScrubbing = false
+                                }
+                                onOpenJumpSheet()
+                                return
+                            }
+                            guard !didTriggerOutlineDuringDrag else { return }
+                            fadeTask?.cancel()
+                            if !isScrubbing {
+                                isScrubbing = true
+                                isRecentlyActive = true
+                            }
+                            let rawIndex = Int(floor(value.location.y / rowHeight))
+                            let clampedIndex = max(0, min(slice.count - 1, rawIndex))
+                            let targetID = slice[clampedIndex].id
+                            if hoveredID != targetID {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                withAnimation(.interactiveSpring(response: 0.16, dampingFraction: 0.82)) {
+                                    hoveredID = targetID
+                                }
+                            }
+                        }
+                        .onEnded { value in
+                            defer { didTriggerOutlineDuringDrag = false }
+                            guard !didTriggerOutlineDuringDrag, !slice.isEmpty else { return }
+                            let rawIndex = Int(floor(value.location.y / rowHeight))
+                            let clampedIndex = max(0, min(slice.count - 1, rawIndex))
+                            let targetID = hoveredID ?? slice[clampedIndex].id
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            model.jumpToBlock(id: targetID)
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                hoveredID = nil
+                                isScrubbing = false
+                            }
+                            wakeRailBriefly()
+                        }
+                )
+            }
+            .opacity(isScrubbing || isRecentlyActive ? 1.0 : 0.52)
+            .animation(.easeOut(duration: 0.2), value: isRecentlyActive)
+            .onChange(of: activeIndex) { _, _ in
+                wakeRailBriefly()
+            }
+            .onChange(of: model.showsJumpToLatest) { _, _ in
+                wakeRailBriefly()
+            }
+            #endif
         }
     }
 
-    private func tickWidth(index: Int, hoveredIndex: Int?) -> CGFloat {
-        guard let hoveredIndex else { return 9 }
+    #if !targetEnvironment(macCatalyst)
+    private func wakeRailBriefly() {
+        fadeTask?.cancel()
+        isRecentlyActive = true
+        fadeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1_800))
+            guard !Task.isCancelled, !isScrubbing else { return }
+            isRecentlyActive = false
+        }
+    }
+    #endif
+
+    private func tickWidth(index: Int, hoveredIndex: Int?, isActive: Bool) -> CGFloat {
+        guard let hoveredIndex else {
+            #if targetEnvironment(macCatalyst)
+            return 9
+            #else
+            if isRecentlyActive {
+                return isActive ? 11 : 8
+            }
+            return isActive ? 9 : 6
+            #endif
+        }
         let distance = abs(index - hoveredIndex)
         switch distance {
         case 0: return 22
@@ -282,7 +414,11 @@ private struct TurnJumpRailView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        #if targetEnvironment(macCatalyst)
         .frame(width: 272, alignment: .leading)
+        #else
+        .frame(width: 224, alignment: .leading)
+        #endif
         .background(
             Color(uiColor: .secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
