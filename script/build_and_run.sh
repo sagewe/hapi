@@ -3,7 +3,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mode="${1:-run}"
 derived="${HAPI_MAC_DERIVED_DATA:-$HOME/Library/Developer/Xcode/DerivedData/HapiCatalyst}"
-installed="$HOME/Applications/HAPI Catalyst.app"
+installed="$HOME/Applications/HAPI.app"
+legacy_installed="$HOME/Applications/HAPI Catalyst.app"
 config="${HAPI_MAC_CONFIGURATION:-Release}"
 if [[ "$mode" == "--debug" ]]; then
   config="Debug"
@@ -24,6 +25,12 @@ if [[ -e "$installed" ]]; then
   [[ "$bundle_id" == com.sagewe.hapi ]] || { echo 'Installation path belongs to another app' >&2; exit 1; }
 fi
 pkill -x Hapi >/dev/null 2>&1 || true
+if [[ -e "$legacy_installed" ]]; then
+  legacy_bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$legacy_installed/Contents/Info.plist" 2>/dev/null || true)
+  if [[ "$legacy_bundle_id" == com.sagewe.hapi ]]; then
+    rm -rf "$legacy_installed"
+  fi
+fi
 rm -rf "$installed"
 mkdir -p "$HOME/Applications"
 /usr/bin/ditto "$built" "$installed"
