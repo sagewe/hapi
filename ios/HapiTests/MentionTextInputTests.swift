@@ -131,49 +131,63 @@ final class MentionTextInputTests: XCTestCase {
     }
 
     #if !targetEnvironment(macCatalyst)
-    func testHoldToDictateGestureAllowsHoldWhenUnfocusedOrEmptyAndYieldsWhileEditingText() {
+    func testStationaryHoldFiresWithoutUpwardDragAndShortTapFocusesEditor() async throws {
         let state = State()
-        var disabledInput = ComposerTextView(
+        var beganPoints: [CGPoint] = []
+        var changedPoints: [CGPoint] = []
+        var endedCount = 0
+
+        let input = ComposerTextView(
             text: Binding(get: { state.text }, set: { state.text = $0 }),
             selection: Binding(get: { state.selection }, set: { state.selection = $0 }),
             isFocused: Binding(get: { state.focused }, set: { state.focused = $0 }),
             isComposing: Binding(get: { state.composing }, set: { state.composing = $0 }),
             font: .systemFont(ofSize: 16),
             accessibilityLabel: "Hold to dictate…",
-            holdToDictateEnabled: false
+            holdToDictateEnabled: true,
+            onHoldBegan: { pt, _ in beganPoints.append(pt) },
+            onHoldChanged: { pt, _ in changedPoints.append(pt) },
+            onHoldEnded: { endedCount += 1 }
         )
-        let coordinator = disabledInput.makeCoordinator()
+        let coordinator = input.makeCoordinator()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
-        let editor = ComposerTextView.NativeTextView(frame: CGRect(x: 14, y: 800, width: 300, height: 22))
-        window.addSubview(editor)
+        let textView = ComposerTextView.NativeTextView(frame: CGRect(x: 0, y: 0, width: 300, height: 24))
+        textView.delegate = coordinator
+        textView.ownerCoordinator = coordinator
+        let host = ComposerTextView.ComposerHostView(textView: textView, coordinator: coordinator)
+        host.frame = CGRect(x: 14, y: 780, width: 300, height: 24)
+        coordinator.hostView = host
+        window.addSubview(host)
         window.makeKeyAndVisible()
+        host.layoutIfNeeded()
+        input.synchronize(textView, coordinator: coordinator)
 
-        let holdGesture = UILongPressGestureRecognizer()
-        editor.addGestureRecognizer(holdGesture)
-        coordinator.holdToDictateGesture = holdGesture
+        // Expanded hit-test routes unfocused touches to `touchOverlay`, NOT `NativeTextView`.
+        XCTAssertTrue(host.hitTest(CGPoint(x: -10, y: -8), with: nil) === host.touchOverlay)
+        XCTAssertNil(host.hitTest(CGPoint(x: -20, y: -8), with: nil))
 
-        // Expanded hit-test area includes composer padding around the text line.
-        XCTAssertTrue(editor.point(inside: CGPoint(x: -10, y: -8), with: nil))
-        XCTAssertFalse(editor.point(inside: CGPoint(x: -20, y: -8), with: nil))
+        // 1) Pure stationary press (zero movement!) must fire `onHoldBegan` after ~240ms.
+        let pressPoint = CGPoint(x: 180, y: 792)
+        host.touchOverlay.beginTracking(windowPoint: pressPoint)
+        try await Task.sleep(nanoseconds: 310_000_000)
+        XCTAssertEqual(beganPoints, [pressPoint], "Stationary hold must engage without pulling up")
+        XCTAssertFalse(state.focused)
 
-        // Disabled -> never begins.
-        XCTAssertFalse(coordinator.gestureRecognizerShouldBegin(holdGesture))
+        let dragPoint = CGPoint(x: 90, y: 650)
+        host.touchOverlay.updateTracking(windowPoint: dragPoint)
+        XCTAssertEqual(changedPoints, [dragPoint])
 
-        // Enabled + unfocused (empty or with draft) -> begins Hold-to-Dictate.
-        disabledInput.holdToDictateEnabled = true
-        disabledInput.synchronize(editor, coordinator: coordinator)
-        XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
-        editor.text = "draft"
-        XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
+        host.touchOverlay.endTracking(tapPointInTextView: CGPoint(x: 100, y: 12))
+        XCTAssertEqual(endedCount, 1)
+        XCTAssertFalse(state.focused)
 
-        // Focused + non-empty text -> yields to native cursor loupe / word selection.
-        _ = editor.becomeFirstResponder()
-        if editor.isFirstResponder {
-            XCTAssertFalse(coordinator.gestureRecognizerShouldBegin(holdGesture))
-            // Focused + empty box -> still allows Hold-to-Dictate.
-            editor.text = ""
-            XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
-        }
+        // 2) Short tap (< 240ms) must focus editor without engaging voice hold.
+        host.touchOverlay.beginTracking(windowPoint: pressPoint)
+        try await Task.sleep(nanoseconds: 40_000_000)
+        host.touchOverlay.endTracking(tapPointInTextView: CGPoint(x: 100, y: 12))
+        XCTAssertEqual(beganPoints.count, 1, "Short tap must not trigger voice hold")
+        XCTAssertTrue(state.focused)
+        XCTAssertTrue(host.touchOverlay.isHidden)
     }
     #endif
 }
