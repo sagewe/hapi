@@ -12,6 +12,33 @@ extension APIClient {
         try await request(.get, "/api/voice/transcription/providers")
     }
 
+    /// `GET /api/voice/asr-config` — checks whether Home Model Gateway
+    /// streaming ASR (`WS /api/voice/asr-ws`) is configured on the hub.
+    public func voiceAsrConfig() async throws -> VoiceAsrConfigResponse {
+        try await request(.get, "/api/voice/asr-config")
+    }
+
+    /// Builds `wss://.../api/voice/asr-ws?sample_rate=...` from `baseURL`
+    /// so TLS is preserved behind reverse proxies / `tunwg` relays.
+    public func voiceAsrWebSocketURL(sampleRate: Int = 16_000, model: String? = nil) -> URL? {
+        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = (components.scheme?.lowercased() == "https") ? "wss" : "ws"
+        let trimmedBasePath = components.path.replacingOccurrences(
+            of: #"/+$"#,
+            with: "",
+            options: .regularExpression
+        )
+        components.path = "\(trimmedBasePath)/api/voice/asr-ws"
+        var items = [URLQueryItem(name: "sample_rate", value: String(sampleRate))]
+        if let model, !model.isEmpty {
+            items.append(URLQueryItem(name: "model", value: model))
+        }
+        components.queryItems = items
+        return components.url
+    }
+
     /// `POST /api/voice/transcription` — the one `multipart/form-data`
     /// endpoint: `file` (≤ 25 MB audio), `provider`, `mode`, optional
     /// `language` (BCP-47-ish). Field order mirrors the Android client

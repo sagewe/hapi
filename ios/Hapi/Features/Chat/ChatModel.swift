@@ -246,6 +246,10 @@ final class ChatModel {
     /// machine (HapiKit) over the app-side `AVAudioRecorder` seam.
     /// Transcripts append to the composer; failures surface as notices.
     let dictation: DictationController
+    #if !targetEnvironment(macCatalyst)
+    /// WeChat-style Hold-to-Dictate ("按住转文字") streaming controller on iOS.
+    let holdDictation: HoldToDictateController
+    #endif
     @ObservationIgnored private let pipeline = ChatPipeline()
     @ObservationIgnored let mediaLoader: GeneratedMediaLoader
     @ObservationIgnored let presentationState = ChatPresentationState()
@@ -289,6 +293,13 @@ final class ChatModel {
             api: session.api,
             recorder: AVAudioRecorderDictation()
         )
+        #if !targetEnvironment(macCatalyst)
+        self.holdDictation = HoldToDictateController(
+            api: session.api,
+            streamer: HubStreamingAsrClient(api: session.api),
+            recorder: PCMStreamingAudioRecorder()
+        )
+        #endif
         self.mediaLoader = GeneratedMediaLoader(api: session.api, sessionId: sessionId)
         self.scratchlistAttachments = ScratchlistAttachmentLoader(api: session.api, sessionId: sessionId)
         self.header = ChatHeaderUI(
@@ -323,6 +334,9 @@ final class ChatModel {
 
     func beginContentInspection() {
         dictation.cancel()
+        #if !targetEnvironment(macCatalyst)
+        holdDictation.cancelIfHolding()
+        #endif
         jumpTask?.cancel()
         jumpTask = nil
         isJumpingToLatest = false
@@ -376,6 +390,20 @@ final class ChatModel {
                 self.showNotice(message)
             }
         }
+        #if !targetEnvironment(macCatalyst)
+        holdDictation.onOutcome = { [weak self] outcome in
+            guard let self else { return }
+            switch outcome {
+            case .sendText(let text):
+                self.interactor.appendDictatedText(text)
+                self.interactor.sendMessage()
+            case .noProvider:
+                self.showNotice(String(localized: "No transcription provider configured on hub"))
+            case .error(let message):
+                self.showNotice(message)
+            }
+        }
+        #endif
         // Badge count + SSE-invalidation refetch while the chat is open
         // (the Android ChatViewModel start/stop pairing).
         hub.scratchlist.open(sessionId)
@@ -436,6 +464,9 @@ final class ChatModel {
         // stop/start, and un-sent uploads are cleaned up when the tray
         // deallocates with this model.
         dictation.cancel()
+        #if !targetEnvironment(macCatalyst)
+        holdDictation.cancelIfHolding()
+        #endif
         interactor.deactivate()
         mediaLoader.clearCachedImages()
         hub.scratchlist.release(sessionId)

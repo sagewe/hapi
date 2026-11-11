@@ -313,15 +313,48 @@ const TRANSCRIPTION_PROVIDERS: Record<TranscriptionProvider, TranscriptionProvid
 
 export const BROWSER_LOCAL_TRANSCRIPTION_PROVIDER = TRANSCRIPTION_PROVIDERS['browser-local']
 
+export interface HomeGatewayVoiceConfig {
+    origin: string
+    wsOrigin: string
+    token: string
+    model: string
+}
+
+/** Resolves Home Model Gateway (`myhome-hub`) endpoints when HOME_GATEWAY_URL + HOME_GATEWAY_TOKEN are configured. */
+export function resolveHomeGatewayConfig(env: VoiceBackendEnv): HomeGatewayVoiceConfig | null {
+    const rawUrl = env.HOME_GATEWAY_URL?.trim()
+    const token = env.HOME_GATEWAY_TOKEN?.trim()
+    if (!rawUrl || !token) return null
+    try {
+        const parsed = new URL(rawUrl)
+        const origin = parsed.origin
+        const wsOrigin = `${parsed.protocol === 'https:' ? 'wss:' : 'ws:'}//${parsed.host}`
+        const model = env.TRANSCRIPTION_MODEL?.trim() || 'hybrid-qwen3'
+        return { origin, wsOrigin, token, model }
+    } catch {
+        return null
+    }
+}
+
 /** Transcription providers whose startup environment is complete. */
 export function listConfiguredTranscriptionProviders(env: VoiceBackendEnv): TranscriptionProviderInfo[] {
-    const providers: TranscriptionProvider[] = []
-    if (env.OPENAI_API_KEY?.trim()) providers.push('openai')
-    if (env.ELEVENLABS_API_KEY?.trim()) providers.push('elevenlabs')
-    if (env.DEEPGRAM_API_KEY?.trim()) providers.push('deepgram')
-    if (env.GROQ_API_KEY?.trim()) providers.push('groq')
-    if (env.TRANSCRIPTION_BASE_URL?.trim() && env.TRANSCRIPTION_MODEL?.trim()) providers.push('openai-compatible')
-    return providers.map((provider) => TRANSCRIPTION_PROVIDERS[provider])
+    const out: TranscriptionProviderInfo[] = []
+    const homeGw = resolveHomeGatewayConfig(env)
+    if (homeGw) {
+        out.push({
+            id: 'openai-compatible',
+            label: 'Home Model Gateway',
+            modes: ['standard']
+        })
+    }
+    if (env.OPENAI_API_KEY?.trim()) out.push(TRANSCRIPTION_PROVIDERS.openai)
+    if (env.ELEVENLABS_API_KEY?.trim()) out.push(TRANSCRIPTION_PROVIDERS.elevenlabs)
+    if (env.DEEPGRAM_API_KEY?.trim()) out.push(TRANSCRIPTION_PROVIDERS.deepgram)
+    if (env.GROQ_API_KEY?.trim()) out.push(TRANSCRIPTION_PROVIDERS.groq)
+    if (!homeGw && env.TRANSCRIPTION_BASE_URL?.trim() && env.TRANSCRIPTION_MODEL?.trim()) {
+        out.push(TRANSCRIPTION_PROVIDERS['openai-compatible'])
+    }
+    return out
 }
 
 export const QWEN_REALTIME_MODEL = 'qwen3.5-omni-flash-realtime'

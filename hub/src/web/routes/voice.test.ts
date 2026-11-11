@@ -1105,3 +1105,81 @@ describe('transcription credentials onboarding', () => {
         expect(put.status).toBe(409)
     })
 })
+
+describe('Home Model Gateway voice integration', () => {
+    const saved = {
+        homeUrl: process.env.HOME_GATEWAY_URL,
+        homeToken: process.env.HOME_GATEWAY_TOKEN,
+        openai: process.env.OPENAI_API_KEY,
+        model: process.env.TRANSCRIPTION_MODEL,
+    }
+
+    afterEach(() => {
+        for (const [key, value] of Object.entries({
+            HOME_GATEWAY_URL: saved.homeUrl,
+            HOME_GATEWAY_TOKEN: saved.homeToken,
+            OPENAI_API_KEY: saved.openai,
+            TRANSCRIPTION_MODEL: saved.model,
+        })) {
+            if (value === undefined) delete process.env[key]
+            else process.env[key] = value
+        }
+    })
+
+    test('prioritizes Home Model Gateway first, exposes asr-config, and routes standard transcription to /v1/ai/audio/transcriptions?source=hapi-http', async () => {
+        process.env.HOME_GATEWAY_URL = 'https://myhome.robin-larch.ts.net'
+        process.env.HOME_GATEWAY_TOKEN = 'home-secret-token'
+        process.env.OPENAI_API_KEY = 'openai-backup-key'
+        delete process.env.TRANSCRIPTION_MODEL
+
+        const app = createApp()
+        const headers = await authHeaders()
+
+        const providersRes = await app.request('/api/voice/transcription/providers', { headers })
+        expect(providersRes.status).toBe(200)
+        const providersJson = await providersRes.json() as { providers: Array<{ id: string; label: string; modes: string[] }> }
+        expect(providersJson.providers[0]).toEqual({
+            id: 'openai-compatible',
+            label: 'Home Model Gateway',
+            modes: ['standard']
+        })
+        expect(providersJson.providers[1]?.id).toBe('openai')
+
+        const asrConfigRes = await app.request('/api/voice/asr-config', { headers })
+        expect(asrConfigRes.status).toBe(200)
+        const asrConfig = await asrConfigRes.json() as { available: boolean; wsUrl: string; sampleRate: number; model: string }
+        expect(asrConfig.available).toBe(true)
+        expect(asrConfig.sampleRate).toBe(16000)
+        expect(asrConfig.model).toBe('hybrid-qwen3')
+        expect(asrConfig.wsUrl).toContain('/api/voice/asr-ws')
+
+        let capturedUrl = ''
+        let capturedAuth = ''
+        const originalFetch = global.fetch
+        // @ts-expect-error test override
+        global.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+            capturedUrl = String(input)
+            capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? ''
+            return new Response(JSON.stringify({ text: '把 Happy 接到家庭模型网关', language: 'zh' }), { status: 200 })
+        })
+
+        try {
+            const form = new FormData()
+            form.set('file', new File([new Uint8Array([1, 2, 3, 4])], 'speech.m4a', { type: 'audio/mp4' }))
+            form.set('provider', 'openai-compatible')
+            form.set('mode', 'standard')
+
+            const txRes = await app.request('/api/voice/transcription', {
+                method: 'POST',
+                headers,
+                body: form
+            })
+            expect(txRes.status).toBe(200)
+            expect(await txRes.json()).toEqual({ text: '把 Happy 接到家庭模型网关', language: 'zh' })
+            expect(capturedUrl).toBe('https://myhome.robin-larch.ts.net/v1/ai/audio/transcriptions?source=hapi-http')
+            expect(capturedAuth).toBe('Bearer home-secret-token')
+        } finally {
+            global.fetch = originalFetch
+        }
+    })
+})

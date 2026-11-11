@@ -7,9 +7,10 @@ import { existsSync } from 'node:fs'
 import { serveStatic } from 'hono/bun'
 import { getConfiguration } from '../configuration'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
-import { buildGeminiLiveSetupMessage, QWEN_REALTIME_MODEL } from '@hapi/protocol/voice'
+import { buildGeminiLiveSetupMessage, QWEN_REALTIME_MODEL, resolveHomeGatewayConfig } from '@hapi/protocol/voice'
 import { getProviderEnvironment } from '../config/providerCredentials'
 import { readTitleProviderConfig } from '../sync/titleSuggestion'
+import { createHomeAsrProxyWebSocketHandler } from './homeAsrProxyHandler'
 import { createQwenProxyWebSocketHandler } from './qwenProxyHandler'
 import { decodeVoiceSystemPromptParam } from '../voiceSystemPromptParam'
 import type { SyncEngine } from '../sync/syncEngine'
@@ -449,10 +450,11 @@ export async function startWebServer(options: {
     const configuration = getConfiguration()
     const socketHandler = options.socketEngine.handler()
 
-    // Wrap socket.io websocket handler to also support Gemini/Qwen proxy connections
+    // Wrap socket.io websocket handler to also support Gemini/Qwen/Home ASR proxy connections
     const originalWsHandler = socketHandler.websocket
     const geminiProxyHandler = createGeminiProxyWebSocketHandler()
     const qwenProxyHandler = createQwenProxyWebSocketHandler()
+    const homeAsrProxyHandler = createHomeAsrProxyWebSocketHandler()
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const server = (Bun.serve as any)({
@@ -469,31 +471,37 @@ export async function startWebServer(options: {
             perMessageDeflate: true,
             open(ws: unknown) {
                 applyDefaultWsCompression(ws as ServerWebSocket<unknown>)
-                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean }>
+                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean; _homeAsrProxy?: boolean }>
                 if (wsAny.data?._geminiProxy) {
                     geminiProxyHandler.open(wsAny)
                 } else if (wsAny.data?._qwenProxy) {
                     qwenProxyHandler.open(wsAny)
+                } else if (wsAny.data?._homeAsrProxy) {
+                    homeAsrProxyHandler.open(wsAny)
                 } else {
                     originalWsHandler.open?.(ws as never)
                 }
             },
             message(ws: unknown, message: unknown) {
-                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean }>
+                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean; _homeAsrProxy?: boolean }>
                 if (wsAny.data?._geminiProxy) {
                     geminiProxyHandler.message(wsAny, message as string)
                 } else if (wsAny.data?._qwenProxy) {
                     qwenProxyHandler.message(wsAny, message as string)
+                } else if (wsAny.data?._homeAsrProxy) {
+                    homeAsrProxyHandler.message(wsAny, message as string | ArrayBuffer | Uint8Array)
                 } else {
                     originalWsHandler.message?.(ws as never, message as never)
                 }
             },
             close(ws: unknown, code: number, reason: string) {
-                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean }>
+                const wsAny = ws as ServerWebSocket<{ _qwenProxy?: boolean; _geminiProxy?: boolean; _homeAsrProxy?: boolean }>
                 if (wsAny.data?._geminiProxy) {
                     geminiProxyHandler.close(wsAny, code, reason)
                 } else if (wsAny.data?._qwenProxy) {
                     qwenProxyHandler.close(wsAny, code, reason)
+                } else if (wsAny.data?._homeAsrProxy) {
+                    homeAsrProxyHandler.close(wsAny, code, reason)
                 } else {
                     originalWsHandler.close?.(ws as never, code as never, reason as never)
                 }
@@ -505,10 +513,18 @@ export async function startWebServer(options: {
                 return socketHandler.fetch(req, server as never)
             }
 
-            // Voice WebSocket proxies — require JWT auth via query param
-            // (browser WebSocket API cannot set custom headers)
-            if (url.pathname === '/api/voice/gemini-ws' || url.pathname === '/api/voice/qwen-ws') {
-                const token = url.searchParams.get('token')
+            // Voice WebSocket proxies — require JWT auth via Bearer header or query param
+            // (browser WebSocket API cannot set custom headers; native iOS clients can)
+            if (
+                url.pathname === '/api/voice/gemini-ws'
+                || url.pathname === '/api/voice/qwen-ws'
+                || url.pathname === '/api/voice/asr-ws'
+            ) {
+                const authHeader = req.headers.get('authorization') ?? ''
+                const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+                    ? authHeader.slice(7).trim()
+                    : ''
+                const token = bearerToken || url.searchParams.get('token')?.trim() || ''
                 if (!token) {
                     return new Response('Missing authorization token', { status: 401 })
                 }
@@ -517,6 +533,33 @@ export async function startWebServer(options: {
                 } catch {
                     return new Response('Invalid token', { status: 401 })
                 }
+            }
+
+            // Home Model Gateway streaming ASR WebSocket proxy
+            if (url.pathname === '/api/voice/asr-ws') {
+                const env = getProviderEnvironment()
+                const homeGw = resolveHomeGatewayConfig(env)
+                if (!homeGw) {
+                    return new Response('Home Model Gateway not configured', { status: 400 })
+                }
+                const parsedRate = Number.parseInt(url.searchParams.get('sample_rate') ?? '16000', 10)
+                const sampleRate = Number.isFinite(parsedRate) && parsedRate >= 8000 && parsedRate <= 48000
+                    ? parsedRate
+                    : 16000
+                const model = url.searchParams.get('model')?.trim() || undefined
+                const upgraded = (server as unknown as { upgrade: (req: Request, opts: unknown) => boolean }).upgrade(req, {
+                    data: {
+                        _homeAsrProxy: true,
+                        wsOrigin: homeGw.wsOrigin,
+                        token: homeGw.token,
+                        sampleRate,
+                        model
+                    }
+                })
+                if (!upgraded) {
+                    return new Response('WebSocket upgrade failed', { status: 500 })
+                }
+                return undefined as unknown as Response
             }
 
             // Gemini Live WebSocket proxy

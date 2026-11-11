@@ -42,3 +42,60 @@ public struct TranscriptionProviderInfo: Codable, Equatable, Sendable {
         self.modes = modes
     }
 }
+
+/// Body of `GET /api/voice/asr-config` — streaming ASR capability backed by
+/// Home Model Gateway (`WS /api/voice/asr-ws`).
+public struct VoiceAsrConfigResponse: Codable, Equatable, Sendable {
+    public var available: Bool
+    public var wsUrl: String?
+    public var sampleRate: Int?
+    public var model: String?
+
+    public init(
+        available: Bool,
+        wsUrl: String? = nil,
+        sampleRate: Int? = nil,
+        model: String? = nil
+    ) {
+        self.available = available
+        self.wsUrl = wsUrl
+        self.sampleRate = sampleRate
+        self.model = model
+    }
+}
+
+/// Server-to-client JSON frame over `WS /api/voice/asr-ws`.
+public struct VoiceAsrStreamEvent: Codable, Equatable, Sendable {
+    /// `ready | partial | final | error`
+    public var type: String
+    public var text: String?
+    public var rawText: String?
+    public var sentenceEnd: Bool?
+    public var model: String?
+    public var message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case rawText = "raw_text"
+        case sentenceEnd = "sentence_end"
+        case model
+        case message
+    }
+
+    public init(
+        type: String,
+        text: String? = nil,
+        rawText: String? = nil,
+        sentenceEnd: Bool? = nil,
+        model: String? = nil,
+        message: String? = nil
+    ) {
+        self.type = type
+        self.text = text
+        self.rawText = rawText
+        self.sentenceEnd = sentenceEnd
+        self.model = model
+        self.message = message
+    }
+}

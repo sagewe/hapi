@@ -67,6 +67,13 @@ struct ChatView: View {
         #endif
     }
 
+    #if !targetEnvironment(macCatalyst)
+    private var isVoiceEditing: Bool {
+        if case .editing = model.holdDictation.phase { return true }
+        return false
+    }
+    #endif
+
     init(
         session: HubSession,
         sessionId: String,
@@ -124,6 +131,7 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 QueuedMessagesBarView(interactor: model.interactor)
+                #if targetEnvironment(macCatalyst)
                 ChatComposerView(
                     interactor: model.interactor,
                     dictation: model.dictation,
@@ -135,8 +143,35 @@ struct ChatView: View {
                     scratchlistStartsEditing = editing
                     scratchlistOpen = true
                 }
+                #else
+                ChatComposerView(
+                    interactor: model.interactor,
+                    dictation: model.dictation,
+                    holdDictation: model.holdDictation,
+                    api: session.api,
+                    machineId: currentMachineId,
+                    hugsBottomEdge: isFoldedOuterScreen
+                ) { entry, editing in
+                    scratchlistEntry = entry
+                    scratchlistStartsEditing = editing
+                    scratchlistOpen = true
+                }
+                #endif
             }
         }
+        #if !targetEnvironment(macCatalyst)
+        .overlay {
+            WeChatVoiceOverlayHost(
+                controller: model.holdDictation,
+                canSendAndSteer: model.interactor.composer.canSendAndSteer,
+                onSteerSend: { text in
+                    model.interactor.appendDictatedText(text)
+                    model.interactor.sendMessage(steer: true)
+                }
+            )
+        }
+        .toolbar(isVoiceEditing ? .hidden : .visible, for: .navigationBar)
+        #endif
         .modifier(FoldedTitleMinimization(isActive: isFoldedOuterScreen))
         .modifier(FoldedSystemTitle(
             isActive: usesSystemTitle,

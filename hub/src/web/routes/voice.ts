@@ -14,6 +14,7 @@ import {
     buildVoiceAgentConfig,
     listConfiguredTranscriptionProviders,
     listConfiguredVoiceBackends,
+    resolveHomeGatewayConfig,
     resolveHubVoiceBackend
 } from '@hapi/protocol/voice'
 import type { TranscriptionProvider, VoiceBackendType } from '@hapi/protocol/voice'
@@ -83,6 +84,7 @@ function getTranscriptionConfig(provider: TranscriptionProvider): {
     apiKey?: string
     baseUrl: string
     model: string
+    querySuffix?: string
 } | null {
     const env = getProviderEnvironment()
     if (!listConfiguredTranscriptionProviders(env).some((candidate) => candidate.id === provider)) return null
@@ -96,6 +98,15 @@ function getTranscriptionConfig(provider: TranscriptionProvider): {
         case 'groq':
             return { apiKey: env.GROQ_API_KEY!.trim(), baseUrl: 'https://api.groq.com/openai/v1', model: GROQ_TRANSCRIPTION_MODEL }
         case 'openai-compatible': {
+            const homeGw = resolveHomeGatewayConfig(env)
+            if (homeGw) {
+                return {
+                    apiKey: homeGw.token,
+                    baseUrl: `${homeGw.origin}/v1/ai`,
+                    model: homeGw.model,
+                    querySuffix: '?source=hapi-http'
+                }
+            }
             const baseUrl = env.TRANSCRIPTION_BASE_URL?.trim()
             const model = env.TRANSCRIPTION_MODEL?.trim()
             return baseUrl && model
@@ -141,7 +152,7 @@ async function transcribeStandard(
         }
         url = provider === 'elevenlabs'
             ? `${config.baseUrl}/speech-to-text`
-            : `${trimTrailingSlash(config.baseUrl)}/audio/transcriptions`
+            : `${trimTrailingSlash(config.baseUrl)}/audio/transcriptions${config.querySuffix ?? ''}`
         headers = provider === 'elevenlabs'
             ? { 'xi-api-key': config.apiKey ?? '' }
             : (config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
@@ -524,6 +535,18 @@ export function createVoiceRoutes(options: { dataDir?: string } = {}): Hono<WebA
 
     app.get('/voice/transcription/providers', (c) => {
         return c.json({ providers: listConfiguredTranscriptionProviders(getProviderEnvironment()) })
+    })
+
+    app.get('/voice/asr-config', (c) => {
+        const homeGw = resolveHomeGatewayConfig(getProviderEnvironment())
+        const requestOrigin = new URL(c.req.url).origin
+        const publicUrl = process.env.HAPI_PUBLIC_URL || requestOrigin
+        return c.json({
+            available: Boolean(homeGw),
+            wsUrl: homeGw ? buildVoiceWsUrl(publicUrl, '/api/voice/asr-ws') : null,
+            sampleRate: 16000,
+            model: homeGw?.model ?? null
+        })
     })
 
     app.get('/voice/transcription/credentials', async (c) => {

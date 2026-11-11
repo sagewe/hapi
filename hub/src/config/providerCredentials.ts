@@ -11,6 +11,8 @@ import { getSettingsFile, readSettings, readSettingsCached, updateSettings, type
 import { VOICE_MAX_DURATION_DEFAULT_SECONDS, resolveVoiceMaxDurationSeconds } from '@hapi/protocol/voice'
 
 export const PROVIDER_CREDENTIAL_ENV_KEYS = [
+    'HOME_GATEWAY_URL',
+    'HOME_GATEWAY_TOKEN',
     'OPENAI_API_KEY',
     'ELEVENLABS_API_KEY',
     'DEEPGRAM_API_KEY',
