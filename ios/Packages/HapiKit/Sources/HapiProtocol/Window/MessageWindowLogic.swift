@@ -49,6 +49,16 @@ public enum MessageWindowLogic {
         return MessagePosition(at: message.positionAt, seq: seq)
     }
 
+    /// Swap one row's content in place (the gap-recovery sweep's by-id
+    /// refresh): merged by id, re-deriving the seq bounds and bumping the
+    /// messages version like every other messages change.
+    public static func mergeRefreshedRow(
+        _ previous: MessageWindowState,
+        _ row: WindowMessage
+    ) -> MessageWindowState {
+        settingMessages(previous, MessageMerge.mergeMessages(previous.messages, [row]))
+    }
+
     public enum PositionEnd: Sendable {
         case oldest
         case newest
@@ -290,7 +300,8 @@ public enum MessageWindowLogic {
         responseMessages: [WindowMessage],
         page: MessagesPage,
         replaceServerRows: Bool,
-        requestBaseline: [String: WindowMessage]
+        requestBaseline: [String: WindowMessage],
+        trimLimit: Int? = nil
     ) -> MessageWindowState {
         let retainedResponseMessages = responseMessages.filter { shouldRetainWindowMessage($0) }
         let responseOldest = pagePosition(at: page.nextBeforeAt, seq: page.nextBeforeSeq)
@@ -335,7 +346,7 @@ public enum MessageWindowLogic {
         let incoming = MessageMerge.mergeMessages(authoritative, concurrentServerRows)
         let trim = trimPreservingQueued(
             incoming,
-            regularLimit: previous.visibleRetentionLimit,
+            regularLimit: trimLimit ?? previous.visibleRetentionLimit,
             mode: .append
         )
         let snapshotHead = pagePosition(at: page.snapshotHeadAt, seq: page.snapshotHeadSeq)
@@ -349,8 +360,15 @@ public enum MessageWindowLogic {
             oldest = previous.oldestPosition
         } else if replaceServerRows {
             oldest = responseOldest
+        } else if responseOldest == nil {
+            oldest = previous.oldestPosition
+        } else if previous.oldestPosition == nil {
+            oldest = responseOldest
         } else {
-            oldest = responseOldest ?? previous.oldestPosition
+            // An upsert keeps rows older than the response page, so the
+            // older-paging cursor must stay on whichever side is older
+            // instead of jumping to the response page's own bound.
+            oldest = responseOldest! <= previous.oldestPosition! ? responseOldest : previous.oldestPosition
         }
         var next = settingMessages(previous, trim.kept)
         next.readThroughRevision = max(previous.readThroughRevision ?? 0, page.readThroughRevision ?? 0, trim.kept.compactMap(\.contentRevision).max() ?? 0)
