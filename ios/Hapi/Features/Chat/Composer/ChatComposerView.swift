@@ -55,7 +55,7 @@ struct ChatComposerView: View {
     @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 28
     #else
     @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 18
-    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 32
+    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 34
     #endif
 
     init(
@@ -269,14 +269,24 @@ struct ChatComposerView: View {
                     HStack(spacing: 0) {
                         composerLeadingTools(hasAttachments: !attachments.isEmpty)
                         Spacer(minLength: 0)
-                        trailingActions(composer, attachments: attachments, hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil)
+                        trailingActions(
+                            composer,
+                            attachments: attachments,
+                            collapsed: false,
+                            hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil
+                        )
                     }
+                    #if targetEnvironment(macCatalyst)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 6)
+                    #else
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+                    #endif
                 }
             }
-            .modifier(ComposerCardSurface(fill: composerSurfaceColor, isFocused: textFocused))
-            .animation(.snappy, value: collapsed)
+            .modifier(ComposerCardSurface(fill: composerSurfaceColor, isFocused: textFocused, isCollapsed: collapsed))
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: collapsed)
         }
         .hapiReadingColumn()
         .padding(.top, 8)
@@ -575,11 +585,67 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("chat.add-attachment")
         .help("Attach files (click) · Hold for Photo Library")
         #else
-        Button {
-            attachDialogOpen = true
+        let hasAttachments = !interactor.attachments.items.isEmpty
+        let scheduleActive = interactor.pendingSchedule != nil
+        Menu {
+            Section {
+                Button {
+                    photosPickerOpen = true
+                } label: {
+                    Label("Photo library", systemImage: "photo.on.rectangle")
+                }
+                if CameraCaptureView.isAvailable {
+                    Button {
+                        cameraOpen = true
+                    } label: {
+                        Label("Camera", systemImage: "camera")
+                    }
+                }
+                Button {
+                    filePickerOpen = true
+                } label: {
+                    Label("Files", systemImage: "folder")
+                }
+            }
+            Section {
+                if !scratchlistMode {
+                    Button {
+                        insertTrigger("$")
+                    } label: {
+                        Label("Skills", systemImage: "sparkles")
+                    }
+                    Menu {
+                        ForEach(PendingSchedule.presets, id: \.self) { preset in
+                            Button(ScheduledSendChip.presetLabel(preset)) {
+                                interactor.setPendingSchedule(preset)
+                            }
+                        }
+                        Button("Pick a Time…", systemImage: "calendar") {
+                            schedulePickerOpen = true
+                        }
+                        if scheduleActive {
+                            Button("Don't Schedule", systemImage: "xmark") {
+                                interactor.setPendingSchedule(nil)
+                            }
+                        }
+                    } label: {
+                        Label("Schedule send", systemImage: scheduleActive ? "clock.fill" : "clock")
+                    }
+                    .disabled(hasAttachments || interactor.scratchlistBusy)
+                }
+                if interactor.scratchlist != nil {
+                    Button {
+                        interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
+                    } label: {
+                        Label("Scratchlist", systemImage: scratchlistMode ? "tray.fill" : "tray")
+                    }
+                    .disabled(interactor.isSending)
+                }
+            }
         } label: {
             toolGlyph("plus")
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
         .disabled(preparingAttachment || interactor.scratchlistBusy)
         .accessibilityLabel("Add attachment")
@@ -625,6 +691,9 @@ struct ChatComposerView: View {
         historyIndex = nil
         draftBeforeHistory = ""
         interactor.sendMessage(steer: steer)
+        #if !targetEnvironment(macCatalyst)
+        textFocused = false
+        #endif
     }
 
     private var scratchlistButton: some View {
@@ -689,13 +758,14 @@ struct ChatComposerView: View {
         activeSuggestionCount: Int,
         suggestionKey: String?
     ) -> some View {
-        HStack(spacing: 0) {
+        HStack(alignment: collapsed ? .center : .top, spacing: 0) {
             if collapsed { addAttachmentButton }
-            ZStack(alignment: .topLeading) {
+            ZStack(alignment: collapsed ? .leading : .topLeading) {
                 if interactor.composerText.isEmpty {
                     Text(composerPrompt)
                         .font(typography.bodyFont)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
@@ -789,6 +859,9 @@ struct ChatComposerView: View {
                     },
                     onPasteItems: ingest,
                     holdToDictateEnabled: !scratchlistMode && (holdDictation?.isAvailable == true),
+                    hitTestOutsets: collapsed
+                        ? UIEdgeInsets(top: 12, left: 4, bottom: 12, right: 4)
+                        : UIEdgeInsets(top: 14, left: 16, bottom: 6, right: 16),
                     onHoldBegan: { location, windowSize in
                         if let holdDictation {
                             handleHoldBegan(location, windowSize: windowSize, controller: holdDictation)
@@ -808,27 +881,37 @@ struct ChatComposerView: View {
                 )
                 #endif
             }
+            #if targetEnvironment(macCatalyst)
             .padding(.horizontal, collapsed ? 2 : 14)
             .padding(.top, collapsed ? 0 : 12)
             .padding(.bottom, collapsed ? 0 : 4)
-            #if targetEnvironment(macCatalyst)
             .contentShape(Rectangle())
             .onTapGesture {
                 if !textFocused {
                     textFocused = true
                 }
             }
+            #else
+            .padding(.horizontal, collapsed ? 6 : 16)
+            .padding(.top, collapsed ? 0 : 14)
+            .padding(.bottom, collapsed ? 0 : 6)
             #endif
             if collapsed {
                 trailingActions(
                     composer,
                     attachments: attachments,
+                    collapsed: true,
                     hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil
                 )
             }
         }
+        #if targetEnvironment(macCatalyst)
         .padding(.horizontal, collapsed ? 4 : 0)
         .padding(.vertical, collapsed ? 4 : 0)
+        #else
+        .padding(.horizontal, collapsed ? 6 : 0)
+        .padding(.vertical, collapsed ? 5 : 0)
+        #endif
     }
 
     #if !targetEnvironment(macCatalyst)
@@ -920,17 +1003,32 @@ struct ChatComposerView: View {
 
     // MARK: - Buttons
 
-    /// Always keep the bottom tool bar visible on both iOS and Mac Catalyst so
-    /// model, permission, and quota controls are reachable without focusing first.
+    /// iOS collapses to a single-row Liquid Glass capsule while unfocused with
+    /// an empty draft, and morphs into the two-row card on focus or draft input.
+    /// Mac Catalyst always keeps the desktop action bar visible.
     private func isCollapsed(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
-        false
+        #if targetEnvironment(macCatalyst)
+        return false
+        #else
+        let isRecordingLegacyDictation: Bool = {
+            if let dictation, case .recording = dictation.state { return true }
+            return false
+        }()
+        return !textFocused
+            && composer.text.isEmpty
+            && attachments.isEmpty
+            && !scratchlistMode
+            && interactor.pendingSchedule == nil
+            && interactor.scratchlistError == nil
+            && !isRecordingLegacyDictation
+        #endif
     }
 
     @ViewBuilder
     private func composerLeadingTools(hasAttachments: Bool) -> some View {
+        #if targetEnvironment(macCatalyst)
         addAttachmentButton
         if !scratchlistMode {
-            #if targetEnvironment(macCatalyst)
             Button {
                 insertTrigger("@")
             } label: {
@@ -948,7 +1046,6 @@ struct ChatComposerView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Commands")
             .help("Slash commands (/)")
-            #endif
 
             Button {
                 insertTrigger("$")
@@ -972,6 +1069,12 @@ struct ChatComposerView: View {
                 composerQuotaButton
             }
         }
+        #else
+        addAttachmentButton
+        if interactor.scratchlist != nil, scratchlistMode || interactor.scratchlistCount > 0 {
+            scratchlistButton
+        }
+        #endif
     }
 
     private var composerModelMenu: some View {
@@ -1173,6 +1276,7 @@ struct ChatComposerView: View {
     private func trailingActions(
         _ composer: ComposerState,
         attachments: [ComposerAttachmentUI],
+        collapsed: Bool = false,
         hasActiveSuggestions: Bool = false
     ) -> some View {
         #if targetEnvironment(macCatalyst)
@@ -1182,6 +1286,18 @@ struct ChatComposerView: View {
             .lineLimit(1)
             .padding(.trailing, 6)
             .allowsHitTesting(false)
+        #else
+        if !collapsed && !scratchlistMode {
+            if configModel.showsComposerModelMenu {
+                composerModelMenu
+            }
+            if configModel.showsComposerPermissionMenu {
+                composerPermissionMenu
+            }
+            if configModel.showsQuota {
+                composerQuotaButton
+            }
+        }
         #endif
         if scratchlistMode, composer.canStop {
             Button { interactor.abortSession() } label: {
@@ -1392,6 +1508,7 @@ struct ChatComposerView: View {
             Button {
                 interactor.abortSession()
             } label: {
+                #if targetEnvironment(macCatalyst)
                 actionCircle(
                     background: AnyShapeStyle(.tint),
                     foreground: AnyShapeStyle(.white)
@@ -1399,6 +1516,15 @@ struct ChatComposerView: View {
                     Image(systemName: "stop.fill")
                         .font(.system(size: primaryDiameter * 0.36))
                 }
+                #else
+                actionCircle(
+                    background: AnyShapeStyle(.primary),
+                    foreground: AnyShapeStyle(.background)
+                ) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: primaryDiameter * 0.34, weight: .bold))
+                }
+                #endif
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Stop the current turn")
@@ -1445,6 +1571,7 @@ struct ChatComposerView: View {
     }
 
     private func sendLabel(enabled: Bool) -> some View {
+        #if targetEnvironment(macCatalyst)
         actionCircle(
             background: enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary),
             foreground: enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary)
@@ -1452,6 +1579,15 @@ struct ChatComposerView: View {
             Image(systemName: "arrow.up")
                 .font(.system(size: primaryDiameter * 0.47, weight: .semibold))
         }
+        #else
+        actionCircle(
+            background: enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(Color.primary.opacity(0.10)),
+            foreground: enabled ? AnyShapeStyle(.background) : AnyShapeStyle(.secondary)
+        ) {
+            Image(systemName: "arrow.up")
+                .font(.system(size: primaryDiameter * 0.46, weight: .bold))
+        }
+        #endif
     }
 
     /// Bare secondary tool symbol; `active` recolors it for
@@ -1631,39 +1767,60 @@ private struct ComposerQuotaPopoverView: View {
 /// Glass on iOS 26 to match the glass navigation controls, otherwise the
 /// elevated surface with a hairline edge so it separates from white rows.
 private struct ComposerCardSurface: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     let fill: Color
     var isFocused: Bool = false
+    var isCollapsed: Bool = false
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         #if targetEnvironment(macCatalyst)
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         let borderColor = isFocused
             ? Color.accentColor.opacity(0.45)
             : Color(uiColor: .separator).opacity(0.45)
         let borderWidth: CGFloat = isFocused ? 1.5 : 0.75
-        #endif
         if #available(iOS 26.0, *) {
-            // A short pill mostly refracts rather than blurs, so transcript
-            // text would read through the placeholder; a partial surface
-            // keeps the glass edge while damping what shows through.
             content
                 .background(shape.fill(fill.opacity(0.7)))
                 .clipShape(shape)
                 .glassEffect(.regular, in: shape)
-                #if targetEnvironment(macCatalyst)
                 .overlay(shape.strokeBorder(borderColor, lineWidth: borderWidth))
-                #endif
         } else {
             content
                 .background(shape.fill(fill))
                 .clipShape(shape)
-                #if targetEnvironment(macCatalyst)
                 .overlay(shape.strokeBorder(borderColor, lineWidth: borderWidth))
-                #else
-                .overlay(shape.strokeBorder(Color(uiColor: .separator), lineWidth: 0.5))
-                #endif
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         }
+        #else
+        let cornerRadius: CGFloat = isCollapsed ? 25 : 24
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let isDark = colorScheme == .dark
+        let specularRim = LinearGradient(
+            colors: [
+                Color.white.opacity(isDark ? 0.22 : 0.72),
+                Color.white.opacity(isDark ? 0.06 : 0.22),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        if #available(iOS 26.0, *) {
+            content
+                .background(shape.fill(Color.white.opacity(isDark ? 0.05 : 0.36)))
+                .clipShape(shape)
+                .glassEffect(.regular, in: shape)
+                .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
+        } else {
+            content
+                .background {
+                    shape.fill(.ultraThinMaterial)
+                        .overlay(shape.fill(isDark ? Color(white: 0.14).opacity(0.45) : Color.white.opacity(0.45)))
+                }
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
+                .shadow(color: .black.opacity(isDark ? 0.28 : 0.10), radius: 14, y: 4)
+        }
+        #endif
     }
 }
 

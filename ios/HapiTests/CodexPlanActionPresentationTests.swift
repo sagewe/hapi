@@ -167,6 +167,22 @@ final class CodexPlanActionPresentationTests: XCTestCase {
         XCTAssertTrue(hasFirstResponder(window), "The compact → expanded switch must not drop focus")
     }
 
+    #if !targetEnvironment(macCatalyst)
+    func testTwoStageMorphingComposerCollapsesWhenIdleAndExpandsOnFocusOrDraft() async throws {
+        let driver = try Driver()
+        let idleHeight = height(ChatComposerView(interactor: driver.interactor), size: .large)
+        XCTAssertLessThanOrEqual(idleHeight, 72, "Idle empty composer must render as a single-row capsule")
+
+        driver.interactor.setComposerText("Draft line")
+        let draftHeight = height(ChatComposerView(interactor: driver.interactor), size: .large)
+        XCTAssertGreaterThanOrEqual(draftHeight, idleHeight + 30, "Non-empty draft must expand into the two-row card")
+
+        driver.interactor.setComposerText("")
+        let collapsedAgain = height(ChatComposerView(interactor: driver.interactor), size: .large)
+        XCTAssertEqual(collapsedAgain, idleHeight, accuracy: 1, "Clearing draft while unfocused collapses back to pill")
+    }
+    #endif
+
     func testActionCardSpecimensInLightDarkOLEDAndLargeType() async throws {
         let cases: [(String, HapiTheme, DynamicTypeSize, CGFloat)] = [
             ("light", .light, .large, 390), ("dark", .dark, .large, 390),

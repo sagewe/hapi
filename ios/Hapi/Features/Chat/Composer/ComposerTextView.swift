@@ -32,6 +32,7 @@ struct ComposerTextView: UIViewRepresentable {
     #if !targetEnvironment(macCatalyst)
     /// iOS WeChat-style Hold-to-Dictate: tap focuses to edit, stationary long-press starts voice.
     var holdToDictateEnabled: Bool = false
+    var hitTestOutsets = UIEdgeInsets(top: 12, left: 14, bottom: 4, right: 14)
     var onHoldBegan: ((CGPoint, CGSize) -> Void)? = nil
     var onHoldChanged: ((CGPoint, CGSize) -> Void)? = nil
     var onHoldEnded: (() -> Void)? = nil
@@ -154,6 +155,8 @@ struct ComposerTextView: UIViewRepresentable {
         view.wantsFocus = isFocused
         view.updateFocus()
         #if !targetEnvironment(macCatalyst)
+        view.hitTestOutsets = hitTestOutsets
+        coordinator.hostView?.hitTestOutsets = hitTestOutsets
         coordinator.hostView?.syncOverlayVisibility()
         #endif
     }
