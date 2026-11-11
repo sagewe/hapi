@@ -48,10 +48,6 @@ struct ChatComposerView: View {
     @State private var sentHistory: [String] = []
     @State private var historyIndex: Int?
     @State private var draftBeforeHistory = ""
-    #if !targetEnvironment(macCatalyst)
-    @AppStorage("hapi.ios.voiceInputMode") private var voiceInputMode = false
-    @GestureState private var isHoldBarPressing = false
-    #endif
     // Secondary tools are bare symbols; only the primary action is a filled
     // circle (Messages / ChatGPT / Claude). Both follow Dynamic Type.
     #if targetEnvironment(macCatalyst)
@@ -85,7 +81,15 @@ struct ChatComposerView: View {
 
     private var scratchlistMode: Bool { interactor.composerDestination == .scratchlist }
     private var composerPrompt: LocalizedStringKey {
-        scratchlistMode ? "Keep an instruction for later…" : "Message the agent…"
+        if scratchlistMode {
+            return "Keep an instruction for later…"
+        }
+        #if !targetEnvironment(macCatalyst)
+        if !textFocused, holdDictation?.isAvailable == true {
+            return "Hold to dictate…"
+        }
+        #endif
+        return "Message the agent…"
     }
 
     private var text: Binding<String> {
@@ -249,24 +253,6 @@ struct ChatComposerView: View {
                 }
                 // The field keeps one structural identity across the compact
                 // and expanded layouts so focus survives the switch.
-                #if !targetEnvironment(macCatalyst)
-                if showsWeChatHoldBar, let holdDictation {
-                    iosHoldToDictateRow(holdDictation)
-                } else {
-                    composerTextFieldRow(
-                        composer: composer,
-                        attachments: attachments,
-                        collapsed: collapsed,
-                        mentionSuggestions: mentionSuggestions,
-                        slashSuggestions: slashSuggestions,
-                        skillQuery: skillQuery,
-                        skillMatches: skillMatches,
-                        clampedSuggestionIndex: clampedSuggestionIndex,
-                        activeSuggestionCount: activeSuggestionCount,
-                        suggestionKey: suggestionKey
-                    )
-                }
-                #else
                 composerTextFieldRow(
                     composer: composer,
                     attachments: attachments,
@@ -279,7 +265,6 @@ struct ChatComposerView: View {
                     activeSuggestionCount: activeSuggestionCount,
                     suggestionKey: suggestionKey
                 )
-                #endif
                 if !collapsed {
                     HStack(spacing: 0) {
                         composerLeadingTools(hasAttachments: !attachments.isEmpty)
@@ -331,9 +316,6 @@ struct ChatComposerView: View {
             }
         }
         .onChange(of: interactor.composerFocusRequest) {
-            #if !targetEnvironment(macCatalyst)
-            voiceInputMode = false
-            #endif
             textFocused = true
         }
         // Hardware keyboard: ⌘↩ sends (or parks draft in scratchlist mode); ⇧⌘↩ steers into active turn.
@@ -380,19 +362,6 @@ struct ChatComposerView: View {
         #if !targetEnvironment(macCatalyst)
         .task(id: holdDictation.map { ObjectIdentifier($0) }) {
             await holdDictation?.refreshAvailability()
-        }
-        .onChange(of: isHoldBarPressing) { _, pressing in
-            if !pressing {
-                // System gesture cancellation (notification shade / incoming call)
-                // resets `@GestureState` without firing `.onEnded` — ensure the
-                // microphone and overlay never stay stuck if still `.holding`.
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 40_000_000)
-                    if !isHoldBarPressing {
-                        holdDictation?.cancelIfHolding()
-                    }
-                }
-            }
         }
         #endif
         .photosPicker(
@@ -621,9 +590,6 @@ struct ChatComposerView: View {
 
     private func insertTrigger(_ symbol: String, atStartOnly: Bool = false) {
         guard !isComposing else { return }
-        #if !targetEnvironment(macCatalyst)
-        voiceInputMode = false
-        #endif
         if atStartOnly {
             if interactor.composerText.isEmpty {
                 interactor.setComposerText(symbol)
@@ -733,6 +699,7 @@ struct ChatComposerView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
+                #if targetEnvironment(macCatalyst)
                 ComposerTextView(
                     text: text,
                     selection: $textSelection,
@@ -776,16 +743,82 @@ struct ChatComposerView: View {
                     },
                     onPasteItems: ingest
                 )
+                #else
+                ComposerTextView(
+                    text: text,
+                    selection: $textSelection,
+                    isFocused: $textFocused,
+                    isComposing: $isComposing,
+                    font: .systemFont(ofSize: typography.bodySize, weight: typography.boldText ? .semibold : .regular),
+                    accessibilityLabel: scratchlistMode
+                        ? String(localized: "Keep an instruction for later…")
+                        : (holdDictation?.isAvailable == true
+                            ? String(localized: "Hold to dictate…")
+                            : String(localized: "Message the agent…")),
+                    onReturn: {
+                        handleReturn(
+                            composer,
+                            attachments: attachments,
+                            mentions: mentionSuggestions,
+                            slashCommands: slashSuggestions,
+                            skillQuery: skillQuery,
+                            skillMatches: skillMatches,
+                            selectedIndex: clampedSuggestionIndex
+                        )
+                    },
+                    onSteerReturn: {
+                        handleSteerReturn(composer, attachments: attachments)
+                    },
+                    onMoveSuggestion: { delta in
+                        moveSuggestion(delta, count: activeSuggestionCount)
+                    },
+                    onTab: {
+                        acceptSuggestion(
+                            mentions: mentionSuggestions,
+                            slashCommands: slashSuggestions,
+                            skillQuery: skillQuery,
+                            skillMatches: skillMatches,
+                            selectedIndex: clampedSuggestionIndex
+                        )
+                    },
+                    onEscape: {
+                        handleEscape(
+                            suggestionKey: suggestionKey,
+                            hasVisiblePopup: activeSuggestionCount > 0 || skillQuery != nil
+                        )
+                    },
+                    onPasteItems: ingest,
+                    holdToDictateEnabled: !scratchlistMode && (holdDictation?.isAvailable == true),
+                    onHoldBegan: { location, windowSize in
+                        if let holdDictation {
+                            handleHoldBegan(location, windowSize: windowSize, controller: holdDictation)
+                        }
+                    },
+                    onHoldChanged: { location, windowSize in
+                        if let holdDictation {
+                            handleHoldChanged(location, windowSize: windowSize, controller: holdDictation)
+                        }
+                    },
+                    onHoldEnded: {
+                        holdDictation?.endHold()
+                    },
+                    onHoldCancelled: {
+                        holdDictation?.cancelIfHolding()
+                    }
+                )
+                #endif
             }
             .padding(.horizontal, collapsed ? 2 : 14)
             .padding(.top, collapsed ? 0 : 12)
             .padding(.bottom, collapsed ? 0 : 4)
+            #if targetEnvironment(macCatalyst)
             .contentShape(Rectangle())
             .onTapGesture {
                 if !textFocused {
                     textFocused = true
                 }
             }
+            #endif
             if collapsed {
                 trailingActions(
                     composer,
@@ -799,123 +832,40 @@ struct ChatComposerView: View {
     }
 
     #if !targetEnvironment(macCatalyst)
-    private var showsWeChatHoldBar: Bool {
-        !scratchlistMode && voiceInputMode && (holdDictation?.isAvailable == true)
-    }
-
-    private var currentWindowSize: CGSize {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        if let window = scenes.first(where: { $0.activationState == .foregroundActive })?.keyWindow
-            ?? scenes.first?.windows.first {
-            return window.bounds.size
-        }
-        return CGSize(width: 393, height: 852)
-    }
-
-    private var iosVoiceSwitchButton: some View {
-        Button {
+    private func handleHoldBegan(_ location: CGPoint, windowSize: CGSize, controller: HoldToDictateController) {
+        guard case .idle = controller.phase else { return }
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted:
             textFocused = false
-            withAnimation(.snappy(duration: 0.18)) {
-                voiceInputMode = true
-            }
-        } label: {
-            toolGlyph("wave.3.right.circle")
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("切换按住转文字")
-        .accessibilityIdentifier("chat.voice-mode-toggle")
-    }
-
-    private func iosHoldToDictateRow(_ controller: HoldToDictateController) -> some View {
-        let isHolding: Bool = {
-            if case .holding = controller.phase { return true }
-            return false
-        }()
-        return HStack(spacing: 8) {
-            Button {
-                withAnimation(.snappy(duration: 0.18)) {
-                    voiceInputMode = false
-                }
-                DispatchQueue.main.async {
-                    textFocused = true
-                }
-            } label: {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, height: 40)
-                    .background(Color.primary.opacity(0.06), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("切换键盘输入")
-            .accessibilityIdentifier("chat.keyboard-mode-toggle")
-
-            Text(isHolding ? "松手 发送" : "可按住 转文字")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(isHolding ? .primary : .secondary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(isHolding ? 0.14 : 0.06))
-                )
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                        .updating($isHoldBarPressing) { _, state, _ in
-                            state = true
-                        }
-                        .onChanged { value in
-                            handleHoldBarDragChanged(value.location, controller: controller)
-                        }
-                        .onEnded { _ in
-                            controller.endHold()
-                        }
-                )
-                .accessibilityLabel("可按住 转文字")
-                .accessibilityIdentifier("chat.hold-to-dictate")
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
-    }
-
-    private func handleHoldBarDragChanged(_ location: CGPoint, controller: HoldToDictateController) {
-        let size = currentWindowSize
-        switch controller.phase {
-        case .idle:
-            switch AVAudioApplication.shared.recordPermission {
-            case .granted:
-                textFocused = false
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                controller.beginHold(
-                    fingerX: Double(location.x),
-                    fingerY: Double(location.y),
-                    containerWidth: Double(size.width),
-                    containerHeight: Double(size.height)
-                )
-            case .denied:
-                interactor.postNotice(String(localized: "Microphone access is disabled — allow it in Settings to dictate"))
-            case .undetermined:
-                Task {
-                    let granted = await AVAudioApplication.requestRecordPermission()
-                    if !granted {
-                        interactor.postNotice(String(localized: "Microphone permission is needed for dictation"))
-                    }
-                }
-            @unknown default:
-                break
-            }
-        case .holding:
-            controller.updateFinger(
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            controller.beginHold(
                 fingerX: Double(location.x),
                 fingerY: Double(location.y),
-                containerWidth: Double(size.width),
-                containerHeight: Double(size.height)
+                containerWidth: Double(windowSize.width),
+                containerHeight: Double(windowSize.height)
             )
-        case .finalizing, .editing:
+        case .denied:
+            interactor.postNotice(String(localized: "Microphone access is disabled — allow it in Settings to dictate"))
+        case .undetermined:
+            Task {
+                let granted = await AVAudioApplication.requestRecordPermission()
+                if !granted {
+                    interactor.postNotice(String(localized: "Microphone permission is needed for dictation"))
+                }
+            }
+        @unknown default:
             break
         }
+    }
+
+    private func handleHoldChanged(_ location: CGPoint, windowSize: CGSize, controller: HoldToDictateController) {
+        guard case .holding = controller.phase else { return }
+        controller.updateFinger(
+            fingerX: Double(location.x),
+            fingerY: Double(location.y),
+            containerWidth: Double(windowSize.width),
+            containerHeight: Double(windowSize.height)
+        )
     }
     #endif
 
@@ -1245,11 +1195,7 @@ struct ChatComposerView: View {
             micButton(dictation)
         }
         #else
-        if let holdDictation, holdDictation.isAvailable, !scratchlistMode {
-            if !showsWeChatHoldBar {
-                iosVoiceSwitchButton
-            }
-        } else if let dictation, dictation.isAvailable {
+        if (holdDictation?.isAvailable != true), let dictation, dictation.isAvailable {
             micButton(dictation)
         }
         #endif

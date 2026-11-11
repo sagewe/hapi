@@ -26,6 +26,14 @@ struct ComposerTextView: UIViewRepresentable {
     var onEscape: (() -> Bool)? = nil
     /// Pasted images and copied files become attachments instead of text.
     var onPasteItems: (([NSItemProvider]) -> Void)? = nil
+    #if !targetEnvironment(macCatalyst)
+    /// iOS WeChat-style Hold-to-Dictate: tap focuses to edit, long-press starts streaming voice.
+    var holdToDictateEnabled: Bool = false
+    var onHoldBegan: ((CGPoint, CGSize) -> Void)? = nil
+    var onHoldChanged: ((CGPoint, CGSize) -> Void)? = nil
+    var onHoldEnded: (() -> Void)? = nil
+    var onHoldCancelled: (() -> Void)? = nil
+    #endif
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -40,6 +48,18 @@ struct ComposerTextView: UIViewRepresentable {
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
         view.ownerCoordinator = context.coordinator
+        #if !targetEnvironment(macCatalyst)
+        let holdGesture = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleHoldToDictate(_:))
+        )
+        holdGesture.minimumPressDuration = 0.26
+        holdGesture.allowableMovement = 14
+        holdGesture.cancelsTouchesInView = true
+        holdGesture.delegate = context.coordinator
+        view.addGestureRecognizer(holdGesture)
+        context.coordinator.holdToDictateGesture = holdGesture
+        #endif
         return view
     }
 
@@ -200,6 +220,20 @@ struct ComposerTextView: UIViewRepresentable {
 
         weak var ownerCoordinator: Coordinator?
 
+        #if !targetEnvironment(macCatalyst)
+        var hitTestOutsets = UIEdgeInsets(top: 12, left: 14, bottom: 4, right: 14)
+
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            let expanded = bounds.inset(by: UIEdgeInsets(
+                top: -hitTestOutsets.top,
+                left: -hitTestOutsets.left,
+                bottom: -hitTestOutsets.bottom,
+                right: -hitTestOutsets.right
+            ))
+            return expanded.contains(point)
+        }
+        #endif
+
         override func didMoveToWindow() {
             super.didMoveToWindow()
             updateFocus()
@@ -215,15 +249,80 @@ struct ComposerTextView: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var owner: ComposerTextView
         var applying = false
         var lastBoundSelection: NSRange
+        #if !targetEnvironment(macCatalyst)
+        weak var holdToDictateGesture: UILongPressGestureRecognizer?
+        #endif
 
         init(_ owner: ComposerTextView) {
             self.owner = owner
             self.lastBoundSelection = owner.selection
         }
+
+        #if !targetEnvironment(macCatalyst)
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === holdToDictateGesture else { return true }
+            guard owner.holdToDictateEnabled,
+                  let textView = gestureRecognizer.view as? UITextView,
+                  textView.markedTextRange == nil else {
+                return false
+            }
+            // While actively editing non-empty text with the keyboard up, let
+            // native cursor loupe / word selection take over; otherwise (unfocused
+            // or empty box) long-press starts Hold-to-Dictate.
+            if textView.isFirstResponder && !(textView.text ?? "").isEmpty {
+                return false
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            if gestureRecognizer === holdToDictateGesture || otherGestureRecognizer === holdToDictateGesture {
+                return false
+            }
+            return false
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer === holdToDictateGesture else { return false }
+            // Yield UITextView's built-in loupe/selection long-press recognizers to
+            // Hold-to-Dictate when eligible; normal short taps fail `holdToDictateGesture`
+            // immediately on finger-up with zero added latency.
+            return otherGestureRecognizer is UILongPressGestureRecognizer
+        }
+
+        @objc func handleHoldToDictate(_ gesture: UILongPressGestureRecognizer) {
+            let window = gesture.view?.window
+            let windowSize = window?.bounds.size ?? CGSize(width: 393, height: 852)
+            let location = gesture.location(in: window)
+            switch gesture.state {
+            case .began:
+                if let textView = gesture.view as? NativeTextView, textView.isFirstResponder {
+                    textView.wantsFocus = false
+                    owner.isFocused = false
+                    textView.resignFirstResponder()
+                }
+                owner.onHoldBegan?(location, windowSize)
+            case .changed:
+                owner.onHoldChanged?(location, windowSize)
+            case .ended:
+                owner.onHoldEnded?()
+            case .cancelled, .failed:
+                owner.onHoldCancelled?()
+            default:
+                break
+            }
+        }
+        #endif
 
         func syncBeforeKeyAction(_ textView: UITextView) -> Bool {
             guard textView.markedTextRange == nil else {

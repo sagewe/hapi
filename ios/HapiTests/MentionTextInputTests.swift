@@ -129,4 +129,51 @@ final class MentionTextInputTests: XCTestCase {
         XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardTab, modifiers: []))
         XCTAssertFalse(editor.handleMacKeyPress(keyCode: .keyboardEscape, modifiers: []))
     }
+
+    #if !targetEnvironment(macCatalyst)
+    func testHoldToDictateGestureAllowsHoldWhenUnfocusedOrEmptyAndYieldsWhileEditingText() {
+        let state = State()
+        var disabledInput = ComposerTextView(
+            text: Binding(get: { state.text }, set: { state.text = $0 }),
+            selection: Binding(get: { state.selection }, set: { state.selection = $0 }),
+            isFocused: Binding(get: { state.focused }, set: { state.focused = $0 }),
+            isComposing: Binding(get: { state.composing }, set: { state.composing = $0 }),
+            font: .systemFont(ofSize: 16),
+            accessibilityLabel: "Hold to dictate…",
+            holdToDictateEnabled: false
+        )
+        let coordinator = disabledInput.makeCoordinator()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        let editor = ComposerTextView.NativeTextView(frame: CGRect(x: 14, y: 800, width: 300, height: 22))
+        window.addSubview(editor)
+        window.makeKeyAndVisible()
+
+        let holdGesture = UILongPressGestureRecognizer()
+        editor.addGestureRecognizer(holdGesture)
+        coordinator.holdToDictateGesture = holdGesture
+
+        // Expanded hit-test area includes composer padding around the text line.
+        XCTAssertTrue(editor.point(inside: CGPoint(x: -10, y: -8), with: nil))
+        XCTAssertFalse(editor.point(inside: CGPoint(x: -20, y: -8), with: nil))
+
+        // Disabled -> never begins.
+        XCTAssertFalse(coordinator.gestureRecognizerShouldBegin(holdGesture))
+
+        // Enabled + unfocused (empty or with draft) -> begins Hold-to-Dictate.
+        disabledInput.holdToDictateEnabled = true
+        disabledInput.synchronize(editor, coordinator: coordinator)
+        XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
+        editor.text = "draft"
+        XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
+
+        // Focused + non-empty text -> yields to native cursor loupe / word selection.
+        _ = editor.becomeFirstResponder()
+        if editor.isFirstResponder {
+            XCTAssertFalse(coordinator.gestureRecognizerShouldBegin(holdGesture))
+            // Focused + empty box -> still allows Hold-to-Dictate.
+            editor.text = ""
+            XCTAssertTrue(coordinator.gestureRecognizerShouldBegin(holdGesture))
+        }
+    }
+    #endif
 }

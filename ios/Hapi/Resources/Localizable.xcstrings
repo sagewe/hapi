@@ -6110,6 +6110,17 @@
         }
       }
     },
+    "Hold to dictate…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可按住 转文字"
+          }
+        }
+      }
+    },
     "Message the agent…" : {
       "extractionState" : "manual",
       "localizations" : {
