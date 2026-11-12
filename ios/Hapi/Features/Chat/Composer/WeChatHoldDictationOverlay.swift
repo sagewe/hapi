@@ -1,9 +1,11 @@
 #if !targetEnvironment(macCatalyst)
 import HapiClient
+import HapiUI
 import SwiftUI
 import UIKit
 
-/// Full-screen WeChat-style Hold-to-Dictate & Focused Voice Edit overlays (iOS only).
+/// Full-screen Hold-to-Dictate & Focused Voice Edit overlays (iOS only),
+/// unified with MyDots' lower-screen thumb layout and harmonized with `HapiTheme`.
 struct WeChatVoiceOverlayHost: View {
     let controller: HoldToDictateController
     var canSendAndSteer: Bool = false
@@ -13,11 +15,11 @@ struct WeChatVoiceOverlayHost: View {
         switch controller.phase {
         case .idle:
             EmptyView()
-        case .holding(let zone, let partialText, let audioLevel):
+        case .holding(let zone, let partialText, _):
             WeChatHoldDictationOverlay(
                 zone: zone,
                 partialText: partialText,
-                audioLevel: audioLevel,
+                audioLevels: controller.audioLevels,
                 isFinalizing: false
             )
             .allowsHitTesting(false)
@@ -26,15 +28,17 @@ struct WeChatVoiceOverlayHost: View {
             WeChatHoldDictationOverlay(
                 zone: zone,
                 partialText: partialText,
-                audioLevel: 0.2,
+                audioLevels: controller.audioLevels,
                 isFinalizing: true
             )
             .allowsHitTesting(false)
             .transition(.opacity.animation(.easeOut(duration: 0.14)))
-        case .editing(let initialText):
+        case .editing(let currentText):
             WeChatVoiceEditOverlay(
-                initialText: initialText,
+                controllerText: currentText,
+                isRefining: controller.isRefiningEdit,
                 canSendAndSteer: canSendAndSteer,
+                onTextChanged: { controller.updateEditingText($0) },
                 onCancel: { controller.dismissOverlay() },
                 onSend: { text, steer in
                     if steer, let onSteerSend {
@@ -50,193 +54,339 @@ struct WeChatVoiceOverlayHost: View {
     }
 }
 
-// MARK: - Hold Overlay (Screenshots 2 & 3)
+// MARK: - Unified Lower-Screen Hold-to-Dictate Overlay
 
 private struct WeChatHoldDictationOverlay: View {
     let zone: HoldActionZone
     let partialText: String
-    let audioLevel: Float
+    let audioLevels: [Float]
     let isFinalizing: Bool
+
+    @Environment(\.hapiTheme) private var theme
+
+    private var scrimTint: Color {
+        switch theme.variant {
+        case .light:
+            return Color(red: 0.95, green: 0.96, blue: 0.98).opacity(0.46)
+        case .dark:
+            return Color.black.opacity(0.54)
+        case .oled:
+            return Color.black.opacity(0.72)
+        }
+    }
 
     private var bubbleBackground: Color {
         switch zone {
         case .send:
-            return Color(red: 0.27, green: 0.76, blue: 0.43)
-        case .edit:
-            return Color(white: 0.22)
+            switch theme.variant {
+            case .light:
+                return Color(red: 0.93, green: 0.96, blue: 1.00)
+            case .dark:
+                return Color(red: 0.10, green: 0.15, blue: 0.24)
+            case .oled:
+                return Color(red: 0.07, green: 0.11, blue: 0.19)
+            }
         case .cancel:
-            return Color(red: 0.80, green: 0.27, blue: 0.27)
+            return theme.diffRemovedBackground
+        case .edit:
+            return theme.surface
         }
     }
 
-    private var bubbleForeground: Color {
+    private var bubbleStroke: Color {
         switch zone {
         case .send:
-            return Color.black.opacity(0.88)
-        case .edit, .cancel:
-            return Color.white.opacity(0.94)
+            return theme.accent.opacity(theme.isDark ? 0.44 : 0.34)
+        case .cancel:
+            return theme.danger.opacity(0.46)
+        case .edit:
+            return theme.textPrimary.opacity(0.22)
+        }
+    }
+
+    private var bubbleTextColor: Color {
+        zone == .cancel ? theme.danger : theme.textPrimary
+    }
+
+    private var bubblePlaceholderColor: Color {
+        zone == .cancel ? theme.danger.opacity(0.82) : theme.textSecondary
+    }
+
+    private var waveformColor: Color {
+        switch zone {
+        case .send:
+            return theme.accent
+        case .cancel:
+            return theme.danger.opacity(0.86)
+        case .edit:
+            return theme.textSecondary
         }
     }
 
     private var hintTitle: String {
         if isFinalizing {
-            return "正在转文字…"
+            return "正在识别文字…"
         }
         switch zone {
         case .send:
             return "松手 发送"
         case .cancel:
-            return "松手 取消"
+            return "松开 取消"
         case .edit:
-            return "松手 编辑"
+            return "松开 编辑文字"
         }
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            ZStack(alignment: .bottom) {
-                Color.black.opacity(0.76)
-                    .ignoresSafeArea()
+        ZStack(alignment: .bottom) {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(scrimTint)
+                .ignoresSafeArea()
 
-                // Center speech bubble + action hint
-                VStack(spacing: 14) {
-                    speechBubble(maxWidth: min(width - 56, 320))
-                    Text(hintTitle)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.46))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .offset(y: -36)
+            VStack(spacing: 0) {
+                Spacer()
 
-                // Tilted Cancel & Edit pills + bottom convex send dome
-                VStack(spacing: 22) {
-                    HStack {
-                        tiltedActionPill(
-                            title: "取消",
-                            angle: -10,
-                            active: zone == .cancel
-                        )
-                        Spacer(minLength: 24)
-                        tiltedActionPill(
-                            title: "编辑",
-                            angle: 10,
-                            active: zone == .edit
-                        )
-                    }
-                    .padding(.horizontal, 14)
+                speechBubble
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 48)
 
-                    bottomThumbDome(width: width)
-                }
+                actionBadgesRow
+                    .padding(.horizontal, 44)
+                    .padding(.bottom, 18)
+
+                Text(hintTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(zone == .cancel ? theme.danger : theme.textSecondary)
+                    .padding(.bottom, 14)
+
+                bottomArcPad
             }
         }
-        .ignoresSafeArea()
+        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: zone)
         .onChange(of: zone) { _, _ in
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            UISelectionFeedbackGenerator().selectionChanged()
         }
     }
 
-    @ViewBuilder
-    private func speechBubble(maxWidth: CGFloat) -> some View {
-        ZStack {
-            if partialText.isEmpty {
-                HStack(spacing: 6) {
-                    if isFinalizing {
-                        ProgressView()
-                            .tint(bubbleForeground)
-                    } else {
-                        VoiceWaveBarsView(level: audioLevel, foreground: bubbleForeground)
-                    }
-                }
-                .padding(.horizontal, 36)
-                .padding(.vertical, 28)
-            } else {
-                HStack(alignment: .lastTextBaseline, spacing: 6) {
+    private var speechBubble: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if isFinalizing && partialText.isEmpty {
+                    Text("正在识别…")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(bubblePlaceholderColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if !partialText.isEmpty {
                     Text(partialText)
-                        .font(.system(size: 21, weight: .medium))
-                        .foregroundStyle(bubbleForeground)
-                        .multilineTextAlignment(.leading)
+                        .font(.system(size: 17.5, weight: .medium))
+                        .lineSpacing(3)
+                        .foregroundStyle(bubbleTextColor)
                         .lineLimit(6)
                         .truncationMode(.head)
-                    if isFinalizing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(bubbleForeground)
-                    }
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("正在聆听…")
+                        .font(.system(size: 16.5, weight: .medium))
+                        .foregroundStyle(bubblePlaceholderColor)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 26)
-                .padding(.vertical, 24)
+
+                if isFinalizing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(waveformColor)
+                }
             }
+
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                ForEach(Array(audioLevels.enumerated()), id: \.offset) { _, rawLevel in
+                    let level = CGFloat(min(max(rawLevel, 0.10), 1.0))
+                    Capsule()
+                        .fill(waveformColor.opacity(isFinalizing ? 0.45 : 0.90))
+                        .frame(width: 3.2, height: max(5, 24 * level))
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(height: 26)
+            .animation(.easeOut(duration: 0.08), value: audioLevels)
         }
-        .frame(minWidth: 188, maxWidth: maxWidth, minHeight: 84)
-        .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.28), radius: 16, y: 6)
-        .animation(.easeOut(duration: 0.14), value: zone)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .frame(minHeight: 96)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(bubbleBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(bubbleStroke, lineWidth: 1.2)
+        )
+        .shadow(
+            color: Color.black.opacity(theme.isDark ? 0.34 : 0.10),
+            radius: 18,
+            y: 8
+        )
     }
 
-    private func tiltedActionPill(title: String, angle: Double, active: Bool) -> some View {
-        Text(title)
-            .font(.system(size: 17, weight: active ? .semibold : .medium))
-            .foregroundStyle(active ? Color.black.opacity(0.88) : Color.white.opacity(0.88))
-            .frame(width: 152, height: 66)
-            .background(
-                active ? Color(white: 0.90) : Color(white: 0.19),
-                in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+    private var actionBadgesRow: some View {
+        HStack {
+            zoneBadge(
+                title: "✕",
+                subtitle: "取消",
+                isActive: zone == .cancel,
+                activeBg: theme.danger,
+                activeFg: .white,
+                activeSubtitleColor: theme.danger,
+                angle: -10
             )
-            .scaleEffect(active ? 1.07 : 1.0)
-            .rotationEffect(.degrees(angle))
-            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: active)
+            Spacer()
+            zoneBadge(
+                title: "文",
+                subtitle: "编辑",
+                isActive: zone == .edit,
+                activeBg: theme.textPrimary,
+                activeFg: theme.background,
+                activeSubtitleColor: theme.textPrimary,
+                angle: 10
+            )
+        }
     }
 
-    private func bottomThumbDome(width: CGFloat) -> some View {
-        let isSendActive = zone == .send
-        return Ellipse()
-            .fill(isSendActive ? Color(white: 0.55) : Color(white: 0.17))
-            .frame(width: width * 1.48, height: 240)
-            .frame(width: width, height: 122, alignment: .top)
-            .clipped()
-            .animation(.easeOut(duration: 0.15), value: isSendActive)
+    private func zoneBadge(
+        title: String,
+        subtitle: String,
+        isActive: Bool,
+        activeBg: Color,
+        activeFg: Color,
+        activeSubtitleColor: Color,
+        angle: Double
+    ) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .fill(isActive ? activeBg : theme.surface.opacity(0.92))
+                    .frame(width: isActive ? 68 : 56, height: isActive ? 68 : 56)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                isActive ? Color.clear : theme.divider,
+                                lineWidth: 1
+                            )
+                    )
+                    .shadow(
+                        color: Color.black.opacity(theme.isDark ? 0.28 : 0.08),
+                        radius: isActive ? 12 : 6,
+                        y: 4
+                    )
+
+                Text(title)
+                    .font(.system(size: isActive ? 22 : 18, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isActive ? activeFg : theme.textSecondary)
+                    .rotationEffect(.degrees(angle))
+            }
+
+            Text(subtitle)
+                .font(.system(size: 12.5, weight: isActive ? .semibold : .medium))
+                .foregroundStyle(isActive ? activeSubtitleColor : theme.textSecondary)
+        }
     }
-}
 
-private struct VoiceWaveBarsView: View {
-    let level: Float
-    let foreground: Color
-
-    private let weights: [CGFloat] = [0.42, 0.75, 1.0, 0.65, 0.88, 0.50]
-
-    var body: some View {
-        let clamped = CGFloat(min(1.0, max(0.08, level)))
-        HStack(spacing: 5) {
-            ForEach(Array(weights.enumerated()), id: \.offset) { _, weight in
-                Capsule()
-                    .fill(foreground.opacity(0.85))
-                    .frame(width: 4, height: 10 + 22 * clamped * weight)
+    private var bottomArcFill: Color {
+        if zone == .send {
+            switch theme.variant {
+            case .light:
+                return Color(red: 0.88, green: 0.92, blue: 0.99)
+            case .dark:
+                return Color(red: 0.13, green: 0.19, blue: 0.29)
+            case .oled:
+                return Color(red: 0.09, green: 0.14, blue: 0.22)
             }
         }
-        .frame(height: 34)
-        .animation(.easeOut(duration: 0.09), value: level)
+        return theme.surface.opacity(0.90)
+    }
+
+    private var bottomArcStroke: Color {
+        zone == .send ? theme.accent.opacity(theme.isDark ? 0.38 : 0.28) : theme.divider
+    }
+
+    private var bottomArcPad: some View {
+        ZStack {
+            WeChatBottomArcShape()
+                .fill(bottomArcFill)
+                .overlay(
+                    WeChatBottomArcTopCurve()
+                        .stroke(bottomArcStroke, lineWidth: 1)
+                )
+                .frame(height: 112)
+                .ignoresSafeArea(edges: .bottom)
+
+            Image(systemName: "waveform")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(zone == .send ? theme.accent : theme.textHint)
+                .offset(y: -6)
+        }
+        .frame(height: 112)
     }
 }
 
-// MARK: - Focused Voice Edit Overlay (Screenshot 1)
+private struct WeChatBottomArcShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: 34))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.width, y: 34),
+            control: CGPoint(x: rect.width * 0.5, y: -18)
+        )
+        p.addLine(to: CGPoint(x: rect.width, y: rect.height + 50))
+        p.addLine(to: CGPoint(x: 0, y: rect.height + 50))
+        p.closeSubpath()
+        return p
+    }
+}
+
+private struct WeChatBottomArcTopCurve: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: 34))
+        p.addQuadCurve(
+            to: CGPoint(x: rect.width, y: 34),
+            control: CGPoint(x: rect.width * 0.5, y: -18)
+        )
+        return p
+    }
+}
+
+// MARK: - Theme-Harmonious Voice Edit Overlay
 
 private struct WeChatVoiceEditOverlay: View {
-    @State private var text: String
+    let controllerText: String
+    let isRefining: Bool
     let canSendAndSteer: Bool
+    let onTextChanged: (String) -> Void
     let onCancel: () -> Void
     let onSend: (String, Bool) -> Void
 
+    @State private var text: String
+    @Environment(\.hapiTheme) private var theme
+
     init(
-        initialText: String,
+        controllerText: String,
+        isRefining: Bool,
         canSendAndSteer: Bool,
+        onTextChanged: @escaping (String) -> Void,
         onCancel: @escaping () -> Void,
         onSend: @escaping (String, Bool) -> Void
     ) {
-        _text = State(initialValue: initialText)
+        self.controllerText = controllerText
+        self.isRefining = isRefining
         self.canSendAndSteer = canSendAndSteer
+        self.onTextChanged = onTextChanged
         self.onCancel = onCancel
         self.onSend = onSend
+        _text = State(initialValue: controllerText)
     }
 
     private var canSubmit: Bool {
@@ -245,7 +395,7 @@ private struct WeChatVoiceEditOverlay: View {
 
     var body: some View {
         ZStack {
-            Color(white: 0.04)
+            theme.background
                 .ignoresSafeArea()
                 .onTapGesture {
                     // Keep focus in editor; only explicit ✕ cancels.
@@ -255,34 +405,64 @@ private struct WeChatVoiceEditOverlay: View {
                 HStack {
                     Button(action: onCancel) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 20, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.92))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(width: 42, height: 42)
+                            .background(theme.surface, in: Circle())
+                            .overlay(Circle().strokeBorder(theme.divider, lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("取消语音编辑")
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
 
-                Spacer(minLength: 16)
+                    Spacer()
+
+                    if isRefining {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(theme.accent)
+                            Text("正在润色识别结果…")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                    }
+
+                    Spacer()
+                    Color.clear.frame(width: 42, height: 42)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
 
                 VoiceEditAutoFocusTextView(
-                    text: $text,
+                    text: Binding(
+                        get: { text },
+                        set: { next in
+                            text = next
+                            onTextChanged(next)
+                        }
+                    ),
+                    isDark: theme.isDark,
+                    textColor: UIColor(theme.textPrimary),
+                    tintColor: UIColor(theme.accent),
                     onSendReturn: {
                         if canSubmit {
                             onSend(text, false)
                         }
                     }
                 )
-                .frame(minHeight: 88, maxHeight: 200)
-                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
-                .background(Color(white: 0.17), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(theme.surface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(theme.divider, lineWidth: 1)
+                )
                 .padding(.horizontal, 16)
+                .padding(.top, 14)
 
                 HStack {
                     Spacer()
@@ -291,16 +471,18 @@ private struct WeChatVoiceEditOverlay: View {
                         onSend(text, false)
                     } label: {
                         Text("发送")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.white.opacity(canSubmit ? 1.0 : 0.45))
-                            .frame(width: 116, height: 44)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 26)
+                            .padding(.vertical, 12)
                             .background(
-                                Color(red: 0.08, green: 0.75, blue: 0.38).opacity(canSubmit ? 1.0 : 0.35),
-                                in: Capsule()
+                                Capsule()
+                                    .fill(canSubmit ? theme.accent : theme.divider)
                             )
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSubmit)
+                    .accessibilityLabel("发送编辑后的文字")
                     .contextMenu {
                         if canSendAndSteer && canSubmit {
                             Button {
@@ -311,9 +493,13 @@ private struct WeChatVoiceEditOverlay: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 18)
-                .padding(.bottom, 14)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+            }
+        }
+        .onChange(of: controllerText) { _, updated in
+            if updated != text {
+                text = updated
             }
         }
     }
@@ -321,6 +507,9 @@ private struct WeChatVoiceEditOverlay: View {
 
 private struct VoiceEditAutoFocusTextView: UIViewRepresentable {
     @Binding var text: String
+    let isDark: Bool
+    let textColor: UIColor
+    let tintColor: UIColor
     let onSendReturn: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -330,11 +519,11 @@ private struct VoiceEditAutoFocusTextView: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         textView.backgroundColor = .clear
-        textView.textColor = UIColor(white: 0.94, alpha: 1.0)
-        textView.tintColor = UIColor(red: 0.16, green: 0.78, blue: 0.40, alpha: 1.0)
-        textView.font = .systemFont(ofSize: 21, weight: .regular)
+        textView.textColor = textColor
+        textView.tintColor = tintColor
+        textView.font = .systemFont(ofSize: 19.5, weight: .medium)
         textView.returnKeyType = .send
-        textView.keyboardAppearance = .dark
+        textView.keyboardAppearance = isDark ? .dark : .light
         textView.isScrollEnabled = true
         textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         textView.textContainer.lineFragmentPadding = 0
@@ -350,6 +539,9 @@ private struct VoiceEditAutoFocusTextView: UIViewRepresentable {
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.onSendReturn = onSendReturn
+        uiView.textColor = textColor
+        uiView.tintColor = tintColor
+        uiView.keyboardAppearance = isDark ? .dark : .light
         if uiView.markedTextRange == nil && uiView.text != text {
             uiView.text = text
             let end = (text as NSString).length

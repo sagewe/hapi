@@ -181,8 +181,11 @@ struct HoldToDictateControllerTests {
         #expect(controller.isAvailable)
 
         controller.beginHold(fingerX: 196, fingerY: 790, containerWidth: 393, containerHeight: 852)
+        #expect(controller.audioLevels.count == 22)
         recorder.pushChunk(Data(repeating: 0x01, count: 3_200), level: 0.6)
         try await Task.sleep(nanoseconds: 30_000_000)
+        #expect(controller.audioLevels.count == 22)
+        #expect(abs((controller.audioLevels.last ?? 0) - 0.6) < 0.001)
 
         await streamer.emitPartial("这是一")
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -215,8 +218,13 @@ struct HoldToDictateControllerTests {
         #expect(controller.phase == .holding(zone: .edit, partialText: "这是一个测", audioLevel: 0))
 
         controller.endHold()
+        // Enters `.editing` synchronously at 0ms with the streaming draft while refining in background
+        #expect(controller.phase == .editing(text: "这是一个测"))
+        #expect(controller.isRefiningEdit == true)
+
         try await Task.sleep(nanoseconds: 50_000_000)
 
+        #expect(controller.isRefiningEdit == false)
         #expect(controller.phase == .editing(text: "这是一个测试"))
         #expect(outcomes.isEmpty)
 

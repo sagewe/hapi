@@ -36,10 +36,10 @@ public enum HoldActionZone: String, Equatable, Sendable {
             return .send
         }
 
-        if fingerX < containerWidth * 0.45 {
+        if fingerX < containerWidth * 0.42 {
             return .cancel
         }
-        if fingerX > containerWidth * 0.55 {
+        if fingerX > containerWidth * 0.58 {
             return .edit
         }
         return .send
@@ -154,7 +154,11 @@ public func encodePCM16MonoWAV(pcm: Data, sampleRate: Int = 16_000) -> Data {
 /// - Supports center release (`松手 发送`), left slide (`松手 取消`), and right slide (`松手 编辑`)
 @MainActor @Observable
 public final class HoldToDictateController {
+    public static let defaultAudioLevels: [Float] = Array(repeating: 0.14, count: 22)
+
     public private(set) var phase: HoldDictationPhase = .idle
+    public private(set) var audioLevels: [Float] = HoldToDictateController.defaultAudioLevels
+    public private(set) var isRefiningEdit = false
     public private(set) var isAvailable = false
 
     @ObservationIgnored public var onOutcome: (@MainActor (HoldDictationOutcome) -> Void)?
@@ -214,6 +218,8 @@ public final class HoldToDictateController {
 
         // Enter `.holding` immediately (0ms visual overlay + haptic parity with MyDots)
         // before starting CoreAudio hardware.
+        audioLevels = Self.defaultAudioLevels
+        isRefiningEdit = false
         phase = .holding(zone: .send, partialText: "", audioLevel: 0)
 
         do {
@@ -305,7 +311,15 @@ public final class HoldToDictateController {
             return
         }
 
-        phase = .finalizing(zone: zone, partialText: partialText)
+        let baselinePartial = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if zone == .edit {
+            // Open the voice text editor immediately (0ms) with the live streaming draft,
+            // and refine seamlessly in the background if the user hasn't started typing.
+            isRefiningEdit = true
+            phase = .editing(text: baselinePartial)
+        } else {
+            phase = .finalizing(zone: zone, partialText: partialText)
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -332,7 +346,7 @@ public final class HoldToDictateController {
                 if case .finalizing(_, let latestPartial) = self.phase {
                     return latestPartial
                 }
-                return partialText
+                return baselinePartial
             }()
 
             if (resolvedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
@@ -341,24 +355,33 @@ public final class HoldToDictateController {
             }
 
             guard self.sessionGeneration == gen else { return }
+            self.isRefiningEdit = false
 
             let finalCandidate = (resolvedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
                 ? resolvedText!
                 : fallbackPartial
             let cleaned = finalCandidate.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            guard !cleaned.isEmpty else {
-                self.phase = .idle
-                self.onOutcome?(.error("未识别到语音内容"))
-                return
-            }
-
             switch zone {
             case .send:
+                guard !cleaned.isEmpty else {
+                    self.phase = .idle
+                    self.onOutcome?(.error("未识别到语音内容"))
+                    return
+                }
                 self.phase = .idle
                 self.onOutcome?(.sendText(cleaned))
             case .edit:
-                self.phase = .editing(text: cleaned)
+                guard case .editing(let currentText) = self.phase else { return }
+                let currentTrimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if cleaned.isEmpty && currentTrimmed.isEmpty {
+                    self.phase = .idle
+                    self.onOutcome?(.error("未识别到语音内容"))
+                    return
+                }
+                if !cleaned.isEmpty && (currentTrimmed.isEmpty || currentText == baselinePartial) {
+                    self.phase = .editing(text: cleaned)
+                }
             case .cancel:
                 self.phase = .idle
             }
@@ -378,6 +401,7 @@ public final class HoldToDictateController {
             return
         }
         sessionGeneration &+= 1
+        isRefiningEdit = false
         teardownStream()
         phase = .idle
     }
@@ -388,7 +412,7 @@ public final class HoldToDictateController {
         phase = .editing(text: text)
     }
 
-    /// Taps the green `发送` button in the focused edit overlay.
+    /// Taps the `发送` button in the focused edit overlay.
     public func confirmEditSend(_ overrideText: String? = nil) {
         let raw: String
         if let overrideText {
@@ -401,6 +425,8 @@ public final class HoldToDictateController {
         let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         sessionGeneration &+= 1
+        isRefiningEdit = false
+        teardownStream()
         phase = .idle
         onOutcome?(.sendText(cleaned))
     }
@@ -410,6 +436,7 @@ public final class HoldToDictateController {
     private func handleCapturedChunk(_ chunk: Data, level: Float, generation: UInt64) {
         guard sessionGeneration == generation,
               case .holding(let zone, let partialText, _) = phase else { return }
+        pushAudioLevel(level)
         phase = .holding(zone: zone, partialText: partialText, audioLevel: level)
 
         guard !streamFailed else { return }
@@ -436,8 +463,18 @@ public final class HoldToDictateController {
         }
     }
 
+    private func pushAudioLevel(_ next: Float) {
+        var copy = audioLevels
+        if !copy.isEmpty {
+            copy.removeFirst()
+        }
+        copy.append(min(max(next, 0.10), 1.0))
+        audioLevels = copy
+    }
+
     private func cancelActiveTake() {
         sessionGeneration &+= 1
+        isRefiningEdit = false
         recorder.cancel()
         teardownStream()
         phase = .idle
