@@ -1,8 +1,12 @@
 import {
     CREATABLE_AGENT_FLAVORS,
+    GROK_PERMISSION_MODES,
     getPermissionModesForFlavor,
+    normalizeCopilotAgentMode,
     resolveHapiYoloPermissionMode,
     type AgentFlavor,
+    type CodexCollaborationMode,
+    type CopilotAgentMode,
     type PermissionMode
 } from '@hapi/protocol'
 import {
@@ -31,6 +35,8 @@ export type PreferredLaunchSettings = {
     modelReasoningEffort: CodexReasoningEffort
     serviceTier?: NewSessionServiceTier
     permissionMode?: PermissionMode
+    collaborationMode?: CodexCollaborationMode
+    copilotAgentMode?: CopilotAgentMode
 }
 
 // Only launchable flavors are valid defaults; a stale 'gemini' preference
@@ -147,6 +153,13 @@ export function loadPreferredLaunchSettings(
                 ? parsed.permissionMode as PermissionMode
                 : 'default'
             : undefined
+        const collaborationMode = agent === 'codex'
+            && (parsed.collaborationMode === 'plan' || parsed.collaborationMode === 'default')
+            ? parsed.collaborationMode
+            : undefined
+        const copilotAgentMode = agent === 'copilot' && typeof parsed.copilotAgentMode === 'string'
+            ? normalizeCopilotAgentMode(parsed.copilotAgentMode)
+            : undefined
         return {
             model: parsed.model,
             cursorSelectedBase: typeof parsed.cursorSelectedBase === 'string'
@@ -158,7 +171,9 @@ export function loadPreferredLaunchSettings(
                 : 'default',
             ...(agent === 'codex' && (parsed.serviceTier === 'fast' || parsed.serviceTier === 'standard')
                 ? { serviceTier: parsed.serviceTier } : {}),
-            ...(permissionMode ? { permissionMode } : {})
+            ...(permissionMode ? { permissionMode } : {}),
+            ...(collaborationMode ? { collaborationMode } : {}),
+            ...(copilotAgentMode ? { copilotAgentMode } : {})
         }
     } catch {
         return null
@@ -252,7 +267,11 @@ export function resolvePreferredLaunchSettings(
                 : legacyYoloBridgeMode && availablePermissionModes.includes(legacyYoloBridgeMode)
                     ? legacyYoloBridgeMode
                     : hubMode ?? 'default'
-        : undefined
+        : agent === 'grok' && preferredPermissionMode !== undefined
+            ? (GROK_PERMISSION_MODES as readonly string[]).includes(preferredPermissionMode)
+                ? preferredPermissionMode
+                : 'default'
+            : undefined
 
     return {
         model,
@@ -260,6 +279,10 @@ export function resolvePreferredLaunchSettings(
         effort,
         modelReasoningEffort,
         ...(agent === 'codex' && preferred?.serviceTier ? { serviceTier: preferred.serviceTier } : {}),
-        ...(permissionMode ? { permissionMode } : {})
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(agent === 'codex' && preferred?.collaborationMode
+            ? { collaborationMode: preferred.collaborationMode } : {}),
+        ...(agent === 'copilot' && preferred?.copilotAgentMode
+            ? { copilotAgentMode: preferred.copilotAgentMode } : {})
     }
 }

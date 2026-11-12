@@ -263,7 +263,15 @@ vi.mock('./PermissionField', () => ({
         </>
     )
 }))
-vi.mock('./CopilotAgentModeSelector', () => ({ CopilotAgentModeSelector: () => null }))
+vi.mock('./CopilotAgentModeSelector', () => ({
+    CopilotAgentModeSelector: (props: { agent: string; value: string; onChange: (value: string) => void }) => (
+        props.agent === 'copilot' ? (
+            <button type="button" data-testid="copilot-agent-mode" onClick={() => props.onChange('autopilot')}>
+                {props.value}
+            </button>
+        ) : null
+    )
+}))
 vi.mock('./OpencodeModelSelector', () => ({
     OpencodeModelSelector: (props: { selectedModel: string | null | undefined; onModelChange: (model: string | null) => void }) => (
         <>
@@ -2547,5 +2555,67 @@ describe('NewSession launch preferences', () => {
             agent: 'agy',
             model: 'hub-agy-model'
         }))
+    })
+
+    it('remembers Codex collaborationMode, Copilot copilotAgentMode, and Grok permissionMode after successful launches', async () => {
+        mocks.spawnSession.mockResolvedValue({ type: 'success', sessionId: 'session-1' })
+
+        // 1. Codex collaborationMode ('plan')
+        savePreferredAgent('codex')
+        const codexForm = (
+            <NewSession
+                api={api}
+                machines={[machine]}
+                initialMachineId="machine-1"
+                initialDirectory="C:\\repo"
+                onSuccess={mocks.onSuccess}
+                onCancel={() => {}}
+            />
+        )
+        const codexFirst = renderWithQuery(codexForm)
+        const collabOption = await screen.findByRole('option', { name: /plan/i })
+        const collabSelect = collabOption.closest('select')!
+        expect(collabSelect).toHaveValue('default')
+        fireEvent.change(collabSelect, { target: { value: 'plan' } })
+        await waitFor(() => expect(screen.getByTestId('create')).toBeEnabled())
+        fireEvent.click(screen.getByTestId('create'))
+        await waitFor(() => expect(loadPreferredLaunchSettings('machine-1', 'codex')?.collaborationMode).toBe('plan'))
+        codexFirst.unmount()
+
+        const codexReopen = renderWithQuery(codexForm)
+        const reopenedCollabOption = await screen.findByRole('option', { name: /plan/i })
+        expect(reopenedCollabOption.closest('select')).toHaveValue('plan')
+        codexReopen.unmount()
+
+        // 2. Copilot copilotAgentMode ('autopilot')
+        savePreferredAgent('copilot')
+        const copilotFirst = renderWithQuery(codexForm)
+        const copilotModeBtn = await screen.findByTestId('copilot-agent-mode')
+        expect(copilotModeBtn).toHaveTextContent('interactive')
+        fireEvent.click(copilotModeBtn)
+        expect(copilotModeBtn).toHaveTextContent('autopilot')
+        await waitFor(() => expect(screen.getByTestId('create')).toBeEnabled())
+        fireEvent.click(screen.getByTestId('create'))
+        await waitFor(() => expect(loadPreferredLaunchSettings('machine-1', 'copilot')?.copilotAgentMode).toBe('autopilot'))
+        copilotFirst.unmount()
+
+        const copilotReopen = renderWithQuery(codexForm)
+        await waitFor(() => expect(screen.getByTestId('copilot-agent-mode')).toHaveTextContent('autopilot'))
+        copilotReopen.unmount()
+
+        // 3. Grok permissionMode ('plan')
+        savePreferredAgent('grok')
+        const grokFirst = renderWithQuery(codexForm)
+        await waitFor(() => expect(screen.getByTestId('permission-mode')).toHaveTextContent('default'))
+        fireEvent.click(screen.getByTestId('permission-mode-plan'))
+        expect(screen.getByTestId('permission-mode')).toHaveTextContent('plan')
+        await waitFor(() => expect(screen.getByTestId('create')).toBeEnabled())
+        fireEvent.click(screen.getByTestId('create'))
+        await waitFor(() => expect(loadPreferredLaunchSettings('machine-1', 'grok')?.permissionMode).toBe('plan'))
+        grokFirst.unmount()
+
+        const grokReopen = renderWithQuery(codexForm)
+        await waitFor(() => expect(screen.getByTestId('permission-mode')).toHaveTextContent('plan'))
+        grokReopen.unmount()
     })
 })

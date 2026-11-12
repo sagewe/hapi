@@ -1122,20 +1122,28 @@ export function NewSession(props: {
         setEffort(preferred.effort)
         setModelReasoningEffort(preferred.modelReasoningEffort)
         setServiceTier(agent === 'codex' ? preferred.serviceTier ?? 'standard' : 'standard')
+        setCollaborationMode(agent === 'codex' ? preferred.collaborationMode ?? 'default' : 'default')
+        setCopilotAgentMode(agent === 'copilot' ? preferred.copilotAgentMode ?? 'interactive' : 'interactive')
         if (usesSharedPermissionMode) {
             setNativePermissionMode(preferred.permissionMode ?? 'default')
         }
         if (agent === 'grok' && !editedPermissionRef.current) {
-            const hubMode = hubPermissionModeRef.current
-            if (
-                hubMode === 'default'
-                || hubMode === 'auto'
-                || hubMode === 'plan'
-                || hubMode === 'bypassPermissions'
-            ) {
-                setGrokPermissionMode(hubMode)
-            } else if (hubMode && isYoloStylePermissionMode(hubMode)) {
-                setGrokPermissionMode('bypassPermissions')
+            if (preferred.permissionMode) {
+                setGrokPermissionMode(preferred.permissionMode as GrokPermissionMode)
+            } else {
+                const hubMode = hubPermissionModeRef.current
+                if (
+                    hubMode === 'default'
+                    || hubMode === 'auto'
+                    || hubMode === 'plan'
+                    || hubMode === 'bypassPermissions'
+                ) {
+                    setGrokPermissionMode(hubMode)
+                } else if (hubMode && isYoloStylePermissionMode(hubMode)) {
+                    setGrokPermissionMode('bypassPermissions')
+                } else {
+                    setGrokPermissionMode('default')
+                }
             }
         }
         // Flavor-specific selectors own the spawn model for OpenCode / AGY.
@@ -1984,7 +1992,13 @@ export function NewSession(props: {
                 effort,
                 modelReasoningEffort,
                 ...(agent === 'codex' && showCodexFastMode ? { serviceTier } : {}),
-                ...(usesSharedPermissionMode ? { permissionMode: nativePermissionMode } : {})
+                ...(usesSharedPermissionMode
+                    ? { permissionMode: nativePermissionMode }
+                    : agent === 'grok'
+                        ? { permissionMode: grokPermissionMode }
+                        : {}),
+                ...(agent === 'codex' && collaborationMode !== 'default' ? { collaborationMode } : {}),
+                ...(agent === 'copilot' && copilotAgentMode !== 'interactive' ? { copilotAgentMode } : {})
             }
             const resolvedServiceTier = agent === 'codex' && showCodexFastMode
                 ? serviceTier

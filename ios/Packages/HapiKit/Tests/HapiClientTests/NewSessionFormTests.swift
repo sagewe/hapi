@@ -354,4 +354,48 @@ struct NewSessionLogicTests {
             try HapiJSON.decoder.decode(NewSessionForm.self, from: unknownMode)
         }
     }
+
+    @Test func launchPreferencesRoundTripAndApplyWithoutPersistingWorktree() throws {
+        let codexForm = NewSessionForm(
+            machineId: "m1",
+            directory: "/repo",
+            agent: .codex,
+            model: "gpt-5.2-codex",
+            modelReasoningEffort: "high",
+            permissionMode: .yolo,
+            sessionType: .worktree,
+            worktreeName: "feat-1",
+            serviceTier: .fast,
+            collaborationMode: .plan
+        )
+        let saved = NewSessionLaunchPreferences(from: codexForm, codexFastTierVisible: true)
+        let encoded = try HapiJSON.encoder.encode(saved)
+        let decoded = try HapiJSON.decoder.decode(NewSessionLaunchPreferences.self, from: encoded)
+        #expect(decoded == saved)
+
+        let restored = NewSessionLogic.applyLaunchPreferences(
+            decoded,
+            to: NewSessionForm(machineId: "m1", directory: "/repo"),
+            agent: .codex
+        )
+        #expect(restored.agent == .codex)
+        #expect(restored.model == "gpt-5.2-codex")
+        #expect(restored.modelReasoningEffort == "high")
+        #expect(restored.permissionMode == .yolo)
+        #expect(restored.serviceTier == .fast)
+        #expect(restored.collaborationMode == .plan)
+        #expect(restored.sessionType == .simple)
+        #expect(restored.worktreeName.isEmpty)
+
+        // Hidden fast tier normalizes to standard when saving.
+        let normalizedTier = NewSessionLaunchPreferences(from: codexForm, codexFastTierVisible: false)
+        #expect(normalizedTier.serviceTier == .standard)
+
+        // Unknown enum values in stored JSON degrade gracefully to defaults.
+        let futureBlob = Data(#"{"model":"opus","permissionMode":"future-mode","collaborationMode":"future"}"#.utf8)
+        let degraded = try HapiJSON.decoder.decode(NewSessionLaunchPreferences.self, from: futureBlob)
+        #expect(degraded.model == "opus")
+        #expect(degraded.permissionMode == .default)
+        #expect(degraded.collaborationMode == .default)
+    }
 }

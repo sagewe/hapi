@@ -32,6 +32,7 @@ struct NewSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        model.cancel()
                         dismiss()
                     }
                 }

@@ -106,6 +106,78 @@ public struct NewSessionForm: Codable, Equatable, Sendable {
     }
 }
 
+/// Per `(machineId, agent)` launch configuration remembered when a session is
+/// created, so the next New Session sheet defaults to the last used setup while
+/// keeping `sessionType` reset to `.simple`.
+public struct NewSessionLaunchPreferences: Codable, Equatable, Sendable {
+    public var model: String
+    public var effort: String
+    public var modelReasoningEffort: String
+    public var permissionMode: PermissionMode
+    public var yolo: Bool
+    public var serviceTier: ServiceTier
+    public var collaborationMode: CodexCollaborationMode
+    public var copilotAgentMode: CopilotAgentMode
+
+    public init(
+        model: String = "auto",
+        effort: String = "auto",
+        modelReasoningEffort: String = "default",
+        permissionMode: PermissionMode = .default,
+        yolo: Bool = false,
+        serviceTier: ServiceTier = .standard,
+        collaborationMode: CodexCollaborationMode = .default,
+        copilotAgentMode: CopilotAgentMode = .interactive
+    ) {
+        self.model = model
+        self.effort = effort
+        self.modelReasoningEffort = modelReasoningEffort
+        self.permissionMode = permissionMode
+        self.yolo = yolo
+        self.serviceTier = serviceTier
+        self.collaborationMode = collaborationMode
+        self.copilotAgentMode = copilotAgentMode
+    }
+
+    public init(from form: NewSessionForm, codexFastTierVisible: Bool) {
+        let trimmedModel = form.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.model = trimmedModel.isEmpty ? "auto" : trimmedModel
+        self.effort = form.effort
+        self.modelReasoningEffort = form.modelReasoningEffort
+        self.permissionMode = form.permissionMode
+        self.yolo = form.yolo
+        self.serviceTier = (form.agent == .codex && codexFastTierVisible) ? form.serviceTier : .standard
+        self.collaborationMode = form.agent == .codex ? form.collaborationMode : .default
+        self.copilotAgentMode = form.agent == .copilot ? form.copilotAgentMode : .interactive
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case model, effort, modelReasoningEffort, permissionMode, yolo
+        case serviceTier, collaborationMode, copilotAgentMode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = (try? container.decodeIfPresent(String.self, forKey: .model)) ?? "auto"
+        effort = (try? container.decodeIfPresent(String.self, forKey: .effort)) ?? "auto"
+        modelReasoningEffort = (try? container.decodeIfPresent(String.self, forKey: .modelReasoningEffort))
+            ?? "default"
+        permissionMode = (try? container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode))
+            ?? .default
+        yolo = (try? container.decodeIfPresent(Bool.self, forKey: .yolo)) ?? false
+        serviceTier = (try? container.decodeIfPresent(ServiceTier.self, forKey: .serviceTier))
+            ?? .standard
+        collaborationMode = (try? container.decodeIfPresent(
+            CodexCollaborationMode.self,
+            forKey: .collaborationMode
+        )) ?? .default
+        copilotAgentMode = (try? container.decodeIfPresent(
+            CopilotAgentMode.self,
+            forKey: .copilotAgentMode
+        )) ?? .interactive
+    }
+}
+
 /// Pure new-session logic (Android `NewSessionLogic` port; web reference in
 /// each doc comment).
 public enum NewSessionLogic {
@@ -463,5 +535,67 @@ public enum NewSessionLogic {
             base.permissionMode = .default
         }
         return base
+    }
+
+    /// Applies remembered per-`(machineId, agent)` launch preferences (or clean
+    /// defaults when none were saved yet) onto `form`, preserving `machineId`,
+    /// `directory`, `sessionType`, and `worktreeName`.
+    public static func applyLaunchPreferences(
+        _ preferences: NewSessionLaunchPreferences?,
+        to form: NewSessionForm,
+        agent: AgentFlavor,
+        fallbackYolo: Bool = false
+    ) -> NewSessionForm {
+        let resolvedAgent = AgentFlavor.creatableFlavors.contains(agent) ? agent : .claude
+        let rawModel = preferences?.model.trimmingCharacters(in: .whitespacesAndNewlines) ?? "auto"
+        let normalizedModel = rawModel.isEmpty ? "auto" : rawModel
+        let model: String
+        if resolvedAgent == .claude {
+            model = NewSessionCatalogs.claudeModels.contains(where: { $0.value == normalizedModel })
+                ? normalizedModel
+                : "auto"
+        } else {
+            model = normalizedModel
+        }
+
+        let rawEffort = preferences?.effort ?? "auto"
+        let effort: String
+        if resolvedAgent == .claude {
+            effort = NewSessionCatalogs.claudeEfforts.contains(where: { $0.value == rawEffort })
+                ? rawEffort
+                : "auto"
+        } else {
+            effort = rawEffort
+        }
+
+        let rawReasoningEffort = preferences?.modelReasoningEffort ?? "default"
+        let modelReasoningEffort: String
+        if resolvedAgent == .opencode,
+           rawReasoningEffort == "xhigh" {
+            modelReasoningEffort = "default"
+        } else {
+            modelReasoningEffort = rawReasoningEffort
+        }
+
+        let candidatePermission = preferences?.permissionMode ?? .default
+        let permissionMode = resolvedAgent.permissionModes.contains(candidatePermission)
+            ? candidatePermission
+            : .default
+
+        var next = form
+        next.agent = resolvedAgent
+        next.model = model
+        next.effort = effort
+        next.modelReasoningEffort = modelReasoningEffort
+        next.permissionMode = permissionMode
+        next.yolo = preferences?.yolo ?? fallbackYolo
+        next.serviceTier = resolvedAgent == .codex ? (preferences?.serviceTier ?? .standard) : .standard
+        next.collaborationMode = resolvedAgent == .codex
+            ? (preferences?.collaborationMode ?? .default)
+            : .default
+        next.copilotAgentMode = resolvedAgent == .copilot
+            ? (preferences?.copilotAgentMode ?? .interactive)
+            : .interactive
+        return next
     }
 }

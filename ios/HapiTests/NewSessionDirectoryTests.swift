@@ -123,6 +123,95 @@ final class NewSessionDirectoryTests: XCTestCase {
         XCTAssertEqual(harness.model.spawnError, NewSessionModel.msgMachineOffline)
         XCTAssertEqual(harness.model.form.machineId, "m1")
     }
+
+    func testRemembersLastCreatedLaunchConfigAcrossReopenAgentSwitchAndCancel() async throws {
+        let harness = try NewSessionDirectoryHarness()
+        defer { harness.model.stopDirectoryWork() }
+        await harness.http.setAvailableAgents([.claude, .codex, .agy])
+
+        await harness.model.start()
+        try await newSessionEventually { !harness.model.agentAvailabilityLoading }
+
+        // 1. Create a Claude worktree session with custom model, effort, and permission.
+        harness.model.setDirectory("/project/claude")
+        harness.model.setModel("opus")
+        harness.model.setEffort("high")
+        harness.model.setPermissionMode(.plan)
+        harness.model.setSessionType(.worktree)
+        harness.model.setWorktreeName("temp-branch")
+        try await newSessionEventually { harness.model.canCreate }
+        harness.model.create()
+        try await newSessionEventually { !harness.model.isSpawning }
+
+        // 2. Reopen New Session: remembers Claude + opus + high + plan + recent directory,
+        //    while resetting Session Type back to Simple and clearing worktree name.
+        let reopened1 = harness.makeModel()
+        defer { reopened1.stopDirectoryWork() }
+        await reopened1.start()
+        try await newSessionEventually {
+            reopened1.form.directory == "/project/claude" && !reopened1.agentAvailabilityLoading
+        }
+        XCTAssertEqual(reopened1.form.machineId, "m1")
+        XCTAssertEqual(reopened1.form.agent, .claude)
+        XCTAssertEqual(reopened1.form.model, "opus")
+        XCTAssertEqual(reopened1.form.effort, "high")
+        XCTAssertEqual(reopened1.form.permissionMode, .plan)
+        XCTAssertEqual(reopened1.form.sessionType, .simple)
+        XCTAssertEqual(reopened1.form.worktreeName, "")
+        XCTAssertNil(harness.prefs.readDraft())
+
+        // 3. Switch to Antigravity (agy), enable YOLO + pick model, and create.
+        reopened1.setAgent(.agy)
+        try await newSessionEventually { reopened1.agentModels != .loading }
+        reopened1.setDirectory("/project/agy")
+        reopened1.setModel("gemini-3.1-pro-high")
+        reopened1.setYolo(true)
+        try await newSessionEventually { reopened1.canCreate }
+        reopened1.create()
+        try await newSessionEventually { !reopened1.isSpawning }
+
+        // 4. Reopen New Session: defaults to agy + gemini-3.1-pro-high + yolo=true + /project/agy;
+        //    switching back to Claude restores Claude's saved opus + high + plan;
+        //    tapping Cancel discards unsaved edits so the next open still defaults to agy.
+        let reopened2 = harness.makeModel()
+        defer { reopened2.stopDirectoryWork() }
+        await reopened2.start()
+        try await newSessionEventually {
+            reopened2.form.directory == "/project/agy"
+                && !reopened2.agentAvailabilityLoading
+                && reopened2.agentModels != .loading
+        }
+        XCTAssertEqual(reopened2.form.agent, .agy)
+        XCTAssertEqual(reopened2.form.model, "gemini-3.1-pro-high")
+        XCTAssertTrue(reopened2.form.yolo)
+
+        reopened2.setAgent(.claude)
+        XCTAssertEqual(reopened2.form.model, "opus")
+        XCTAssertEqual(reopened2.form.effort, "high")
+        XCTAssertEqual(reopened2.form.permissionMode, .plan)
+        XCTAssertNotNil(harness.prefs.readDraft())
+
+        reopened2.cancel()
+        XCTAssertNil(harness.prefs.readDraft())
+
+        let reopened3 = harness.makeModel()
+        defer { reopened3.stopDirectoryWork() }
+        await reopened3.start()
+        try await newSessionEventually { !reopened3.agentAvailabilityLoading }
+        XCTAssertEqual(reopened3.form.agent, .agy)
+        XCTAssertEqual(reopened3.form.model, "gemini-3.1-pro-high")
+        XCTAssertTrue(reopened3.form.yolo)
+    }
+
+    func testLegacyPrefsWithoutLaunchFieldsDecodeCleanly() throws {
+        let legacyJSON = Data(#"{"lastMachineId":"m2","recentPaths":{"m2":["/legacy"]}}"#.utf8)
+        let decoded = try HapiJSON.decoder.decode(NewSessionPrefsData.self, from: legacyJSON)
+        XCTAssertEqual(decoded.lastMachineId, "m2")
+        XCTAssertEqual(decoded.recentPaths, ["m2": ["/legacy"]])
+        XCTAssertNil(decoded.lastAgent)
+        XCTAssertNil(decoded.lastYolo)
+        XCTAssertTrue(decoded.launchSettings.isEmpty)
+    }
 }
 
 @MainActor
@@ -143,6 +232,7 @@ private final class NewSessionDirectoryHarness {
     let session: HubSession
     let model: NewSessionModel
     let prefs: NewSessionPrefsStore
+    private let defaults: UserDefaults
 
     init() throws {
         let hubUrl = "https://directory-\(UUID().uuidString.lowercased()).test"
@@ -150,9 +240,13 @@ private final class NewSessionDirectoryHarness {
         let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
         try credentials.store(HubCredentials(hubUrl: hubUrl, accessToken: "test", jwt: "e30.\(payload).test"))
         session = try XCTUnwrap(HubSession(hubUrl: hubUrl, credentialStore: credentials, performer: http))
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         prefs = NewSessionPrefsStore(hubUrl: hubUrl, defaults: defaults)
         model = NewSessionModel(session: session, defaults: defaults, onCreated: { _ in })
+    }
+
+    func makeModel() -> NewSessionModel {
+        NewSessionModel(session: session, defaults: defaults, onCreated: { _ in })
     }
 }
 
@@ -163,7 +257,9 @@ private actor NewSessionDirectoryHTTP: HTTPPerforming {
     private(set) var waitingPaths: Set<String> = []
     private var heldPaths: Set<String> = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var availableAgents: [AgentFlavor] = [.claude]
 
+    func setAvailableAgents(_ agents: [AgentFlavor]) { availableAgents = agents }
     func holdPath(_ path: String) { heldPaths.insert(path) }
     func releasePaths() {
         heldPaths = []
@@ -187,7 +283,12 @@ private actor NewSessionDirectoryHTTP: HTTPPerforming {
             }
             data = try HapiJSON.encoder.encode(Roster(machines: machines))
         } else if url.path.hasSuffix("/agent-availability") {
-            data = Data(#"{"agents":[{"agent":"claude","available":true}]}"#.utf8)
+            struct AvailabilityBody: Encodable { let agents: [AgentAvailabilityEntry] }
+            data = try HapiJSON.encoder.encode(AvailabilityBody(
+                agents: availableAgents.map { AgentAvailabilityEntry(agent: $0, available: true) }
+            ))
+        } else if url.path.hasSuffix("/agy-models") {
+            data = Data(#"{"success":true,"availableModels":[{"modelId":"gemini-3.1-pro-high","name":"Gemini 3.1 Pro (High)"}]}"#.utf8)
         } else if url.path.hasSuffix("/list-directory") {
             data = Data(#"{"success":true,"entries":[]}"#.utf8)
         } else if url.path.hasSuffix("/paths/exists") {

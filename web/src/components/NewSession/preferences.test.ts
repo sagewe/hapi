@@ -332,4 +332,61 @@ describe('NewSession preferences', () => {
             permissionMode: 'default'
         })
     })
+
+    it('round-trips Codex collaborationMode, Copilot copilotAgentMode, and Grok permissionMode', () => {
+        savePreferredLaunchSettings('machine-1', 'codex', {
+            model: 'gpt-5.6-sol',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'high',
+            permissionMode: 'yolo',
+            serviceTier: 'fast',
+            collaborationMode: 'plan'
+        })
+        savePreferredLaunchSettings('machine-1', 'copilot', {
+            model: 'claude-sonnet-4',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'default',
+            permissionMode: 'yolo',
+            copilotAgentMode: 'autopilot'
+        })
+        savePreferredLaunchSettings('machine-1', 'grok', {
+            model: 'grok-4',
+            cursorSelectedBase: 'auto',
+            effort: 'high',
+            modelReasoningEffort: 'default',
+            permissionMode: 'plan'
+        })
+
+        const codex = loadPreferredLaunchSettings('machine-1', 'codex')
+        expect(resolvePreferredLaunchSettings('codex', codex)).toEqual({
+            model: 'gpt-5.6-sol',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'high',
+            permissionMode: 'yolo',
+            serviceTier: 'fast',
+            collaborationMode: 'plan'
+        })
+
+        const copilot = loadPreferredLaunchSettings('machine-1', 'copilot')
+        expect(resolvePreferredLaunchSettings('copilot', copilot)).toEqual({
+            model: 'claude-sonnet-4',
+            cursorSelectedBase: 'auto',
+            effort: 'auto',
+            modelReasoningEffort: 'default',
+            permissionMode: 'yolo',
+            copilotAgentMode: 'autopilot'
+        })
+
+        const grok = loadPreferredLaunchSettings('machine-1', 'grok')
+        expect(resolvePreferredLaunchSettings('grok', grok)).toEqual({
+            model: 'grok-4',
+            cursorSelectedBase: 'auto',
+            effort: 'high',
+            modelReasoningEffort: 'default',
+            permissionMode: 'plan'
+        })
+    })
 })

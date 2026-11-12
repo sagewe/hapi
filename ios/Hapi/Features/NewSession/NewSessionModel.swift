@@ -73,16 +73,66 @@ private struct CachedAgentModels {
 
 // MARK: - Persistence
 
-/// Create-form persistence: last-used machine + per-machine recent paths
-/// (web `useRecentPaths`) and the in-progress draft (web
-/// `newSessionFormDraft.ts`) so backing out of the sheet loses nothing.
-/// JSON blobs in `UserDefaults`, keyed per hub (the Android original keys
-/// app-wide; per-hub matches this app's multi-hub stores).
+/// Create-form persistence: last-used machine, last-used agent, sticky YOLO
+/// preference, per-machine recent paths (web `useRecentPaths`), per
+/// `(machineId, agent)` launch configuration (web `preferences.ts`), and the
+/// in-progress draft (web `newSessionFormDraft.ts`) so backing out of the sheet
+/// loses nothing. JSON blobs in `UserDefaults`, keyed per hub (the Android
+/// original keys app-wide; per-hub matches this app's multi-hub stores).
 struct NewSessionPrefsData: Codable, Equatable {
     var lastMachineId: String?
     /// Machine id → most-recent-first spawn directories
     /// (cap `NewSessionLogic.maxRecentPaths`).
     var recentPaths: [String: [String]] = [:]
+    var lastAgent: AgentFlavor?
+    var lastYolo: Bool?
+    /// Machine id → agent raw value → last-created launch settings.
+    var launchSettings: [String: [String: NewSessionLaunchPreferences]] = [:]
+
+    init(
+        lastMachineId: String? = nil,
+        recentPaths: [String: [String]] = [:],
+        lastAgent: AgentFlavor? = nil,
+        lastYolo: Bool? = nil,
+        launchSettings: [String: [String: NewSessionLaunchPreferences]] = [:]
+    ) {
+        self.lastMachineId = lastMachineId
+        self.recentPaths = recentPaths
+        self.lastAgent = lastAgent
+        self.lastYolo = lastYolo
+        self.launchSettings = launchSettings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastMachineId, recentPaths, lastAgent, lastYolo, launchSettings
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        lastMachineId = try? container.decodeIfPresent(String.self, forKey: .lastMachineId)
+        recentPaths = (try? container.decodeIfPresent([String: [String]].self, forKey: .recentPaths)) ?? [:]
+        lastAgent = try? container.decodeIfPresent(AgentFlavor.self, forKey: .lastAgent)
+        lastYolo = try? container.decodeIfPresent(Bool.self, forKey: .lastYolo)
+        launchSettings = (try? container.decodeIfPresent(
+            [String: [String: NewSessionLaunchPreferences]].self,
+            forKey: .launchSettings
+        )) ?? [:]
+    }
+
+    func launchPreferences(machineId: String?, agent: AgentFlavor) -> NewSessionLaunchPreferences? {
+        guard let machineId else { return nil }
+        return launchSettings[machineId]?[agent.rawValue]
+    }
+
+    mutating func setLaunchPreferences(
+        _ preferences: NewSessionLaunchPreferences,
+        machineId: String,
+        agent: AgentFlavor
+    ) {
+        var perMachine = launchSettings[machineId] ?? [:]
+        perMachine[agent.rawValue] = preferences
+        launchSettings[machineId] = perMachine
+    }
 }
 
 struct NewSessionPrefsStore {
@@ -199,6 +249,8 @@ final class NewSessionModel {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var directoryEdited = false
     @ObservationIgnored private var directoryEditVersion = 0
+    @ObservationIgnored private var hasUnsavedUserEdits = false
+    @ObservationIgnored private var restoredFromDraft = false
 
     init(
         session: HubSession,
@@ -228,9 +280,26 @@ final class NewSessionModel {
             hasStarted = true
             prefsData = prefsStore.readPrefs()
             let draft = prefsStore.readDraft().map(NewSessionLogic.sanitizeDraft)
-            form = draft ?? NewSessionForm()
-            // A saved empty path can be intentional; never replace it on refresh.
-            directoryEdited = draft != nil
+            if let draft {
+                form = draft
+                // A saved empty path can be intentional; never replace it on refresh.
+                directoryEdited = true
+                hasUnsavedUserEdits = true
+                restoredFromDraft = true
+            } else {
+                let initialAgent = prefsData.lastAgent.flatMap {
+                    AgentFlavor.creatableFlavors.contains($0) ? $0 : nil
+                } ?? .claude
+                form = NewSessionLogic.applyLaunchPreferences(
+                    nil,
+                    to: NewSessionForm(),
+                    agent: initialAgent,
+                    fallbackYolo: prefsData.lastYolo ?? false
+                )
+                directoryEdited = false
+                hasUnsavedUserEdits = false
+                restoredFromDraft = false
+            }
             suppressSuggestions = true
         }
         reconcileMachineSelection()
@@ -361,10 +430,18 @@ final class NewSessionModel {
         case (.claude, _):
             return NewSessionCatalogs.claudeModels
         case (.codex, .loaded(let models)):
-            return [NewSessionOption(value: "auto", label: "Default")]
-                + models.map { NewSessionOption(value: $0.id, label: $0.displayName) }
+            return Self.withSelectedOption(
+                [NewSessionOption(value: "auto", label: "Default")]
+                    + models.map { NewSessionOption(value: $0.id, label: $0.displayName) },
+                selected: form.model,
+                defaultSentinel: "auto"
+            )
         case (.codex, .loading), (.codex, .failed):
-            return [NewSessionOption(value: "auto", label: "Default")]
+            return Self.withSelectedOption(
+                [NewSessionOption(value: "auto", label: "Default")],
+                selected: form.model,
+                defaultSentinel: "auto"
+            )
         case (.codex, _):
             return nil // `.unsupported` (old runner)
         default:
@@ -372,11 +449,19 @@ final class NewSessionModel {
         }
         switch agentModels {
         case .loaded(let response):
-            return AgentModelCatalog.newSessionModelOptions(flavor: form.agent, response: response)
+            return Self.withSelectedOption(
+                AgentModelCatalog.newSessionModelOptions(flavor: form.agent, response: response),
+                selected: form.model,
+                defaultSentinel: "auto"
+            )
         case .loading, .failed:
-            return AgentModelCatalog.newSessionModelOptions(
-                flavor: form.agent,
-                response: AgentModelsResponse(success: true)
+            return Self.withSelectedOption(
+                AgentModelCatalog.newSessionModelOptions(
+                    flavor: form.agent,
+                    response: AgentModelsResponse(success: true)
+                ),
+                selected: form.model,
+                defaultSentinel: "auto"
             )
         case .hidden, .unsupported:
             return nil
@@ -405,10 +490,26 @@ final class NewSessionModel {
     /// Claude effort, grok effort or pi thinking level; nil hides the field.
     var effortOptions: [NewSessionOption]? {
         switch form.agent {
-        case .claude: return NewSessionCatalogs.claudeEfforts
-        case .grok: return AgentModelCatalog.grokEffortOptions(response: loadedAgentModels, model: form.model)
-        case .pi: return AgentModelCatalog.piEffortOptions(response: loadedAgentModels, model: form.model)
-        default: return nil
+        case .claude:
+            return NewSessionCatalogs.claudeEfforts
+        case .grok:
+            return Self.withSelectedOption(
+                AgentModelCatalog.grokEffortOptions(response: loadedAgentModels, model: form.model),
+                selected: form.effort,
+                defaultSentinel: "auto",
+                labelTransform: NewSessionCatalogs.effortLabel
+            )
+        case .pi:
+            return AgentModelCatalog.piEffortOptions(response: loadedAgentModels, model: form.model).map {
+                Self.withSelectedOption(
+                    $0,
+                    selected: form.effort,
+                    defaultSentinel: "auto",
+                    labelTransform: AgentModelCatalog.piThinkingLevelLabel
+                )
+            }
+        default:
+            return nil
         }
     }
 
@@ -419,17 +520,33 @@ final class NewSessionModel {
                 variants: opencodeVariants,
                 response: loadedAgentModels,
                 model: form.model
-            )
+            ).map {
+                Self.withSelectedOption(
+                    $0,
+                    selected: form.modelReasoningEffort,
+                    defaultSentinel: "default"
+                )
+            }
         }
         guard form.agent == .codex, codexModels != .unsupported else { return nil }
         if case .loaded(let models) = codexModels,
            let advertised = NewSessionLogic.codexReasoningEfforts(models: models, model: form.model) {
-            return [NewSessionOption(value: "default", label: "Default")]
-                + advertised.map {
-                    NewSessionOption(value: $0, label: NewSessionCatalogs.effortLabel($0))
-                }
+            return Self.withSelectedOption(
+                [NewSessionOption(value: "default", label: "Default")]
+                    + advertised.map {
+                        NewSessionOption(value: $0, label: NewSessionCatalogs.effortLabel($0))
+                    },
+                selected: form.modelReasoningEffort,
+                defaultSentinel: "default",
+                labelTransform: NewSessionCatalogs.effortLabel
+            )
         }
-        return NewSessionCatalogs.codexReasoningEfforts
+        return Self.withSelectedOption(
+            NewSessionCatalogs.codexReasoningEfforts,
+            selected: form.modelReasoningEffort,
+            defaultSentinel: "default",
+            labelTransform: NewSessionCatalogs.effortLabel
+        )
     }
 
     var permission: PermissionUI {
@@ -546,8 +663,20 @@ final class NewSessionModel {
     /// A restored non-default model/effort must not spawn before the
     /// discovered catalog validated it (web `isLaunchPreferenceValidationPending`).
     private var agentModelsValidationPending: Bool {
-        agentModels == .loading
-            && (form.model != "auto" || form.effort != "auto" || form.modelReasoningEffort != "default")
+        let hasNonDefaultSelection = form.model != "auto"
+            || form.effort != "auto"
+            || form.modelReasoningEffort != "default"
+        guard hasNonDefaultSelection else { return false }
+        if agentModels == .loading {
+            return true
+        }
+        if AgentModelCatalog.scope(for: form.agent) == .directory {
+            let cwd = normalizedDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cwd.isEmpty, directoryExists == nil, !directoryOutsideWorkspaceRoots, directoryInput.existenceError == nil {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: - Actions
@@ -556,12 +685,18 @@ final class NewSessionModel {
         guard !isSpawning, machineId != form.machineId,
               session.machineStore.machines.contains(where: { $0.id == machineId && $0.active })
         else { return }
-        applyMachineSelection(machineId, resetDirectory: true)
+        applyMachineSelection(
+            machineId,
+            resetDirectory: true,
+            applyLaunchPrefs: true,
+            markUserEdited: true
+        )
     }
 
     func setDirectory(_ value: String) {
         cancelDefaultDirectoryResolution()
         directoryEdited = true
+        hasUnsavedUserEdits = true
         suppressSuggestions = false
         confirmCreateDirectoryArmed = false
         form.directory = value
@@ -594,23 +729,28 @@ final class NewSessionModel {
     }
 
     func setAgent(_ agent: AgentFlavor) {
+        applyAgentSelection(agent, markUserEdited: true)
+    }
+
+    private func applyAgentSelection(_ agent: AgentFlavor, markUserEdited: Bool) {
         guard agent != form.agent else { return }
-        // Web parity: switching agents resets every agent-dependent field
-        // (yolo is a cross-flavor preference and survives).
-        form.agent = agent
-        form.model = "auto"
-        form.effort = "auto"
-        form.modelReasoningEffort = "default"
-        form.permissionMode = .default
-        form.serviceTier = .standard
-        form.collaborationMode = .default
-        form.copilotAgentMode = .interactive
+        form = NewSessionLogic.applyLaunchPreferences(
+            prefsData.launchPreferences(machineId: form.machineId, agent: agent),
+            to: form,
+            agent: agent,
+            fallbackYolo: prefsData.lastYolo ?? form.yolo
+        )
+        if markUserEdited {
+            hasUnsavedUserEdits = true
+            restoredFromDraft = false
+        }
         persistDraft()
         refreshCodexModelsIfNeeded()
         refreshAgentModelsIfNeeded()
     }
 
     func setModel(_ model: String) {
+        hasUnsavedUserEdits = true
         form.model = model
         if form.agent == .codex {
             form = reconcileCodexSelections(form)
@@ -620,49 +760,63 @@ final class NewSessionModel {
     }
 
     func setEffort(_ effort: String) {
+        hasUnsavedUserEdits = true
         form.effort = effort
         persistDraft()
     }
 
     func setModelReasoningEffort(_ value: String) {
+        hasUnsavedUserEdits = true
         form.modelReasoningEffort = value
         persistDraft()
     }
 
     func setPermissionMode(_ mode: PermissionMode) {
+        hasUnsavedUserEdits = true
         form.permissionMode = mode
         persistDraft()
     }
 
     func setYolo(_ enabled: Bool) {
+        hasUnsavedUserEdits = true
         form.yolo = enabled
         persistDraft()
     }
 
     func setSessionType(_ sessionType: SpawnSessionType) {
+        hasUnsavedUserEdits = true
         confirmCreateDirectoryArmed = false
         form.sessionType = sessionType
         persistDraft()
     }
 
     func setWorktreeName(_ name: String) {
+        hasUnsavedUserEdits = true
         form.worktreeName = name
         persistDraft()
     }
 
     func setServiceTier(_ tier: ServiceTier) {
+        hasUnsavedUserEdits = true
         form.serviceTier = tier
         persistDraft()
     }
 
     func setCollaborationMode(_ mode: CodexCollaborationMode) {
+        hasUnsavedUserEdits = true
         form.collaborationMode = mode
         persistDraft()
     }
 
     func setCopilotAgentMode(_ mode: CopilotAgentMode) {
+        hasUnsavedUserEdits = true
         form.copilotAgentMode = mode
         persistDraft()
+    }
+
+    func cancel() {
+        hasUnsavedUserEdits = false
+        prefsStore.clearDraft()
     }
 
     func retryModels() {
@@ -738,7 +892,7 @@ final class NewSessionModel {
                 )
                 switch try await api.spawnSession(machineId: machineId, request) {
                 case .success(let sessionId):
-                    self.persistOnSuccess(machineId: machineId, directory: directory)
+                    self.persistOnSuccess(form: current, machineId: machineId, directory: directory)
                     self.onCreated(sessionId)
                 case .error(let message, let code, _):
                     self.spawnError = Self.spawnErrorMessage(code: code, fallback: message)
@@ -760,6 +914,7 @@ final class NewSessionModel {
     private func pickPath(_ path: String) {
         cancelDefaultDirectoryResolution()
         directoryEdited = true
+        hasUnsavedUserEdits = true
         suppressSuggestions = true
         confirmCreateDirectoryArmed = false
         form.directory = path
@@ -776,10 +931,20 @@ final class NewSessionModel {
         let machines = session.machineStore.machines.filter(\.active)
         guard !machines.isEmpty else { return }
         let target = machines.first { $0.id == prefsData.lastMachineId } ?? machines[0]
-        applyMachineSelection(target.id, resetDirectory: !directoryEdited && form.trimmedDirectory.isEmpty)
+        applyMachineSelection(
+            target.id,
+            resetDirectory: !directoryEdited && form.trimmedDirectory.isEmpty,
+            applyLaunchPrefs: !restoredFromDraft,
+            markUserEdited: false
+        )
     }
 
-    private func applyMachineSelection(_ machineId: String, resetDirectory: Bool) {
+    private func applyMachineSelection(
+        _ machineId: String,
+        resetDirectory: Bool,
+        applyLaunchPrefs: Bool,
+        markUserEdited: Bool
+    ) {
         directoryBrowser.close()
         cancelDefaultDirectoryResolution()
         directoryInput.stop()
@@ -787,11 +952,22 @@ final class NewSessionModel {
         // The seeded recent path is a pick, not typing — no dropdown.
         suppressSuggestions = true
         form.machineId = machineId
-        form.model = "auto"
+        if applyLaunchPrefs {
+            form = NewSessionLogic.applyLaunchPreferences(
+                prefsData.launchPreferences(machineId: machineId, agent: form.agent),
+                to: form,
+                agent: form.agent,
+                fallbackYolo: prefsData.lastYolo ?? form.yolo
+            )
+        }
         if resetDirectory {
             let machine = session.machineStore.machines.first { $0.id == machineId }
             directoryEdited = false
             form.directory = machine.map(RemoteDirectoryPath.defaultDirectory) ?? ""
+        }
+        if markUserEdited {
+            hasUnsavedUserEdits = true
+            restoredFromDraft = false
         }
         persistDraft()
         if resetDirectory {
@@ -837,6 +1013,8 @@ final class NewSessionModel {
             self.form.directory = valid
             self.persistDraft()
             self.scheduleDirectoryWork()
+            self.directoryInput.acceptExistence(result, machineId: machineId, path: valid)
+            self.refreshAgentModelsIfNeeded()
         }
     }
 
@@ -888,7 +1066,7 @@ final class NewSessionModel {
             else {
                 return
             }
-            self.setAgent(firstAvailable)
+            self.applyAgentSelection(firstAvailable, markUserEdited: self.hasUnsavedUserEdits)
         }
     }
 
@@ -1039,17 +1217,58 @@ final class NewSessionModel {
     }
 
     private func persistDraft() {
+        guard hasUnsavedUserEdits else { return }
         prefsStore.writeDraft(form)
     }
 
-    private func persistOnSuccess(machineId: String, directory: String) {
+    private func persistOnSuccess(form: NewSessionForm, machineId: String, directory: String) {
         prefsData.lastMachineId = machineId
+        prefsData.lastAgent = form.agent
+        if !NewSessionLogic.usesNativePermissionSelect(form.agent),
+           form.agent != .dsh,
+           form.agent != .pi {
+            prefsData.lastYolo = form.yolo
+        }
         prefsData.recentPaths[machineId] = NewSessionLogic.pushRecent(
             prefsData.recentPaths[machineId] ?? [],
             path: directory
         )
+        prefsData.setLaunchPreferences(
+            NewSessionLaunchPreferences(
+                from: form,
+                codexFastTierVisible: codexFastTierVisible(form)
+            ),
+            machineId: machineId,
+            agent: form.agent
+        )
         prefsStore.writePrefs(prefsData)
+        hasUnsavedUserEdits = false
+        restoredFromDraft = false
         prefsStore.clearDraft()
+    }
+
+    /// Ensures a restored non-sentinel selection remains a valid SwiftUI Picker
+    /// tag while dynamic catalogs are still loading or failed.
+    private static func withSelectedOption(
+        _ options: [NewSessionOption],
+        selected: String,
+        defaultSentinel: String,
+        labelTransform: (String) -> String = { $0 }
+    ) -> [NewSessionOption] {
+        let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != defaultSentinel,
+              !options.contains(where: { $0.value == trimmed })
+        else {
+            return options
+        }
+        var next = options
+        let insertIndex = next.first?.value == defaultSentinel ? 1 : 0
+        next.insert(
+            NewSessionOption(value: trimmed, label: labelTransform(trimmed)),
+            at: min(insertIndex, next.count)
+        )
+        return next
     }
 
     private static func spawnErrorMessage(code: String?, fallback: String?) -> String {
