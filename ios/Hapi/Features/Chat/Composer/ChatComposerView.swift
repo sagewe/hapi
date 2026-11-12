@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 /// above the card while the input is a lone slash token, plus selection-aware
 /// `@` session/file suggestions.
 struct ChatComposerView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.hapiTypography) private var typography
     let interactor: ChatInteractor
     /// nil ⇒ dictation unavailable (no controller wired) — mic button hidden.
@@ -108,6 +109,30 @@ struct ChatComposerView: View {
                 ? UIColor(white: 0.12, alpha: 1)
                 : .white
         })
+    }
+
+    private var primaryCircleFill: Color {
+        colorScheme == .dark
+            ? Color.white
+            : Color(red: 0.08, green: 0.09, blue: 0.11)
+    }
+
+    private var primaryCircleForeground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.08, green: 0.09, blue: 0.11)
+            : Color.white
+    }
+
+    private var primaryCircleDisabledFill: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.14)
+            : Color.black.opacity(0.08)
+    }
+
+    private var primaryCircleDisabledForeground: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.42)
+            : Color.black.opacity(0.32)
     }
 
     private var mentionRequest: ComposerMentionFiles.Request? {
@@ -1311,7 +1336,8 @@ struct ChatComposerView: View {
             micButton(dictation)
         }
         #else
-        if (holdDictation?.isAvailable != true), let dictation, dictation.isAvailable {
+        let hasDraft = !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
+        if hasDraft, holdDictation == nil, let dictation, dictation.isAvailable, dictation.state == .idle {
             micButton(dictation)
         }
         #endif
@@ -1465,6 +1491,12 @@ struct ChatComposerView: View {
         return true
     }
 
+    #if !targetEnvironment(macCatalyst)
+    private var hasVoiceInput: Bool {
+        holdDictation != nil || dictation?.isAvailable == true || (dictation != nil && dictation?.state != .idle)
+    }
+    #endif
+
     private func primaryAction(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> ComposerPrimaryAction {
         let hasText = !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasDraft = hasText || !attachments.isEmpty
@@ -1478,13 +1510,23 @@ struct ChatComposerView: View {
         let canSubmit = scheduled
             ? hasText && attachments.isEmpty && !composer.isSending
             : (hasText || attachmentsReady) && !attachmentsBusy && !composer.isSending
-        return if composer.isSending {
-            .sending
-        } else if composer.canStop && !hasDraft {
-            .stop
-        } else {
-            .send(enabled: canSubmit)
+        if composer.isSending {
+            return .sending
         }
+        #if !targetEnvironment(macCatalyst)
+        if let dictation, dictation.state != .idle {
+            return .voice
+        }
+        #endif
+        if composer.canStop && !hasDraft {
+            return .stop
+        }
+        #if !targetEnvironment(macCatalyst)
+        if !hasDraft && !scheduled && hasVoiceInput {
+            return .voice
+        }
+        #endif
+        return .send(enabled: canSubmit)
     }
 
     @ViewBuilder
@@ -1518,8 +1560,8 @@ struct ChatComposerView: View {
                 }
                 #else
                 actionCircle(
-                    background: AnyShapeStyle(.primary),
-                    foreground: AnyShapeStyle(.background)
+                    background: AnyShapeStyle(primaryCircleFill),
+                    foreground: AnyShapeStyle(primaryCircleForeground)
                 ) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: primaryDiameter * 0.34, weight: .bold))
@@ -1528,7 +1570,12 @@ struct ChatComposerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Stop the current turn")
+            .accessibilityIdentifier("chat.composer-stop")
             .help("Stop the current turn (⌘.)")
+        #if !targetEnvironment(macCatalyst)
+        case .voice:
+            voicePrimaryButton
+        #endif
         case .send(let enabled):
             let label = sendLabel(enabled: enabled)
             if scheduled {
@@ -1540,6 +1587,7 @@ struct ChatComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!enabled)
                 .accessibilityLabel("Schedule send")
+                .accessibilityIdentifier("chat.composer-send")
                 .help("Schedule send (↩)")
             } else if composer.canSendAndSteer && enabled {
                 // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
@@ -1555,6 +1603,7 @@ struct ChatComposerView: View {
                 .menuStyle(.button)
                 .buttonStyle(.plain)
                 .accessibilityLabel("Send — long-press to steer")
+                .accessibilityIdentifier("chat.composer-send")
                 .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
             } else {
                 Button {
@@ -1565,10 +1614,94 @@ struct ChatComposerView: View {
                 .buttonStyle(.plain)
                 .disabled(!enabled)
                 .accessibilityLabel("Send")
+                .accessibilityIdentifier("chat.composer-send")
                 .help("Send (↩)")
             }
         }
     }
+
+    #if !targetEnvironment(macCatalyst)
+    @ViewBuilder
+    private var voicePrimaryButton: some View {
+        let isBusy = dictation?.state == .starting || dictation?.state == .transcribing
+        let isRecording: Bool = {
+            if let dictation, case .recording = dictation.state { return true }
+            return false
+        }()
+
+        if isBusy {
+            Button {} label: {
+                actionCircle(
+                    background: AnyShapeStyle(primaryCircleDisabledFill),
+                    foreground: AnyShapeStyle(primaryCircleFill)
+                ) {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .accessibilityLabel(String(localized: "Dictate"))
+            .accessibilityIdentifier("chat.composer-voice")
+        } else if isRecording, let dictation {
+            Button {
+                toggleDictation(dictation)
+            } label: {
+                actionCircle(
+                    background: AnyShapeStyle(Color.red),
+                    foreground: AnyShapeStyle(Color.white)
+                ) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: primaryDiameter * 0.34, weight: .bold))
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Stop dictation"))
+            .accessibilityIdentifier("chat.composer-voice")
+        } else {
+            actionCircle(
+                background: AnyShapeStyle(primaryCircleFill),
+                foreground: AnyShapeStyle(primaryCircleForeground)
+            ) {
+                Image(systemName: "waveform")
+                    .font(.system(size: primaryDiameter * 0.46, weight: .semibold))
+            }
+            .overlay {
+                VoicePrimaryTouchSurface(
+                    holdEnabled: holdDictation != nil,
+                    onTap: {
+                        if let dictation {
+                            toggleDictation(dictation)
+                        } else if let holdDictation {
+                            interactor.postNotice(String(localized: "Hold to dictate"))
+                            _ = holdDictation
+                        }
+                    },
+                    onHoldBegan: { location, windowSize in
+                        if let holdDictation {
+                            handleHoldBegan(location, windowSize: windowSize, controller: holdDictation)
+                        }
+                    },
+                    onHoldChanged: { location, windowSize in
+                        if let holdDictation {
+                            handleHoldChanged(location, windowSize: windowSize, controller: holdDictation)
+                        }
+                    },
+                    onHoldEnded: {
+                        holdDictation?.endHold()
+                    },
+                    onHoldCancelled: {
+                        holdDictation?.cancelIfHolding()
+                    }
+                )
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(String(localized: "Voice input"))
+            .accessibilityIdentifier("chat.composer-voice")
+        }
+    }
+    #endif
 
     private func sendLabel(enabled: Bool) -> some View {
         #if targetEnvironment(macCatalyst)
@@ -1581,8 +1714,8 @@ struct ChatComposerView: View {
         }
         #else
         actionCircle(
-            background: enabled ? AnyShapeStyle(.primary) : AnyShapeStyle(Color.primary.opacity(0.10)),
-            foreground: enabled ? AnyShapeStyle(.background) : AnyShapeStyle(.secondary)
+            background: enabled ? AnyShapeStyle(primaryCircleFill) : AnyShapeStyle(primaryCircleDisabledFill),
+            foreground: enabled ? AnyShapeStyle(primaryCircleForeground) : AnyShapeStyle(primaryCircleDisabledForeground)
         ) {
             Image(systemName: "arrow.up")
                 .font(.system(size: primaryDiameter * 0.46, weight: .bold))
@@ -1607,7 +1740,7 @@ struct ChatComposerView: View {
             .contentShape(Rectangle())
     }
 
-    /// The primary action (send / stop / sending): a filled circle.
+    /// The primary action (send / stop / voice / sending): a filled circle.
     private func actionCircle<Content: View>(
         background: AnyShapeStyle,
         foreground: AnyShapeStyle,
@@ -1621,9 +1754,9 @@ struct ChatComposerView: View {
         let slotHeight: CGFloat = 40
         #endif
         return content()
+            .foregroundStyle(foreground)
             .frame(width: primaryDiameter, height: primaryDiameter)
             .background(background, in: Circle())
-            .foregroundStyle(foreground)
             .frame(minWidth: slotWidth, minHeight: slotHeight)
             .contentShape(Rectangle())
     }
@@ -1827,6 +1960,9 @@ private struct ComposerCardSurface: ViewModifier {
 private enum ComposerPrimaryAction {
     case sending
     case stop
+    #if !targetEnvironment(macCatalyst)
+    case voice
+    #endif
     case send(enabled: Bool)
 
     var canSend: Bool {
@@ -1834,6 +1970,161 @@ private enum ComposerPrimaryAction {
         return false
     }
 }
+
+#if !targetEnvironment(macCatalyst)
+/// Raw touch surface over the empty-state `waveform` voice input circle:
+/// - Quick tap (`< 200ms`) toggles hands-free dictation (`RecordingChipView` -> inserts draft).
+/// - Stationary hold (`>= 200ms`) or drag (`> 14pt`) engages WeChat Hold-to-Dictate seamlessly.
+private struct VoicePrimaryTouchSurface: UIViewRepresentable {
+    var holdEnabled: Bool
+    var onTap: () -> Void
+    var onHoldBegan: (CGPoint, CGSize) -> Void
+    var onHoldChanged: (CGPoint, CGSize) -> Void
+    var onHoldEnded: () -> Void
+    var onHoldCancelled: () -> Void
+
+    func makeUIView(context: Context) -> TouchView {
+        let view = TouchView()
+        view.configure(with: self)
+        return view
+    }
+
+    func updateUIView(_ uiView: TouchView, context: Context) {
+        uiView.configure(with: self)
+    }
+
+    static func dismantleUIView(_ uiView: TouchView, coordinator: ()) {
+        uiView.resetTracking(notifyCancel: false)
+    }
+
+    final class TouchView: UIView {
+        private let exclusiveRecognizer = ComposerTextView.ExclusiveTouchHoldRecognizer(target: nil, action: nil)
+        private var config: VoicePrimaryTouchSurface?
+        private weak var activeTouch: UITouch?
+        private var holdTimer: DispatchWorkItem?
+        private var startWindowPoint: CGPoint = .zero
+        private var latestWindowPoint: CGPoint = .zero
+        private var isTrackingTouch = false
+        private var didEngageHold = false
+        private var cancelledTap = false
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = .clear
+            isMultipleTouchEnabled = false
+            addGestureRecognizer(exclusiveRecognizer)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        func configure(with surface: VoicePrimaryTouchSurface) {
+            self.config = surface
+        }
+
+        private var currentWindowSize: CGSize {
+            if let window {
+                return window.bounds.size
+            }
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            if let keyWindow = scenes.first(where: { $0.activationState == .foregroundActive })?.keyWindow
+                ?? scenes.first?.windows.first {
+                return keyWindow.bounds.size
+            }
+            return CGSize(width: 393, height: 852)
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            guard activeTouch == nil, let touch = touches.first else { return }
+            holdTimer?.cancel()
+            activeTouch = touch
+            isTrackingTouch = true
+            didEngageHold = false
+            cancelledTap = false
+            let pt = touch.location(in: window)
+            startWindowPoint = pt
+            latestWindowPoint = pt
+
+            guard config?.holdEnabled == true else { return }
+            let item = DispatchWorkItem { [weak self] in
+                self?.engageHoldNow()
+            }
+            holdTimer = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20, execute: item)
+        }
+
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+            guard let activeTouch, touches.contains(activeTouch), isTrackingTouch else { return }
+            let pt = activeTouch.location(in: window)
+            latestWindowPoint = pt
+            if didEngageHold {
+                exclusiveRecognizer.moveHold()
+                config?.onHoldChanged(pt, currentWindowSize)
+                return
+            }
+            let dx = pt.x - startWindowPoint.x
+            let dy = pt.y - startWindowPoint.y
+            if config?.holdEnabled == true && (dy < -14 || dx < -14) {
+                engageHoldNow()
+            } else if hypot(dx, dy) > 22 {
+                holdTimer?.cancel()
+                holdTimer = nil
+                cancelledTap = true
+            }
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            guard let activeTouch, touches.contains(activeTouch), isTrackingTouch else { return }
+            holdTimer?.cancel()
+            holdTimer = nil
+            let wasHolding = didEngageHold
+            let wasCancelled = cancelledTap
+            self.activeTouch = nil
+            isTrackingTouch = false
+            didEngageHold = false
+            cancelledTap = false
+
+            if wasHolding {
+                exclusiveRecognizer.endHold()
+                config?.onHoldEnded()
+            } else {
+                exclusiveRecognizer.cancelHold()
+                if !wasCancelled {
+                    config?.onTap()
+                }
+            }
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            guard let activeTouch, touches.contains(activeTouch) else { return }
+            resetTracking(notifyCancel: true)
+        }
+
+        func resetTracking(notifyCancel: Bool) {
+            holdTimer?.cancel()
+            holdTimer = nil
+            let wasHolding = didEngageHold
+            activeTouch = nil
+            isTrackingTouch = false
+            didEngageHold = false
+            cancelledTap = false
+            exclusiveRecognizer.cancelHold()
+            if wasHolding && notifyCancel {
+                config?.onHoldCancelled()
+            }
+        }
+
+        private func engageHoldNow() {
+            guard isTrackingTouch, !didEngageHold, config?.holdEnabled == true else { return }
+            holdTimer?.cancel()
+            holdTimer = nil
+            didEngageHold = true
+            exclusiveRecognizer.engageHold()
+            config?.onHoldBegan(latestWindowPoint, currentWindowSize)
+        }
+    }
+}
+#endif
 
 // MARK: - Attachment chip
 

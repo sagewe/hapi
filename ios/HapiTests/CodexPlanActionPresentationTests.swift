@@ -16,6 +16,7 @@ final class CodexPlanActionPresentationTests: XCTestCase {
 
     @MainActor
     private final class Driver {
+        let api: APIClient
         let store: SessionListStore
         let interactor: ChatInteractor
         var height: CGFloat = 0
@@ -24,6 +25,7 @@ final class CodexPlanActionPresentationTests: XCTestCase {
             let url = try XCTUnwrap(URL(string: "http://127.0.0.1:1"))
             let auth = AuthManager(baseURL: url, credentialStore: InMemoryCredentialStore(), performer: NoHTTP())
             let api = APIClient(baseURL: url, authManager: auth, performer: NoHTTP())
+            self.api = api
             store = SessionListStore(api: api)
             interactor = ChatInteractor(sessionId: "session", api: api, sessionStore: store,
                                         windows: MessageWindowControllers(provider: api))
@@ -180,6 +182,99 @@ final class CodexPlanActionPresentationTests: XCTestCase {
         driver.interactor.setComposerText("")
         let collapsedAgain = height(ChatComposerView(interactor: driver.interactor), size: .large)
         XCTAssertEqual(collapsedAgain, idleHeight, accuracy: 1, "Clearing draft while unfocused collapses back to pill")
+    }
+
+    @MainActor
+    private final class NoopHoldRecorder: HoldAudioCapturing {
+        func start(onChunk: @escaping @Sendable (Data, Float) -> Void) throws {}
+        func stop() -> Data { Data() }
+        func cancel() {}
+    }
+
+    func testEmptyVoiceButtonMorphsToVisibleHighContrastSendButtonInLightMode() async throws {
+        let driver = try Driver()
+        let holdDictation = HoldToDictateController(
+            api: driver.api,
+            streamer: nil,
+            recorder: NoopHoldRecorder()
+        )
+        let view = VStack {
+            Spacer()
+            ChatComposerView(
+                interactor: driver.interactor,
+                holdDictation: holdDictation
+            )
+        }
+        .background(Color.white)
+        .hapiTypography()
+        .hapiTheme(.light)
+        .preferredColorScheme(.light)
+
+        let window = try host(view, width: 390)
+        window.overrideUserInterfaceStyle = .light
+        defer { window.isHidden = true }
+
+        // 1. Empty state: voice button is active and visibly dark on Light Mode white surface
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(
+            containsViewNamed(window, substring: "VoicePrimaryTouchSurface"),
+            "Empty composer must display the voice input primary button"
+        )
+        let emptyDarkPixels = countDarkPixelsInBottomTrailingCorner(of: window)
+        XCTAssertGreaterThan(
+            emptyDarkPixels,
+            80,
+            "Empty-state voice circle must have high-contrast dark ink pixels in Light Mode (got \(emptyDarkPixels))"
+        )
+
+        // 2. Typing text ("测试") morphs primary button from Voice to Send AND remains high-contrast in Light Mode!
+        driver.interactor.setComposerText("测试")
+        try await settle { !self.containsViewNamed(window, substring: "VoicePrimaryTouchSurface") }
+        try await Task.sleep(for: .milliseconds(150))
+        let sendDarkPixels = countDarkPixelsInBottomTrailingCorner(of: window)
+        XCTAssertGreaterThan(
+            sendDarkPixels,
+            80,
+            "Send circle after typing must remain visibly dark in Light Mode rather than white-on-white (got \(sendDarkPixels))"
+        )
+    }
+
+    private func containsViewNamed(_ view: UIView, substring: String) -> Bool {
+        if String(reflecting: type(of: view)).contains(substring) {
+            return true
+        }
+        return view.subviews.contains { containsViewNamed($0, substring: substring) }
+    }
+
+    private func countDarkPixelsInBottomTrailingCorner(of window: UIWindow) -> Int {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        guard let cg = image.cgImage,
+              let data = cg.dataProvider?.data,
+              let ptr = CFDataGetBytePtr(data) else {
+            return 0
+        }
+        let bpp = cg.bitsPerPixel / 8
+        let bpr = cg.bytesPerRow
+        let minX = max(0, cg.width - 90)
+        let minY = max(0, cg.height - 110)
+        var darkCount = 0
+        for y in minY..<cg.height {
+            for x in minX..<cg.width {
+                let offset = y * bpr + x * bpp
+                let r = Double(ptr[offset]) / 255.0
+                let g = Double(ptr[offset + 1]) / 255.0
+                let b = Double(ptr[offset + 2]) / 255.0
+                let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+                if lum < 0.25 {
+                    darkCount += 1
+                }
+            }
+        }
+        return darkCount
     }
     #endif
 
