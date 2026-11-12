@@ -95,6 +95,56 @@ final class SessionRowStatusTests: XCTestCase {
         XCTAssertEqual(SessionRowStatus.needsApproval(2).titleKey, "Needs approval")
         XCTAssertEqual(SessionRowStatus.needsAttention(7).titleKey, "Needs attention")
         XCTAssertEqual(SessionRowStatus.running.titleKey, "Running")
+        XCTAssertEqual(SessionRowStatus.background(3).titleKey, "Background")
         XCTAssertNil(SessionRowStatus.running.count)
+        XCTAssertEqual(SessionRowStatus.background(3).count, 3)
+    }
+
+    func testBackgroundTasksSurfaceBelowThinkingAndQuickStatusLensFiltersWithoutReordering() {
+        var idle = HomeFilterTestData.summary("idle", machine: "mac")
+        idle.active = true
+
+        var background = HomeFilterTestData.summary("bg", machine: "mac")
+        background.active = true
+        background.backgroundTaskCount = 2
+
+        var running = HomeFilterTestData.summary("run", machine: "mac")
+        running.active = true
+        running.thinking = true
+        running.backgroundTaskCount = 2
+
+        var approval = HomeFilterTestData.summary("approve", machine: "mac")
+        approval.active = true
+        approval.thinking = true
+        approval.pendingRequestsCount = 1
+        approval.pendingRequestKinds = [.permission]
+
+        var offlineWithBg = HomeFilterTestData.summary("offline", machine: "mac")
+        offlineWithBg.active = false
+        offlineWithBg.backgroundTaskCount = 2
+
+        XCTAssertNil(SessionRowStatus(summary: idle))
+        XCTAssertEqual(SessionRowStatus(summary: background), .background(2))
+        XCTAssertEqual(SessionRowStatus(summary: running), .running)
+        XCTAssertEqual(SessionRowStatus(summary: approval), .needsApproval(1))
+        XCTAssertNil(SessionRowStatus(summary: offlineWithBg))
+
+        let sessions = HomeFilterTestSessions([idle, background, running, approval, offlineWithBg])
+        let model = HomeFilterTestData.model(sessions: sessions)
+        XCTAssertEqual(model.statusSummaryCounts, .init(attention: 1, running: 1, background: 1))
+        XCTAssertTrue(model.showsStatusSummaryBar)
+        XCTAssertEqual(model.rows.map(\.id), ["idle", "bg", "run", "approve", "offline"])
+
+        model.toggleStatusLens(.running)
+        XCTAssertEqual(model.rows.map(\.id), ["run"])
+        // Peer counts stay visible while a quick lens is active.
+        XCTAssertEqual(model.statusSummaryCounts, .init(attention: 1, running: 1, background: 1))
+
+        model.toggleStatusLens(.attention)
+        XCTAssertEqual(model.rows.map(\.id), ["approve"])
+
+        model.toggleStatusLens(.attention)
+        XCTAssertNil(model.filters.statusLens)
+        XCTAssertEqual(model.rows.map(\.id), ["idle", "bg", "run", "approve", "offline"])
     }
 }

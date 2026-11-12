@@ -1914,6 +1914,27 @@ function SessionChatInner(props: SessionChatProps) {
         setOutlineOpen((open) => !open)
     }, [])
 
+    const handleJumpToPendingRequest = useCallback(() => {
+        if (terminalVisible) {
+            setTerminalVisible(false)
+        }
+        const scrollPendingIntoView = () => {
+            const pendingCard = document.querySelector<HTMLElement>('[data-pending-request="true"]')
+            if (pendingCard) {
+                pendingCard.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                return true
+            }
+            return false
+        }
+        if (scrollPendingIntoView()) {
+            return
+        }
+        if (props.viewMode !== 'tail') {
+            props.onJumpToTail()
+        }
+        setForceScrollToken((token) => token + 1)
+    }, [terminalVisible, props.viewMode, props.onJumpToTail])
+
     const handleViewTerminal = useCallback(() => {
         navigate({
             to: '/sessions/$sessionId/terminal',
@@ -2097,6 +2118,7 @@ function SessionChatInner(props: SessionChatProps) {
                 session={props.session}
                 serviceTier={effectiveCodexServiceTier}
                 onBack={props.onBack}
+                onJumpToPendingRequest={handleJumpToPendingRequest}
                 onToggleFiles={props.session.metadata?.path ? handleToggleFiles : undefined}
                 filesActive={false}
                 onToggleOutline={handleToggleOutline}

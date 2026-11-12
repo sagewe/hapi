@@ -49,11 +49,12 @@ describe('SessionRowSummary background status', () => {
         localStorage.clear()
     })
 
-    it('marks running and background work on the presence badge, without spinners', () => {
+    it('renders explicit 5-tier status pills and orbiting ring while keeping connected-idle quiet', () => {
         const background = renderSummary(false).container
         const backgroundBadge = background.querySelector('[data-testid="session-presence"]')
-        expect(backgroundBadge).toHaveClass('bg-blue-400', 'animate-pulse')
-        expect(background.querySelector('svg.animate-spin-slow')).toBeNull()
+        expect(backgroundBadge).toHaveClass('bg-sky-400', 'animate-pulse')
+        expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'background')
+        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Background· 2')
         cleanup()
 
         const thinking = render(
@@ -61,9 +62,11 @@ describe('SessionRowSummary background status', () => {
                 <SessionRowSummary session={makeSummary({ thinking: true, backgroundTaskCount: 0 })} />
             </I18nProvider>
         ).container
+        expect(thinking.querySelector('[data-testid="session-running-ring"]')).toBeInTheDocument()
         expect(thinking.querySelector('[data-testid="session-presence"]'))
             .toHaveClass('bg-[var(--app-badge-success-text)]', 'animate-pulse')
-        expect(screen.queryByText('Running', { exact: true })).not.toBeInTheDocument()
+        expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'running')
+        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Running')
         cleanup()
 
         const idle = render(
@@ -72,22 +75,37 @@ describe('SessionRowSummary background status', () => {
             </I18nProvider>
         ).container
         expect(idle.querySelector('[data-testid="session-presence"]')).not.toHaveClass('animate-pulse')
+        expect(idle.querySelector('[data-testid="session-status-pill"]')).toBeNull()
     })
 
-    it('does not dim disconnected rows or show them a presence badge', () => {
+    it('softens disconnected icons and read titles, and renders an Archived pill for archived sessions', () => {
         const { container } = render(
             <I18nProvider>
                 <SessionRowSummary session={makeSummary({ active: false, backgroundTaskCount: 0 })} />
             </I18nProvider>
         )
-        expect(container.querySelector('.opacity-50')).toBeNull()
+        expect(container.querySelector('.opacity-50')).not.toBeNull()
         expect(container.querySelector('[data-testid="session-presence"]')).toBeNull()
+        expect(container.querySelector('[data-testid="session-status-pill"]')).toBeNull()
+        cleanup()
+
+        render(
+            <I18nProvider>
+                <SessionRowSummary session={makeSummary({
+                    active: false,
+                    backgroundTaskCount: 0,
+                    metadata: { path: '/demo/status', name: 'Archived demo', flavor: 'claude', lifecycleState: 'archived' }
+                })} />
+            </I18nProvider>
+        )
+        expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'archived')
+        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Archived')
     })
 
-    it('shows a detailed background tooltip on the agent icon in Extended mode', () => {
+    it('shows a detailed background tooltip on the status pill in Extended mode', () => {
         renderSummary(true)
 
-        expect(screen.queryByText('Running', { exact: true })).not.toBeInTheDocument()
+        expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'background')
         const tooltip = screen.getByRole('tooltip', { hidden: true })
         expect(tooltip).toHaveTextContent('Background tasks running')
         expect(tooltip).toHaveTextContent('2 tasks running')
@@ -185,9 +203,8 @@ describe('SessionRowSummary background status', () => {
         )
 
         expectUnread()
-        const dots = container.querySelectorAll('.rounded-full')
-        expect(dots).toHaveLength(2)
         expect(container.querySelector('[data-testid="session-unread"]')).toBeInTheDocument()
+        expect(container.querySelector('[data-testid="session-running-ring"]')).toBeInTheDocument()
         expect(container.querySelector('[data-testid="session-presence"]')).toHaveClass('animate-pulse')
     })
 
@@ -202,7 +219,7 @@ describe('SessionRowSummary background status', () => {
         )
 
         expectUnread()
-        expect(container.querySelector('[data-testid="session-presence"]')).toHaveClass('bg-blue-400', 'animate-pulse')
+        expect(container.querySelector('[data-testid="session-presence"]')).toHaveClass('bg-sky-400', 'animate-pulse')
     })
 
     it('shows and clears the unread dot in standard session rows', () => {
@@ -214,7 +231,7 @@ describe('SessionRowSummary background status', () => {
         expect(screen.queryByTestId('session-unread')).toBeNull()
     })
 
-    it('shows pending requests as an amber symbol, not a dot', () => {
+    it('shows pending requests as an amber status pill with symbol and tooltip', () => {
         const { container } = render(
             <I18nProvider>
                 <SessionRowSummary
@@ -231,7 +248,8 @@ describe('SessionRowSummary background status', () => {
 
         expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent('Bash')
         expect(container.querySelector('.text-\\[var\\(--app-badge-warning-text\\)\\] svg')).not.toBeNull()
-        expect(container.querySelectorAll('.rounded-full')).toHaveLength(1)
+        expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'approval')
+        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Needs approval')
     })
 
     it('marks a content-search snippet whose source message was truncated', () => {

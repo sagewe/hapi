@@ -31,6 +31,8 @@ import { formatSessionHeaderTimestamp } from '@/lib/sessionHeaderTimestamp'
 import { selectMobileSessionHeaderSecondary } from '@/lib/sessionHeaderMobileMetadata'
 import { useMinuteTick } from '@/hooks/useMinuteTick'
 import { markSessionUnread } from '@/lib/sessionLastSeen'
+import { classifySessionDetailVisualStatus, type SessionVisualStatus } from '@/lib/sessionVisualStatus'
+import { HandIcon, MessageIcon } from '@/components/icons'
 
 /** Same preference order as session-list chips: display label → host → short id. */
 export function resolveSessionHeaderMachineLabel(
@@ -160,10 +162,123 @@ function ModelChangingStatus() {
     )
 }
 
+function SessionHeaderStatusBadge(props: {
+    status: SessionVisualStatus
+    onJumpToPendingRequest?: () => void
+}) {
+    const { t } = useTranslation()
+    const { status, onJumpToPendingRequest } = props
+
+    if (status.tier === 'approval' || status.tier === 'reply' || status.tier === 'attention') {
+        const badgeKey = status.tier === 'approval'
+            ? 'session.badge.approval'
+            : status.tier === 'reply'
+                ? 'session.badge.reply'
+                : 'session.badge.attention'
+        const Icon = status.tier === 'reply' ? MessageIcon : HandIcon
+        const className = 'inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]'
+        const content = (
+            <>
+                <Icon className="h-3 w-3 shrink-0" />
+                <span>{t(badgeKey)}</span>
+                {status.count > 1 ? <span className="tabular-nums">· {status.count}</span> : null}
+            </>
+        )
+        if (onJumpToPendingRequest) {
+            return (
+                <button
+                    type="button"
+                    data-testid="session-header-status"
+                    data-status-tier={status.tier}
+                    onClick={onJumpToPendingRequest}
+                    className={`${className} cursor-pointer transition-colors hover:bg-amber-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]`}
+                >
+                    {content}
+                </button>
+            )
+        }
+        return (
+            <span
+                data-testid="session-header-status"
+                data-status-tier={status.tier}
+                className={className}
+            >
+                {content}
+            </span>
+        )
+    }
+
+    if (status.tier === 'running') {
+        return (
+            <span
+                data-testid="session-header-status"
+                data-status-tier="running"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
+            >
+                <span
+                    aria-hidden="true"
+                    className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
+                />
+                <span>{t('session.badge.running')}</span>
+            </span>
+        )
+    }
+
+    if (status.tier === 'background') {
+        return (
+            <span
+                data-testid="session-header-status"
+                data-status-tier="background"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
+            >
+                <span>{t('session.badge.background')}</span>
+                <span className="tabular-nums">· {status.count}</span>
+            </span>
+        )
+    }
+
+    if (status.tier === 'archived') {
+        return (
+            <span
+                data-testid="session-header-status"
+                data-status-tier="archived"
+                className="inline-flex shrink-0 items-center rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
+            >
+                {t('session.badge.archived')}
+            </span>
+        )
+    }
+
+    if (status.tier === 'online') {
+        return (
+            <span
+                data-testid="session-header-status"
+                data-status-tier="online"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
+            >
+                <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-success-text)]" />
+                <span>{t('session.header.status.online')}</span>
+            </span>
+        )
+    }
+
+    return (
+        <span
+            data-testid="session-header-status"
+            data-status-tier="offline"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]/80"
+        >
+            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-hint)]/60" />
+            <span>{t('session.header.status.offline')}</span>
+        </span>
+    )
+}
+
 export function SessionHeader(props: {
     session: Session
     serviceTier?: string | null
     onBack: () => void
+    onJumpToPendingRequest?: () => void
     onToggleFiles?: () => void
     filesActive?: boolean
     onToggleOutline?: () => void
@@ -185,6 +300,7 @@ export function SessionHeader(props: {
     const { addToast } = useToast()
     const { session, api, onSessionDeleted, onSessionReopened } = props
     const title = useMemo(() => getSessionTitle(session), [session])
+    const visualStatus = useMemo(() => classifySessionDetailVisualStatus(session), [session])
     const projectPath = getSessionProjectPath(session.metadata)
     const projectLabel = projectPath ? getSessionProjectLabel(projectPath) : null
     const worktreeBranch = session.metadata?.worktree?.branch?.trim() || null
@@ -425,8 +541,14 @@ export function SessionHeader(props: {
 
                     {/* Session info - two lines: title and path */}
                     <div className="min-w-0 flex-1">
-                        <div className="truncate font-semibold">
-                            {title}
+                        <div className="flex min-w-0 items-center gap-2">
+                            <div className="min-w-0 truncate font-semibold">
+                                {title}
+                            </div>
+                            <SessionHeaderStatusBadge
+                                status={visualStatus}
+                                onJumpToPendingRequest={props.onJumpToPendingRequest}
+                            />
                         </div>
                         {showMobileMetadata ? (
                             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs text-[var(--app-hint)] sm:hidden">

@@ -6,7 +6,89 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Chat top-bar state: title cascade + status dot + meta line.
+enum ChatHeaderStatus: Equatable {
+    case needsReply(Int)
+    case needsApproval(Int)
+    case needsAttention(Int)
+    case running
+    case background(Int)
+    case online
+    case archived
+    case offline
+
+    var isAttention: Bool {
+        switch self {
+        case .needsReply, .needsApproval, .needsAttention:
+            return true
+        case .running, .background, .online, .archived, .offline:
+            return false
+        }
+    }
+
+    var titleKey: String {
+        switch self {
+        case .needsReply: return "Needs reply"
+        case .needsApproval: return "Needs approval"
+        case .needsAttention: return "Needs attention"
+        case .running: return "Running"
+        case .background: return "Background"
+        case .online: return "Online"
+        case .archived: return "Archived"
+        case .offline: return "Offline"
+        }
+    }
+
+    var count: Int? {
+        switch self {
+        case .needsReply(let n), .needsApproval(let n), .needsAttention(let n), .background(let n):
+            return n
+        case .running, .online, .archived, .offline:
+            return nil
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .needsReply: return "bubble.left.fill"
+        case .needsApproval: return "hand.raised.fill"
+        case .needsAttention: return "exclamationmark.bubble.fill"
+        case .running: return "bolt.fill"
+        case .background: return "arrow.triangle.2.circlepath"
+        case .online: return "circle.fill"
+        case .archived: return "archivebox.fill"
+        case .offline: return "circle"
+        }
+    }
+
+    var systemSubtitlePrefix: String {
+        switch self {
+        case .needsReply(let n):
+            return n > 1
+                ? String(format: String(localized: "Needs reply (%lld)"), Int64(n))
+                : String(localized: "Needs reply")
+        case .needsApproval(let n):
+            return n > 1
+                ? String(format: String(localized: "Needs approval (%lld)"), Int64(n))
+                : String(localized: "Needs approval")
+        case .needsAttention(let n):
+            return n > 1
+                ? String(format: String(localized: "Needs attention (%lld)"), Int64(n))
+                : String(localized: "Needs attention")
+        case .running:
+            return String(localized: "Running")
+        case .background(let n):
+            return String(format: String(localized: "Background (%lld)"), Int64(n))
+        case .online:
+            return String(localized: "Online")
+        case .archived:
+            return String(localized: "Archived")
+        case .offline:
+            return String(localized: "Offline")
+        }
+    }
+}
+
+/// Chat top-bar state: title cascade + status + meta line.
 struct ChatHeaderUI: Equatable {
     var title: String
     /// "Flavor · machine · worktree" meta line; nil when nothing is known.
@@ -15,6 +97,7 @@ struct ChatHeaderUI: Equatable {
     var flavor: String?
     var active: Bool
     var thinking: Bool
+    var status: ChatHeaderStatus = .offline
 }
 
 struct ChatTurnNavItem: Identifiable, Equatable, Sendable {
@@ -702,6 +785,22 @@ final class ChatModel {
         }
     }
 
+    func jumpToPendingRequestOrLatest() {
+        for block in blocks.reversed() {
+            switch block {
+            case .block(.toolCall(let toolCall)) where toolCall.tool.permission?.status == .pending:
+                jumpToBlock(id: block.stableId)
+                return
+            case .toolGroup(let group) where group.tools.contains(where: { $0.tool.permission?.status == .pending }):
+                jumpToBlock(id: block.stableId)
+                return
+            default:
+                break
+            }
+        }
+        jumpToLatest()
+    }
+
     func jumpToPreviousUserTurn() {
         let turns = userTurnItems
         guard !turns.isEmpty else {
@@ -1094,13 +1193,85 @@ final class ChatModel {
             worktree,
         ].compactMap { $0 }
 
+        let active = detail?.active ?? summary?.active ?? false
+        let thinking = detail?.thinking ?? summary?.thinking ?? false
+        let status = resolveHeaderStatus(detail: detail, summary: summary)
+
         return ChatHeaderUI(
             title: title,
             subtitle: parts.isEmpty ? nil : parts.joined(separator: " · "),
             flavor: flavor,
-            active: detail?.active ?? summary?.active ?? false,
-            thinking: detail?.thinking ?? summary?.thinking ?? false
+            active: active,
+            thinking: thinking,
+            status: status
         )
+    }
+
+    private static let inputRequestTools: Set<String> = [
+        "AskUserQuestion",
+        "ask_user_question",
+        "ask_question",
+        "Run ask_question",
+        "ExitPlanMode",
+        "exit_plan_mode",
+        "request_user_input",
+    ]
+
+    private static func resolveHeaderStatus(detail: Session?, summary: SessionSummary?) -> ChatHeaderStatus {
+        if let detail {
+            if let requests = detail.agentState?.requests, !requests.isEmpty {
+                var hasInput = false
+                var hasPermission = false
+                for req in requests.values {
+                    if inputRequestTools.contains(req.tool) {
+                        hasInput = true
+                    } else {
+                        hasPermission = true
+                    }
+                }
+                let count = requests.count
+                if hasInput && !hasPermission {
+                    return .needsReply(count)
+                } else if hasPermission && !hasInput {
+                    return .needsApproval(count)
+                } else {
+                    return .needsAttention(count)
+                }
+            }
+            if detail.active && detail.thinking {
+                return .running
+            }
+            let bgCount = detail.backgroundTaskCount ?? summary?.backgroundTaskCount ?? 0
+            if detail.active && bgCount > 0 {
+                return .background(bgCount)
+            }
+            if detail.active {
+                return .online
+            }
+            if (detail.metadata?.lifecycleState ?? summary?.metadata?.lifecycleState) == "archived" {
+                return .archived
+            }
+            return .offline
+        }
+
+        if let summary {
+            if let rowStatus = SessionRowStatus(summary: summary) {
+                switch rowStatus {
+                case .needsReply(let n): return .needsReply(n)
+                case .needsApproval(let n): return .needsApproval(n)
+                case .needsAttention(let n): return .needsAttention(n)
+                case .running: return .running
+                case .background(let n): return .background(n)
+                }
+            }
+            if summary.active {
+                return .online
+            }
+            if summary.metadata?.lifecycleState == "archived" {
+                return .archived
+            }
+        }
+        return .offline
     }
 
     /// Detail-side title cascade; nil when the metadata carries nothing usable.

@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 struct ChatView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.hapiTheme) private var theme
     @State private var model: ChatModel
     /// Adaptive session settings (toolbar gear).
     @State private var configOpen = false
@@ -161,7 +162,7 @@ struct ChatView: View {
         .modifier(FoldedSystemTitle(
             isActive: usesSystemTitle,
             title: model.header.title,
-            subtitle: model.header.subtitle
+            subtitle: systemHeaderSubtitle
         ))
         .toolbar {
             // Folded Duo: Back and the actions live in the side bar, so a
@@ -170,6 +171,14 @@ struct ChatView: View {
             if !usesSystemTitle {
                 ToolbarItem(placement: .principal) {
                     headerTitle
+                }
+            } else if showsProminentSystemToolbarStatus {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ChatHeaderStatusBadge(
+                        status: model.header.status,
+                        prominent: true,
+                        onTapAttention: { model.jumpToPendingRequestOrLatest() }
+                    )
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -517,37 +526,54 @@ struct ChatView: View {
         )
     }
 
+    private var systemHeaderSubtitle: String {
+        let prefix = model.header.status.systemSubtitlePrefix
+        if let subtitle = model.header.subtitle, !subtitle.isEmpty {
+            return "\(prefix) · \(subtitle)"
+        }
+        return prefix
+    }
+
+    private var showsProminentSystemToolbarStatus: Bool {
+        switch model.header.status {
+        case .needsReply, .needsApproval, .needsAttention, .running, .background:
+            return true
+        case .online, .archived, .offline:
+            return false
+        }
+    }
+
     private var headerTitle: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(model.header.title)
                 .font(.headline)
                 .lineLimit(1)
             let tags = model.sessionTags
-            if model.header.subtitle != nil || !tags.isEmpty {
-                HStack(spacing: 4) {
-                    if let subtitle = model.header.subtitle {
-                        if model.header.flavor != nil {
-                            // Inherits .secondary like the meta text (web:
-                            // currentColor under --app-hint); color variants
-                            // ignore the tint.
-                            AgentFlavorIconView(flavor: model.header.flavor, size: 12)
-                        }
-                        Text(subtitle)
-                            .font(.caption2)
-                            .lineLimit(1)
+            HStack(spacing: 5) {
+                ChatHeaderStatusBadge(
+                    status: model.header.status,
+                    prominent: false,
+                    onTapAttention: { model.jumpToPendingRequestOrLatest() }
+                )
+                if let subtitle = model.header.subtitle {
+                    if model.header.flavor != nil {
+                        AgentFlavorIconView(flavor: model.header.flavor, size: 12)
                     }
-                    ForEach(Array(tags.prefix(3)), id: \.self) { tag in
-                        Text(verbatim: "#\(tag)")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(Color.accentColor)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 0.5)
-                            .background(Color.accentColor.opacity(0.12), in: Capsule())
-                            .lineLimit(1)
-                    }
+                    Text(subtitle)
+                        .font(.caption2)
+                        .lineLimit(1)
                 }
-                .foregroundStyle(.secondary)
+                ForEach(Array(tags.prefix(3)), id: \.self) { tag in
+                    Text(verbatim: "#\(tag)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background(Color.accentColor.opacity(0.12), in: Capsule())
+                        .lineLimit(1)
+                }
             }
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -619,6 +645,97 @@ struct ChatView: View {
             Label("No messages yet", systemImage: "bubble.left.and.bubble.right")
         } description: {
             Text("Messages will appear here as the agent works.")
+        }
+    }
+}
+
+struct ChatHeaderStatusBadge: View {
+    @Environment(\.hapiTheme) private var theme
+    let status: ChatHeaderStatus
+    var prominent = false
+    var onTapAttention: (() -> Void)?
+
+    private var foregroundColor: Color {
+        switch status {
+        case .needsReply, .needsApproval, .needsAttention:
+            return SessionStatusPalette.attentionForeground(theme: theme)
+        case .running:
+            return SessionStatusPalette.runningForeground(theme: theme)
+        case .background:
+            return SessionStatusPalette.backgroundForeground(theme: theme)
+        case .online:
+            return theme.success
+        case .archived, .offline:
+            return theme.textSecondary
+        }
+    }
+
+    private var usesCapsuleChrome: Bool {
+        switch status {
+        case .needsReply, .needsApproval, .needsAttention, .running, .background:
+            return true
+        case .online, .archived, .offline:
+            return prominent
+        }
+    }
+
+    var body: some View {
+        Group {
+            if status.isAttention, let onTapAttention {
+                Button(action: onTapAttention) {
+                    badgeContent
+                }
+                .buttonStyle(.plain)
+            } else {
+                badgeContent
+            }
+        }
+        .fixedSize()
+        .accessibilityIdentifier("chat.header.status")
+    }
+
+    private var badgeContent: some View {
+        let color = foregroundColor
+        let font: Font = prominent ? .caption.weight(.semibold) : .caption2.weight(.semibold)
+        return HStack(spacing: prominent ? 4.5 : 3.5) {
+            if status == .running {
+                SessionOrbitingRing(color: color, lineWidth: 1.5)
+                    .frame(width: prominent ? 10 : 8.5, height: prominent ? 10 : 8.5)
+            } else if status == .online {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+            } else if status == .offline {
+                Circle()
+                    .strokeBorder(color.opacity(0.75), lineWidth: 1.2)
+                    .frame(width: 6, height: 6)
+            } else {
+                Image(systemName: status.symbolName)
+                    .font(.system(size: prominent ? 10 : 8.5, weight: .bold))
+            }
+            Text(LocalizedStringKey(status.titleKey))
+                .font(font)
+                .lineLimit(1)
+            if let count = status.count, (status.isAttention ? count > 1 : count > 0) {
+                Text(verbatim: "· \(count)")
+                    .font(font)
+                    .monospacedDigit()
+            }
+        }
+        .foregroundStyle(status == .online ? theme.textSecondary : color)
+        .padding(.horizontal, usesCapsuleChrome ? (prominent ? 8 : 5.5) : 0)
+        .padding(.vertical, usesCapsuleChrome ? (prominent ? 3.5 : 1.5) : 0)
+        .background {
+            if usesCapsuleChrome {
+                Capsule()
+                    .fill(color.opacity(theme.isDark ? 0.16 : 0.12))
+            }
+        }
+        .overlay {
+            if usesCapsuleChrome {
+                Capsule()
+                    .strokeBorder(color.opacity(0.28), lineWidth: 0.75)
+            }
         }
     }
 }

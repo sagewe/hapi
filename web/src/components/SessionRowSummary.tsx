@@ -5,6 +5,7 @@ import { InfoIcon, ScheduleIcon } from '@/components/icons'
 import { HoverTooltip, SESSION_ROW_TOOLTIP_FOCUS_CLASS, useSessionRowTooltipIds } from '@/components/HoverTooltip'
 import { getAttentionLabel, SessionAttentionIndicator, SessionRequestIcon } from '@/components/SessionAttentionIndicator'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
+import { classifySessionRowVisualStatus } from '@/lib/sessionVisualStatus'
 import { getSessionLastSeenAt, getSessionManualUnreadAt } from '@/lib/sessionLastSeen'
 import { formatRelativeTime } from '@/lib/relativeTime'
 import { formatScheduledTooltipDetail } from '@/lib/scheduledTime'
@@ -115,7 +116,7 @@ export function SessionRowSummary(props: {
         lastSeenVersion,
         scheduleTooltipId: scheduleTooltipIdProp,
         className,
-        inRunningSection = false,
+        inRunningSection: _inRunningSection = false,
         projectLabel,
         machineLabel,
         contentSnippet,
@@ -155,49 +156,150 @@ export function SessionRowSummary(props: {
     const importedAt = useSyncExternalStore(subscribeCodexImportedSessions, () => getCodexImportedAt(codexSessionId))
     const timeLabel = getSessionTimeLabel(s, importedAt, t)
 
-    // Presence lives on the agent icon (pulsing while a turn or background
-    // work runs) instead of dimming disconnected rows or adding spinners.
-    const isRunning = s.active && s.thinking
-    const isBackgroundOnly = s.active && !s.thinking && (s.backgroundTaskCount ?? 0) > 0
+    const visualStatus = classifySessionRowVisualStatus(s)
+    const isRunning = visualStatus.tier === 'running'
+    const isBackgroundOnly = visualStatus.tier === 'background'
+    const isAttentionTier = visualStatus.tier === 'approval' || visualStatus.tier === 'reply' || visualStatus.tier === 'attention'
+    const isDisconnected = !s.active
     const isUnread = sessionIsUnread(s, {
         lastSeenAt: getSessionLastSeenAt(s.id),
         manualUnreadAt: getSessionManualUnreadAt(s.id, s.readState),
     })
     const requestKind = urgentAttention
         ? attention.kind as 'permission' | 'input'
-        : s.active && (s.pendingRequestsCount ?? 0) > 0
-            ? (s.pendingRequestKinds?.length && !s.pendingRequestKinds.includes('permission') ? 'input' : 'permission')
+        : isAttentionTier
+            ? (visualStatus.tier === 'reply' ? 'input' : 'permission')
             : null
+
+    const presenceColorClass = isAttentionTier
+        ? 'bg-amber-500'
+        : isBackgroundOnly
+            ? 'bg-sky-400 animate-pulse'
+            : 'bg-[var(--app-badge-success-text)]'
+
     const agentIcon = (
         <span className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center">
-            <AgentFlavorIcon flavor={s.metadata?.flavor} className="h-6 w-6" />
+            {isRunning ? (
+                <span
+                    data-testid="session-running-ring"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -inset-1 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 border-r-emerald-500/75 animate-spin"
+                />
+            ) : isAttentionTier ? (
+                <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -inset-0.5 rounded-full ring-1 ring-amber-500/55"
+                />
+            ) : null}
+            <AgentFlavorIcon
+                flavor={s.metadata?.flavor}
+                className={`h-6 w-6 transition-opacity ${isDisconnected ? 'opacity-50' : ''}`}
+            />
             {s.active ? (
                 <span
                     data-testid="session-presence"
-                    className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-bg)] ${
-                        isBackgroundOnly ? 'bg-blue-400' : 'bg-[var(--app-badge-success-text)]'
-                    } ${isRunning || isBackgroundOnly ? 'animate-pulse' : ''}`}
+                    className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-bg)] ${presenceColorClass} ${isRunning ? 'animate-pulse' : ''}`}
                 />
             ) : null}
         </span>
     )
 
+    const rawStatusPill = (() => {
+        if (isAttentionTier && requestKind) {
+            const badgeKey = visualStatus.tier === 'approval'
+                ? 'session.badge.approval'
+                : visualStatus.tier === 'reply'
+                    ? 'session.badge.reply'
+                    : 'session.badge.attention'
+            return (
+                <span
+                    data-testid="session-status-pill"
+                    data-status-tier={visualStatus.tier}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]"
+                >
+                    <SessionRequestIcon
+                        kind={requestKind}
+                        label={attentionLabel ?? t(badgeKey)}
+                    />
+                    <span>{t(badgeKey)}</span>
+                    {visualStatus.count > 1 ? (
+                        <span className="tabular-nums">· {visualStatus.count}</span>
+                    ) : null}
+                </span>
+            )
+        }
+        if (isRunning) {
+            return (
+                <span
+                    data-testid="session-status-pill"
+                    data-status-tier="running"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
+                >
+                    <span
+                        aria-hidden="true"
+                        className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
+                    />
+                    <span>{t('session.badge.running')}</span>
+                </span>
+            )
+        }
+        if (isBackgroundOnly) {
+            return (
+                <span
+                    data-testid="session-status-pill"
+                    data-status-tier="background"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
+                >
+                    <span>{t('session.badge.background')}</span>
+                    <span className="tabular-nums">· {visualStatus.count}</span>
+                </span>
+            )
+        }
+        if (visualStatus.tier === 'archived') {
+            return (
+                <span
+                    data-testid="session-status-pill"
+                    data-status-tier="archived"
+                    className="inline-flex shrink-0 items-center rounded-full bg-[var(--app-subtle-bg)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
+                >
+                    {t('session.badge.archived')}
+                </span>
+            )
+        }
+        return null
+    })()
+
+    const statusPillNode = rawStatusPill && nestedTooltips && attentionId && (
+        (urgentAttention && isAttentionTier) || (attention?.kind === 'background' && isBackgroundOnly)
+    ) ? (
+        <SessionAttentionIndicator
+            attention={attention}
+            summary={s}
+            label={attentionLabel ?? ''}
+            tooltipId={attentionId}
+            target={rawStatusPill}
+        />
+    ) : rawStatusPill
+
+    const secondaryText = projectLabel || machineLabel
+        ? [projectLabel, machineLabel].filter(Boolean).join(' · ')
+        : (showPath || worktreeLabel)
+            ? (worktreeLabel ?? s.metadata?.path ?? s.id)
+            : null
+    const secondaryTitle = projectLabel || machineLabel
+        ? [projectLabel, machineLabel].filter(Boolean).join(' · ')
+        : worktreeLabel
+            ? (s.metadata?.worktree?.worktreePath ?? s.metadata?.path)
+            : undefined
+
     return (
         <div className={`flex w-full min-w-0 items-center gap-2.5 ${className ?? ''}`}>
-            {attention?.kind === 'background' && nestedTooltips && attentionId ? (
-                <SessionAttentionIndicator
-                    attention={attention}
-                    summary={s}
-                    label={attentionLabel ?? ''}
-                    tooltipId={attentionId}
-                    target={agentIcon}
-                />
-            ) : agentIcon}
+            {agentIcon}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <div className="grid grid-cols-[minmax(9rem,1fr)_minmax(0,max-content)] items-center gap-2">
+                <div className="grid grid-cols-[minmax(8rem,1fr)_minmax(0,max-content)] items-center gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                         <div
-                            className={`min-w-0 flex-1 truncate text-sm text-[var(--app-fg)] ${isUnread ? 'font-semibold' : 'font-normal'}`}
+                            className={`min-w-0 flex-1 truncate text-sm text-[var(--app-fg)] ${isUnread ? 'font-semibold' : isDisconnected ? 'font-normal opacity-80' : 'font-normal'}`}
                             title={sessionName}
                         >
                             {sessionName}
@@ -209,24 +311,6 @@ export function SessionRowSummary(props: {
                                     {t('session.item.newActivity')}
                                 </span>
                             </>
-                        ) : null}
-                        {requestKind && urgentAttention && nestedTooltips && attentionId ? (
-                            <SessionAttentionIndicator
-                                attention={attention}
-                                summary={s}
-                                label={attentionLabel ?? ''}
-                                tooltipId={attentionId}
-                            />
-                        ) : requestKind ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 text-[var(--app-badge-warning-text)]">
-                                <SessionRequestIcon
-                                    kind={requestKind}
-                                    label={attentionLabel ?? t('session.item.pending')}
-                                />
-                                {!urgentAttention && !inRunningSection ? (
-                                    <span className="text-[11px] font-medium leading-none">{t('session.item.pending')}</span>
-                                ) : null}
-                            </span>
                         ) : null}
                         {hasScheduleTooltip && nestedTooltips && scheduleId ? (
                             <HoverTooltip
@@ -257,11 +341,6 @@ export function SessionRowSummary(props: {
                                 {todoProgress.completed}/{todoProgress.total}
                             </span>
                         ) : null}
-                        {!attention && s.active && s.pendingRequestsCount > 0 ? (
-                            <span className="shrink-0 text-[var(--app-badge-warning-text)]">
-                                {t('session.item.pending')} {s.pendingRequestsCount}
-                            </span>
-                        ) : null}
                         {timeLabel ? (
                             <span className={`min-w-0 truncate whitespace-nowrap tabular-nums ${
                                 isUnread ? 'font-semibold text-[var(--app-link)]' : 'text-[var(--app-hint)]'
@@ -288,18 +367,12 @@ export function SessionRowSummary(props: {
                         ) : null}
                     </div>
                 ) : null}
-                {projectLabel || machineLabel ? (
-                    <div className="truncate text-xs text-[var(--app-hint)]" title={[projectLabel, machineLabel].filter(Boolean).join(' · ')}>
-                        {[projectLabel, machineLabel].filter(Boolean).join(' · ')}
-                    </div>
-                ) : showPath || worktreeLabel ? (
-                    <div
-                        className="truncate text-xs text-[var(--app-hint)]"
-                        title={worktreeLabel
-                            ? s.metadata?.worktree?.worktreePath ?? s.metadata?.path
-                            : undefined}
-                    >
-                        {worktreeLabel ?? s.metadata?.path ?? s.id}
+                {(secondaryText !== null || statusPillNode !== null) ? (
+                    <div className="flex min-w-0 items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1 truncate text-xs text-[var(--app-hint)]" title={secondaryTitle}>
+                            {secondaryText ?? ''}
+                        </div>
+                        {statusPillNode}
                     </div>
                 ) : null}
             </div>

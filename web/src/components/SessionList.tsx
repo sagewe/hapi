@@ -21,7 +21,7 @@ import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ArchiveSessionDialog } from '@/components/ArchiveSessionDialog'
 import { DeleteSessionDialog } from '@/components/DeleteSessionDialog'
-import { ArchiveIcon, CheckIcon, CopyIcon, InfoIcon, LoaderIcon, MarkAllReadIcon } from '@/components/icons'
+import { ArchiveIcon, CheckIcon, CopyIcon, HandIcon, InfoIcon, LoaderIcon, MarkAllReadIcon, RefreshIcon } from '@/components/icons'
 
 function PinnedSectionIcon(props: { className?: string }) {
     return (
@@ -118,6 +118,7 @@ import { useSessionListMachineFilter } from '@/hooks/useSessionListMachineFilter
 import { useTransientScrollbar } from '@/hooks/useTransientScrollbar'
 import { useCursorChatStoreStatus } from '@/hooks/queries/useCursorChatStoreStatus'
 import { SessionRowSummary } from '@/components/SessionRowSummary'
+import { classifySessionRowVisualStatus, getSessionRowQuickLens, type SessionQuickStatusLens } from '@/lib/sessionVisualStatus'
 import { Spinner } from '@/components/Spinner'
 import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer'
 import { useToast } from '@/lib/toast-context'
@@ -1191,6 +1192,26 @@ const SessionItem = memo(function SessionItem(props: {
         Boolean(attention),
         hasScheduleTooltip
     )
+    const visualStatus = classifySessionRowVisualStatus(s)
+    const isAttentionRow = visualStatus.tier === 'approval' || visualStatus.tier === 'reply' || visualStatus.tier === 'attention'
+    const isRunningRow = visualStatus.tier === 'running'
+    const isBackgroundRow = visualStatus.tier === 'background'
+    const stripeClass = isAttentionRow
+        ? 'bg-amber-500'
+        : isRunningRow
+            ? 'bg-emerald-500'
+            : isBackgroundRow
+                ? 'bg-sky-400'
+                : null
+    const rowSurfaceClass = selected
+        ? 'bg-[var(--app-secondary-bg)]'
+        : isAttentionRow
+            ? 'bg-amber-500/[0.06] hover:bg-amber-500/[0.1]'
+            : isRunningRow
+                ? 'bg-emerald-500/[0.05] hover:bg-emerald-500/[0.09]'
+                : isBackgroundRow
+                    ? 'bg-sky-500/[0.04] hover:bg-sky-500/[0.08]'
+                    : ''
     return (
         <>
             <div
@@ -1201,11 +1222,18 @@ const SessionItem = memo(function SessionItem(props: {
                     type="button"
                     {...longPressHandlers}
                     data-session-scroll-anchor
-                    className={`session-list-item group/session-row flex w-full flex-col gap-1 py-2 pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${selected ? 'bg-[var(--app-secondary-bg)]' : ''}`}
+                    className={`session-list-item group/session-row relative flex w-full flex-col gap-1 py-2 ${stripeClass ? 'pl-3.5' : 'pl-2.5'} pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${rowSurfaceClass}`}
                     style={{ WebkitTouchCallout: 'none' }}
                     aria-current={selected ? 'page' : undefined}
                     aria-describedby={describedBy}
                 >
+                    {stripeClass ? (
+                        <span
+                            data-testid="session-status-stripe"
+                            aria-hidden="true"
+                            className={`pointer-events-none absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full ${stripeClass}`}
+                        />
+                    ) : null}
                     <SessionRowSummary
                         session={s}
                         showPath={showPath}
@@ -1436,6 +1464,10 @@ export function SessionList(props: {
     const previewIsUnread = keepUnreadSessionsVisible ? isSessionUnread : undefined
     const { pinInProgressSessions } = usePinInProgressSessions()
     const { machineFilter, setMachineFilter } = useSessionListMachineFilter()
+    const [quickStatusLens, setQuickStatusLens] = useState<SessionQuickStatusLens | null>(null)
+    const toggleQuickStatusLens = useCallback((lens: SessionQuickStatusLens) => {
+        setQuickStatusLens((current) => current === lens ? null : lens)
+    }, [])
     const showDetailedStatus = sessionListStatusMode === 'detailed'
     const [searchQuery, setSearchQuery] = useState('')
     const [searchMode, setSearchMode] = useState<'metadata' | 'content'>('metadata')
@@ -1710,13 +1742,37 @@ export function SessionList(props: {
         }
     }, [api, contentSearchReady, contentSearchSessionIds, normalizedQuery])
 
-    const machineFilteredSessions = useMemo(
+    const baseMachineFilteredSessions = useMemo(
         () => activeMachineFilter === null
             ? visibleSessions
             : visibleSessions.filter(session =>
                 (session.metadata?.machineId ?? UNKNOWN_MACHINE_ID) === activeMachineFilter
             ),
         [visibleSessions, activeMachineFilter]
+    )
+    const quickStatusCounts = useMemo(() => {
+        let attention = 0
+        let running = 0
+        let background = 0
+        for (const session of baseMachineFilteredSessions) {
+            const lens = getSessionRowQuickLens(session)
+            if (lens === 'attention') attention += 1
+            else if (lens === 'running') running += 1
+            else if (lens === 'background') background += 1
+        }
+        return { attention, running, background }
+    }, [baseMachineFilteredSessions])
+    const showQuickStatusBar = quickStatusCounts.attention > 0
+        || quickStatusCounts.running > 0
+        || quickStatusCounts.background > 0
+        || quickStatusLens !== null
+    const machineFilteredSessions = useMemo(
+        () => quickStatusLens === null
+            ? baseMachineFilteredSessions
+            : baseMachineFilteredSessions.filter(session =>
+                getSessionRowQuickLens(session) === quickStatusLens
+            ),
+        [baseMachineFilteredSessions, quickStatusLens]
     )
     const globalPinnedSessions = useMemo(() => {
         const pinned = machineFilteredSessions.filter((session) => Boolean(session.globalPinned))
@@ -1792,7 +1848,7 @@ export function SessionList(props: {
         if (override !== undefined) return override
         // Keep matching groups open by default while filtering. Explicit
         // header clicks use a temporary override for the active filter.
-        if (isFiltering) return false
+        if (isFiltering || quickStatusLens !== null) return false
         // Archived-only would otherwise collapse every group (none has an
         // active session), hiding exactly what was asked for.
         if (listView.status === 'archived') return false
@@ -2437,6 +2493,7 @@ export function SessionList(props: {
                                                 setListView(DEFAULT_SESSION_LIST_VIEW)
                                                 setShowArchivedSessions(false)
                                                 setCustomStart(''); setCustomEnd('')
+                                                setQuickStatusLens(null)
                                             }}
                                         />
                                     )
@@ -2562,6 +2619,72 @@ export function SessionList(props: {
             ) : singleMachineItem ? (
                 <MachineSummaryRow machine={singleMachineItem} />
             ) : null}
+
+            {showQuickStatusBar ? (
+                <div
+                    data-testid="session-quick-status-bar"
+                    role="group"
+                    className="flex items-center gap-1.5 overflow-x-auto px-2 pb-2 scrollbar-none"
+                >
+                    {(quickStatusCounts.attention > 0 || quickStatusLens === 'attention') ? (
+                        <button
+                            type="button"
+                            data-testid="session-quick-status-attention"
+                            aria-pressed={quickStatusLens === 'attention'}
+                            onClick={() => toggleQuickStatusLens('attention')}
+                            className={cn(
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                quickStatusLens === 'attention'
+                                    ? 'border-amber-500 bg-amber-500 text-white shadow-xs'
+                                    : 'border-amber-500/35 bg-amber-500/12 text-[var(--app-badge-warning-text)] hover:bg-amber-500/20'
+                            )}
+                        >
+                            <HandIcon className="h-3 w-3 shrink-0" />
+                            <span>{t('session.quickFilter.needsAction')}</span>
+                            <span className="tabular-nums opacity-90">{quickStatusCounts.attention}</span>
+                        </button>
+                    ) : null}
+                    {(quickStatusCounts.running > 0 || quickStatusLens === 'running') ? (
+                        <button
+                            type="button"
+                            data-testid="session-quick-status-running"
+                            aria-pressed={quickStatusLens === 'running'}
+                            onClick={() => toggleQuickStatusLens('running')}
+                            className={cn(
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                quickStatusLens === 'running'
+                                    ? 'border-emerald-500 bg-emerald-500 text-white shadow-xs'
+                                    : 'border-emerald-500/30 bg-emerald-500/12 text-[var(--app-badge-success-text)] hover:bg-emerald-500/20'
+                            )}
+                        >
+                            <span
+                                aria-hidden="true"
+                                className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
+                            />
+                            <span>{t('session.badge.running')}</span>
+                            <span className="tabular-nums opacity-90">{quickStatusCounts.running}</span>
+                        </button>
+                    ) : null}
+                    {(quickStatusCounts.background > 0 || quickStatusLens === 'background') ? (
+                        <button
+                            type="button"
+                            data-testid="session-quick-status-background"
+                            aria-pressed={quickStatusLens === 'background'}
+                            onClick={() => toggleQuickStatusLens('background')}
+                            className={cn(
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                quickStatusLens === 'background'
+                                    ? 'border-sky-500 bg-sky-500 text-white shadow-xs'
+                                    : 'border-sky-400/30 bg-sky-500/12 text-sky-600 hover:bg-sky-500/20 dark:text-sky-400'
+                            )}
+                        >
+                            <RefreshIcon className="h-3 w-3 shrink-0" />
+                            <span>{t('session.badge.background')}</span>
+                            <span className="tabular-nums opacity-90">{quickStatusCounts.background}</span>
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
             </div>
 
             <div className="relative flex min-h-0 flex-1 flex-col">
@@ -2626,7 +2749,7 @@ export function SessionList(props: {
                     </div>
                 ) : null}
 
-                {props.sessions.length > 0 && !contentSearchLoading && !contentSearchError && !contentSearchHasIncompleteResults && (isFiltering || activeMachineFilter !== null || listView.status !== 'all' || listView.unreadOnly || !includeArchives) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
+                {props.sessions.length > 0 && !contentSearchLoading && !contentSearchError && !contentSearchHasIncompleteResults && (isFiltering || quickStatusLens !== null || activeMachineFilter !== null || listView.status !== 'all' || listView.unreadOnly || !includeArchives) && groups.length === 0 && runningSessionTotal === 0 && activeSessionTotal === 0 && globalPinnedSessions.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-[var(--app-hint)]">
                         {contentSearchActive
                             ? contentSearchReady

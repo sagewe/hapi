@@ -1,6 +1,90 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Фон" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "后台" } }
+      }
+    },
+    "Archived" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "В архиве" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已归档" } }
+      }
+    },
+    "Online" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "В сети" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在线" } }
+      }
+    },
+    "Needs action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Ожидает" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待处理" } }
+      }
+    },
+    "Status: Needs action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Статус: Ожидает" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态：待处理" } }
+      }
+    },
+    "Status: Running" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Статус: Выполняется" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态：运行中" } }
+      }
+    },
+    "Status: Background" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Статус: Фон" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态：后台" } }
+      }
+    },
+    "Needs reply (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Нужен ответ (%lld)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待回复 (%lld)" } }
+      }
+    },
+    "Needs approval (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Нужно одобрение (%lld)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待批准 (%lld)" } }
+      }
+    },
+    "Needs attention (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Требует внимания (%lld)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "待处理 (%lld)" } }
+      }
+    },
+    "Background (%lld)" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Фон (%lld)" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "后台 (%lld)" } }
+      }
+    },
+    "%@ · %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "%@ · %lld" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@ · %lld" } }
+      }
+    },
     "Source revision" : {
       "extractionState" : "manual",
       "localizations" : {

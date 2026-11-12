@@ -462,4 +462,66 @@ describe('SessionHeader', () => {
 
         expect(await screen.findByText('Could not update pin: Network unavailable')).toBeInTheDocument()
     })
+
+    it('surfaces live session status in the header and triggers jump-to-pending on click', () => {
+        const onJumpToPendingRequest = vi.fn()
+        const { rerender } = render(
+            <QueryClientProvider client={new QueryClient()}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession({
+                                active: true,
+                                thinking: true,
+                                agentState: {
+                                    requests: {
+                                        r1: { tool: 'Bash', arguments: {}, createdAt: 10 },
+                                    },
+                                },
+                            })}
+                            onBack={vi.fn()}
+                            onJumpToPendingRequest={onJumpToPendingRequest}
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+
+        const approvalBadge = screen.getByTestId('session-header-status')
+        expect(approvalBadge).toHaveAttribute('data-status-tier', 'approval')
+        expect(approvalBadge).toHaveTextContent('Needs approval')
+        fireEvent.click(approvalBadge)
+        expect(onJumpToPendingRequest).toHaveBeenCalledOnce()
+
+        rerender(
+            <QueryClientProvider client={new QueryClient()}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession({ active: true, thinking: true })}
+                            onBack={vi.fn()}
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+        expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'running')
+
+        rerender(
+            <QueryClientProvider client={new QueryClient()}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession({ active: false, metadata: { flavor: 'codex', path: '/repo', host: 'machine', lifecycleState: 'archived' } })}
+                            onBack={vi.fn()}
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+        expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'archived')
+    })
 })

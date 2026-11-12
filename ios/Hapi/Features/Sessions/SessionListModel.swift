@@ -21,6 +21,40 @@ struct SessionRowUI: Identifiable, Equatable {
     var id: String { summary.id }
     var status: SessionRowStatus? { SessionRowStatus(summary: summary) }
     var tags: [String] { summary.metadata?.tags ?? [] }
+    var isArchived: Bool { summary.metadata?.lifecycleState == "archived" }
+}
+
+/// Quick status lens for the Option-B top summary bar (non-reordering).
+enum SessionQuickStatusLens: String, Equatable, Hashable, CaseIterable {
+    case attention
+    case running
+    case background
+
+    var filterLabel: String {
+        switch self {
+        case .attention: return String(localized: "Status: Needs action")
+        case .running: return String(localized: "Status: Running")
+        case .background: return String(localized: "Status: Background")
+        }
+    }
+}
+
+struct SessionStatusSummaryCounts: Equatable {
+    var attention: Int = 0
+    var running: Int = 0
+    var background: Int = 0
+
+    var hasAny: Bool {
+        attention > 0 || running > 0 || background > 0
+    }
+
+    func count(for lens: SessionQuickStatusLens) -> Int {
+        switch lens {
+        case .attention: return attention
+        case .running: return running
+        case .background: return background
+        }
+    }
 }
 
 /// Presentation only: request totals/kinds come from the hub, independently
@@ -30,6 +64,7 @@ enum SessionRowStatus: Equatable {
     case needsApproval(Int)
     case needsAttention(Int)
     case running
+    case background(Int)
 
     init?(summary: SessionSummary) {
         let count = summary.pendingRequestsCount
@@ -44,8 +79,30 @@ enum SessionRowStatus: Equatable {
             }
         } else if summary.active && summary.thinking {
             self = .running
+        } else if summary.active && summary.backgroundTaskCount > 0 {
+            self = .background(summary.backgroundTaskCount)
         } else {
             return nil
+        }
+    }
+
+    var isAttention: Bool {
+        switch self {
+        case .needsReply, .needsApproval, .needsAttention:
+            return true
+        case .running, .background:
+            return false
+        }
+    }
+
+    var quickLens: SessionQuickStatusLens {
+        switch self {
+        case .needsReply, .needsApproval, .needsAttention:
+            return .attention
+        case .running:
+            return .running
+        case .background:
+            return .background
         }
     }
 
@@ -56,24 +113,26 @@ enum SessionRowStatus: Equatable {
         case .needsApproval: return "Needs approval"
         case .needsAttention: return "Needs attention"
         case .running: return "Running"
+        case .background: return "Background"
         }
     }
 
     var count: Int? {
         switch self {
-        case .needsReply(let count), .needsApproval(let count), .needsAttention(let count): return count
-        case .running: return nil
+        case .needsReply(let count), .needsApproval(let count), .needsAttention(let count), .background(let count):
+            return count
+        case .running:
+            return nil
         }
     }
 
-    /// Unfilled attention symbols; running is a pulsing badge on the agent
-    /// icon. Status wording/count remain available to VoiceOver in either case.
     var symbolName: String? {
         switch self {
-        case .needsReply: return "bubble.left"
-        case .needsApproval: return "hand.raised"
-        case .needsAttention: return "exclamationmark.bubble"
-        case .running: return nil
+        case .needsReply: return "bubble.left.fill"
+        case .needsApproval: return "hand.raised.fill"
+        case .needsAttention: return "exclamationmark.bubble.fill"
+        case .running: return "bolt.fill"
+        case .background: return "arrow.triangle.2.circlepath"
         }
     }
 }
@@ -112,8 +171,10 @@ struct SessionListFilters: Equatable, Hashable {
     var tag: String?
     /// Web "unread only" lens: hide sessions already read in this namespace.
     var unreadOnly = false
+    /// Non-reordering quick status filter toggled from the top summary bar.
+    var statusLens: SessionQuickStatusLens?
 
-    var isActive: Bool { machineId != nil || tag != nil || unreadOnly || dateStart != nil }
+    var isActive: Bool { machineId != nil || tag != nil || unreadOnly || dateStart != nil || statusLens != nil }
 }
 
 /// Session-list presentation state over the `HubSession` stores — the iOS
@@ -331,7 +392,7 @@ final class SessionListModel {
     }
 
     var hasActiveFilters: Bool {
-        activeMachineFilter != nil || activeTagFilter != nil || filters.unreadOnly || activeOnly || filters.dateStart != nil
+        activeMachineFilter != nil || activeTagFilter != nil || filters.unreadOnly || activeOnly || filters.dateStart != nil || filters.statusLens != nil
     }
 
     var isSearching: Bool {
@@ -353,6 +414,9 @@ final class SessionListModel {
         if let start = filters.dateStart, let end = filters.dateEnd {
             parts.append(start.formatted(date: .abbreviated, time: .omitted) + " – " + end.formatted(date: .abbreviated, time: .omitted))
         }
+        if let lens = filters.statusLens {
+            parts.append(lens.filterLabel)
+        }
         if activeOnly { parts.append(String(localized: "Active Only")) }
         if filters.unreadOnly {
             parts.append(String(localized: "Unread only"))
@@ -366,6 +430,37 @@ final class SessionListModel {
             parts.append(String(format: String(localized: "Machine: %@"), machine.label))
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Counts for the Option-B quick status summary bar, scoped to the current
+    /// non-status-lens session pool so tapping a status pill keeps peer counts visible.
+    var statusSummaryCounts: SessionStatusSummaryCounts {
+        var counts = SessionStatusSummaryCounts()
+        for summary in filteredSessions(includeArchived: showArchivedSessions, applyStatusLens: false) {
+            guard let status = SessionRowStatus(summary: summary) else { continue }
+            switch status.quickLens {
+            case .attention: counts.attention += 1
+            case .running: counts.running += 1
+            case .background: counts.background += 1
+            }
+        }
+        return counts
+    }
+
+    var showsStatusSummaryBar: Bool {
+        statusSummaryCounts.hasAny || filters.statusLens != nil
+    }
+
+    func setStatusLens(_ lens: SessionQuickStatusLens?) {
+        filters.statusLens = lens
+    }
+
+    func toggleStatusLens(_ lens: SessionQuickStatusLens) {
+        if filters.statusLens == lens {
+            filters.statusLens = nil
+        } else {
+            filters.statusLens = lens
+        }
     }
 
     func markUnread(_ summary: SessionSummary) {
@@ -488,7 +583,7 @@ final class SessionListModel {
             }
     }
 
-    private func filteredSessions(includeArchived: Bool) -> [SessionSummary] {
+    private func filteredSessions(includeArchived: Bool, applyStatusLens: Bool = true) -> [SessionSummary] {
         let readState = lastSeenStore.state
         let followedTails = lastSeenStore.followedTails
         let activeFilter = activeMachineFilter
@@ -510,6 +605,12 @@ final class SessionListModel {
             visible = visible.filter { summary in
                 summary.id == selectedSessionId
                     || LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
+            }
+        }
+        if applyStatusLens, let statusLens = filters.statusLens {
+            visible = visible.filter { summary in
+                summary.id == selectedSessionId
+                    || SessionRowStatus(summary: summary)?.quickLens == statusLens
             }
         }
         if isSearching {

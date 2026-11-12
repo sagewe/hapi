@@ -40,15 +40,24 @@ struct SessionListView: View {
             sessionList
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.hasArchivedSearchMatches {
-                Button("Include Archived Sessions in Search") { model.setShowArchivedSessions(true) }
-                    .font(.subheadline)
-                    .padding(12)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("home.search-archived")
-            }
-            if let summary = model.filterSummary {
-                SessionFilterSummary(summary: summary, onClear: model.clearFilters)
+            VStack(spacing: 0) {
+                if model.showsStatusSummaryBar {
+                    SessionStatusSummaryBar(
+                        counts: model.statusSummaryCounts,
+                        activeLens: model.filters.statusLens,
+                        onToggle: { model.toggleStatusLens($0) }
+                    )
+                }
+                if model.hasArchivedSearchMatches {
+                    Button("Include Archived Sessions in Search") { model.setShowArchivedSessions(true) }
+                        .font(.subheadline)
+                        .padding(12)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("home.search-archived")
+                }
+                if let summary = model.filterSummary {
+                    SessionFilterSummary(summary: summary, onClear: model.clearFilters)
+                }
             }
         }
         .onChange(of: model.machineFilterIds, initial: true) { _, _ in
@@ -265,11 +274,7 @@ struct SessionListView: View {
                 .buttonStyle(.plain)
             }
         }
-        .listRowBackground(
-            isSelected
-                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.2))
-                : nil
-        )
+        .listRowBackground(rowBackground(for: row, isSelected: isSelected))
         .listRowInsets(EdgeInsets(top: Self.rowVerticalInset, leading: 16, bottom: Self.rowVerticalInset, trailing: 16))
         // Default separator color reads heavy against these rows; the theme
         // divider is the WeChat-style faint hairline.
@@ -283,6 +288,41 @@ struct SessionListView: View {
         .contextMenu {
             contextMenuActions(row)
         }
+    }
+
+    @ViewBuilder
+    private func rowBackground(for row: SessionRowUI, isSelected: Bool) -> some View {
+        #if targetEnvironment(macCatalyst)
+        if isSelected {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.2))
+        }
+        #else
+        let stripeColor = SessionStatusPalette.stripeColor(for: row.status, theme: theme)
+        let tintFill = SessionStatusPalette.rowTint(for: row.status, theme: theme)
+        if isSelected {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.2))
+                if let stripeColor {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(stripeColor)
+                        .frame(width: 3)
+                        .padding(.vertical, 6)
+                        .padding(.leading, 4)
+                }
+            }
+        } else if let stripeColor {
+            ZStack(alignment: .leading) {
+                Rectangle()
+                    .fill(tintFill ?? .clear)
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(stripeColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 6)
+                    .padding(.leading, 4)
+            }
+        }
+        #endif
     }
 
     /// Pointer rows on a Mac sidebar are denser than touch rows.
@@ -575,6 +615,186 @@ private struct ListRenderKey: Equatable {
     let collapsedTagGroups: Set<String>
 }
 
+enum SessionStatusPalette {
+    static func attentionForeground(theme: HapiTheme) -> Color {
+        theme.isDark ? Color(hex: 0xFBBF24) : Color(hex: 0xB45309)
+    }
+
+    static func runningForeground(theme: HapiTheme) -> Color {
+        theme.success
+    }
+
+    static func backgroundForeground(theme: HapiTheme) -> Color {
+        theme.isDark ? Color(hex: 0x38BDF8) : Color(hex: 0x0284C7)
+    }
+
+    static func foreground(for status: SessionRowStatus, theme: HapiTheme) -> Color {
+        switch status {
+        case .needsReply, .needsApproval, .needsAttention:
+            return attentionForeground(theme: theme)
+        case .running:
+            return runningForeground(theme: theme)
+        case .background:
+            return backgroundForeground(theme: theme)
+        }
+    }
+
+    static func lensForeground(for lens: SessionQuickStatusLens, theme: HapiTheme) -> Color {
+        switch lens {
+        case .attention: return attentionForeground(theme: theme)
+        case .running: return runningForeground(theme: theme)
+        case .background: return backgroundForeground(theme: theme)
+        }
+    }
+
+    static func stripeColor(for status: SessionRowStatus?, theme: HapiTheme) -> Color? {
+        guard let status else { return nil }
+        return foreground(for: status, theme: theme)
+    }
+
+    static func rowTint(for status: SessionRowStatus?, theme: HapiTheme) -> Color? {
+        guard let status else { return nil }
+        let base = foreground(for: status, theme: theme)
+        switch status {
+        case .needsReply, .needsApproval, .needsAttention:
+            return base.opacity(theme.isDark ? 0.085 : 0.055)
+        case .running:
+            return base.opacity(theme.isDark ? 0.07 : 0.045)
+        case .background:
+            return base.opacity(theme.isDark ? 0.06 : 0.035)
+        }
+    }
+}
+
+/// GPU-composited orbiting arc around the agent icon while a session turn runs.
+struct SessionOrbitingRing: View {
+    let color: Color
+    var lineWidth: CGFloat = 2
+    @State private var spinning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(color.opacity(0.18), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0.08, to: 0.76)
+                .stroke(
+                    AngularGradient(
+                        colors: [color.opacity(0.05), color.opacity(0.55), color],
+                        center: .center
+                    ),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(spinning ? 360 : 0))
+        }
+        .onAppear {
+            guard !spinning else { return }
+            withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
+                spinning = true
+            }
+        }
+    }
+}
+
+/// Option-B top quick status summary bar: non-reordering pills that appear only
+/// when sessions need action or are actively running.
+struct SessionStatusSummaryBar: View {
+    @Environment(\.hapiTheme) private var theme
+    let counts: SessionStatusSummaryCounts
+    let activeLens: SessionQuickStatusLens?
+    let onToggle: (SessionQuickStatusLens) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if counts.attention > 0 || activeLens == .attention {
+                    pill(
+                        lens: .attention,
+                        count: counts.attention,
+                        symbol: "hand.raised.fill",
+                        label: LocalizedStringKey("Needs action")
+                    )
+                }
+                if counts.running > 0 || activeLens == .running {
+                    pill(
+                        lens: .running,
+                        count: counts.running,
+                        symbol: "bolt.fill",
+                        label: LocalizedStringKey("Running")
+                    )
+                }
+                if counts.background > 0 || activeLens == .background {
+                    pill(
+                        lens: .background,
+                        count: counts.background,
+                        symbol: "arrow.triangle.2.circlepath",
+                        label: LocalizedStringKey("Background")
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+        }
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(theme.divider.opacity(0.7))
+                .frame(height: 0.5)
+        }
+        .accessibilityIdentifier("home.status-summary-bar")
+    }
+
+    private func pill(
+        lens: SessionQuickStatusLens,
+        count: Int,
+        symbol: String,
+        label: LocalizedStringKey
+    ) -> some View {
+        let selected = activeLens == lens
+        let color = SessionStatusPalette.lensForeground(for: lens, theme: theme)
+        return Button {
+            onToggle(lens)
+        } label: {
+            HStack(spacing: 5) {
+                if lens == .running && count > 0 {
+                    ZStack {
+                        SessionOrbitingRing(color: selected ? .white : color, lineWidth: 1.5)
+                            .frame(width: 11, height: 11)
+                    }
+                } else {
+                    Image(systemName: symbol)
+                        .font(.caption2.weight(.bold))
+                }
+                Text(verbatim: "\(count)")
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                if selected {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .opacity(0.85)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundStyle(selected ? Color.white : color)
+            .background(
+                Capsule()
+                    .fill(selected ? color : color.opacity(theme.isDark ? 0.16 : 0.12))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(color.opacity(selected ? 0 : 0.32), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("home.status-lens.\(lens.rawValue)")
+    }
+}
+
 struct SessionRowView: View {
     @Environment(\.hapiTheme) private var theme
     @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 30
@@ -585,6 +805,10 @@ struct SessionRowView: View {
 
     private let iconSpacing: CGFloat = 12
 
+    private var isDisconnectedIdle: Bool {
+        !row.summary.active && row.status == nil
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: iconSpacing) {
             agentIcon
@@ -594,13 +818,23 @@ struct SessionRowView: View {
             }
         }
         #if targetEnvironment(macCatalyst)
-        .padding(.horizontal, 8)
+        .padding(.leading, 11)
+        .padding(.trailing, 8)
         .padding(.vertical, 6)
-        .background(
-            isSelected
-                ? RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.22))
-                : RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.clear)
-        )
+        .background {
+            let tint = SessionStatusPalette.rowTint(for: row.status, theme: theme)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.22) : (tint ?? Color.clear))
+        }
+        .overlay(alignment: .leading) {
+            if let stripe = SessionStatusPalette.stripeColor(for: row.status, theme: theme) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(stripe)
+                    .frame(width: 3)
+                    .padding(.vertical, 5)
+                    .padding(.leading, 3)
+            }
+        }
         #endif
         // Separators start under the text column, as in Mail and Messages.
         .alignmentGuide(.listRowSeparatorLeading) { _ in iconSize + iconSpacing }
@@ -609,28 +843,71 @@ struct SessionRowView: View {
         .accessibilityIdentifier("home.session.\(row.id)")
     }
 
-    /// The agent owns the leading column; a presence badge marks connected
-    /// sessions (pulsing while the agent works) instead of dimming the rest.
+    /// Five-tier presence treatment:
+    /// - running: GPU orbiting ring + lightning badge
+    /// - needs action: amber halo + attention dot
+    /// - background: sky badge
+    /// - connected idle: quiet static green dot
+    /// - disconnected: gently softened icon without badge
     private var agentIcon: some View {
-        AgentFlavorIconView(flavor: row.flavor, size: iconSize * 0.8)
-            .frame(width: iconSize, height: iconSize)
-            .overlay(alignment: .bottomTrailing) {
-                if row.summary.active {
-                    presenceBadge
-                }
+        ZStack {
+            if row.status == .running {
+                SessionOrbitingRing(
+                    color: SessionStatusPalette.runningForeground(theme: theme),
+                    lineWidth: 2
+                )
+                .frame(width: iconSize + 4, height: iconSize + 4)
+            } else if let status = row.status, status.isAttention {
+                Circle()
+                    .strokeBorder(
+                        SessionStatusPalette.attentionForeground(theme: theme).opacity(0.55),
+                        lineWidth: 1.75
+                    )
+                    .frame(width: iconSize + 3, height: iconSize + 3)
             }
+            AgentFlavorIconView(flavor: row.flavor, size: iconSize * 0.8)
+                .opacity(isDisconnectedIdle ? 0.48 : 1.0)
+        }
+        .frame(width: iconSize, height: iconSize)
+        .overlay(alignment: .bottomTrailing) {
+            if let status = row.status {
+                statusCornerBadge(for: status)
+            } else if row.summary.active {
+                connectedIdleBadge
+            }
+        }
     }
 
-    private var presenceBadge: some View {
-        let isRunning = row.status == .running
-        return Image(systemName: "circle.fill")
+    private func statusCornerBadge(for status: SessionRowStatus) -> some View {
+        let color = SessionStatusPalette.foreground(for: status, theme: theme)
+        let symbol: String = {
+            switch status {
+            case .running: return "bolt.circle.fill"
+            case .needsApproval, .needsReply, .needsAttention: return "exclamationmark.circle.fill"
+            case .background: return "circle.fill"
+            }
+        }()
+        let isBackground: Bool = {
+            if case .background = status { return true }
+            return false
+        }()
+        return Image(systemName: symbol)
+            .font(.system(size: isBackground ? iconSize * 0.3 : iconSize * 0.36))
+            .foregroundStyle(color)
+            .padding(1.5)
+            .background(Circle().fill(theme.background))
+            .offset(x: 2, y: 2)
+            .accessibilityHidden(true)
+    }
+
+    private var connectedIdleBadge: some View {
+        Image(systemName: "circle.fill")
             .font(.system(size: iconSize * 0.3))
             .foregroundStyle(theme.success)
-            .symbolEffect(.pulse, options: .repeating, isActive: isRunning)
             .padding(2)
             .background(Circle().fill(theme.background))
             .offset(x: 2, y: 2)
-            .accessibilityLabel(isRunning ? Text("Running") : Text("Connected"))
+            .accessibilityLabel(Text("Connected"))
     }
 
     private var titleLine: some View {
@@ -638,12 +915,13 @@ struct SessionRowView: View {
             Text(verbatim: row.title)
                 .font(.body)
                 .fontWeight(row.unread ? .semibold : .regular)
-                .foregroundStyle(theme.textPrimary)
+                .foregroundStyle(
+                    isDisconnectedIdle && !row.unread
+                        ? theme.textPrimary.opacity(0.76)
+                        : theme.textPrimary
+                )
                 .lineLimit(1)
             Spacer(minLength: 4)
-            // Unread is a semibold title plus an accent timestamp, not a
-            // dot: the presence badge is the row's only dot.
-            // Minute ticks redraw only this label, not the list.
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 Text(verbatim: formatRelativeAge(now: context.date, thenEpochMs: row.summary.updatedAt))
             }
@@ -655,12 +933,10 @@ struct SessionRowView: View {
         }
     }
 
-    /// Project + tags left; only states that need the user (reply/approval) get a
-    /// trailing symbol. Routine activity lives on the icon badge.
+    /// Project + tags left; semantic status pill right (kept within `statusSlotSize`
+    /// height so row geometry never jumps across states).
     private var detailLine: some View {
         HStack(alignment: .center, spacing: 6) {
-            // Keep the same text line height when metadata is missing,
-            // so the row height does not jump.
             Text(verbatim: row.project ?? " ")
                 .lineLimit(1)
                 .accessibilityHidden(row.project == nil)
@@ -682,34 +958,63 @@ struct SessionRowView: View {
                     }
                 }
             }
-            Spacer(minLength: 8)
-            if let status = row.status, let symbol = status.symbolName {
-                Image(systemName: symbol)
-                    .symbolVariant(.none)
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(attentionColor)
-                    // One slot keeps every attention symbol aligned.
-                    .frame(width: statusSlotSize, height: statusSlotSize)
-                    .fixedSize()
-                    .layoutPriority(1)
-                    .accessibilityLabel(statusAccessibilityText(status))
+            Spacer(minLength: 6)
+            if let status = row.status {
+                statusPill(for: status)
+            } else if row.isArchived {
+                archivedPill
             }
         }
         .font(.footnote)
         .foregroundStyle(theme.textSecondary)
     }
 
-    // Darker amber keeps thin strokes visible on white without a filled
-    // symbol, background badge or animation competing with the session title.
-    private var attentionColor: Color {
-        theme.isDark ? theme.warning : Color(hex: 0x9A6700)
+    private func statusPill(for status: SessionRowStatus) -> some View {
+        let color = SessionStatusPalette.foreground(for: status, theme: theme)
+        return HStack(spacing: 3.5) {
+            if let symbol = status.symbolName {
+                Image(systemName: symbol)
+                    .font(.system(size: statusSlotSize * 0.58, weight: .bold))
+            }
+            Text(LocalizedStringKey(status.titleKey))
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+            if let count = status.count, (status.isAttention ? count > 1 : count > 0) {
+                Text(verbatim: "· \(count)")
+                    .font(.caption2.weight(.bold))
+                    .monospacedDigit()
+            }
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .frame(height: statusSlotSize)
+        .background(color.opacity(theme.isDark ? 0.16 : 0.12), in: Capsule())
+        .overlay(Capsule().strokeBorder(color.opacity(0.28), lineWidth: 0.75))
+        .fixedSize()
+        .layoutPriority(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(statusAccessibilityText(status))
+        .accessibilityIdentifier("home.session.status.\(row.id)")
     }
 
-    /// Keep the exact request count available to VoiceOver without adding
-    /// another visible number or badge to every waiting conversation.
+    private var archivedPill: some View {
+        Text("Archived")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 6)
+            .frame(height: statusSlotSize)
+            .background(theme.textSecondary.opacity(0.12), in: Capsule())
+            .fixedSize()
+            .layoutPriority(1)
+            .accessibilityLabel(Text("Archived"))
+    }
+
     private func statusAccessibilityText(_ status: SessionRowStatus) -> Text {
         let title = Text(LocalizedStringKey(status.titleKey))
         if let count = status.count, count > 1 {
+            if case .background = status {
+                return Text("\(title) · \(count)")
+            }
             return Text("\(title) · \(count) requests")
         }
         return title
