@@ -51,13 +51,12 @@ public enum HoldDictationPhase: Equatable, Sendable {
     case idle
     case holding(zone: HoldActionZone, partialText: String, audioLevel: Float)
     case finalizing(zone: HoldActionZone, partialText: String)
-    case editing(text: String)
 
     public var isOverlayActive: Bool {
         switch self {
         case .idle:
             return false
-        case .holding, .finalizing, .editing:
+        case .holding, .finalizing:
             return true
         }
     }
@@ -65,8 +64,14 @@ public enum HoldDictationPhase: Equatable, Sendable {
 
 /// One-shot outcomes emitted by ``HoldToDictateController``.
 public enum HoldDictationOutcome: Equatable, Sendable {
-    /// Recognized (or edited) text should be submitted immediately.
+    /// Recognized text should be submitted immediately (`松手 发送`).
     case sendText(String)
+    /// Right-slide release (`松开 编辑文字`): immediately expand & focus the main
+    /// composer with the live streaming draft (`0ms`).
+    case beginInlineEdit(partialText: String)
+    /// Background `gpt-4o-transcribe` refinement completed for the active inline
+    /// edit segment; replaces the segment if the user hasn't edited it yet.
+    case refineInlineEdit(finalText: String)
     /// No provider configured on Hub.
     case noProvider
     /// Non-fatal user-facing error notice.
@@ -313,10 +318,11 @@ public final class HoldToDictateController {
 
         let baselinePartial = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
         if zone == .edit {
-            // Open the voice text editor immediately (0ms) with the live streaming draft,
-            // and refine seamlessly in the background if the user hasn't started typing.
+            // Dismiss voice overlay immediately (0ms) and hand off to the main
+            // morphing composer box, refining seamlessly in the background.
             isRefiningEdit = true
-            phase = .editing(text: baselinePartial)
+            phase = .idle
+            onOutcome?(.beginInlineEdit(partialText: baselinePartial))
         } else {
             phase = .finalizing(zone: zone, partialText: partialText)
         }
@@ -372,16 +378,13 @@ public final class HoldToDictateController {
                 self.phase = .idle
                 self.onOutcome?(.sendText(cleaned))
             case .edit:
-                guard case .editing(let currentText) = self.phase else { return }
-                let currentTrimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if cleaned.isEmpty && currentTrimmed.isEmpty {
-                    self.phase = .idle
-                    self.onOutcome?(.error("未识别到语音内容"))
+                guard !cleaned.isEmpty else {
+                    if baselinePartial.isEmpty {
+                        self.onOutcome?(.error("未识别到语音内容"))
+                    }
                     return
                 }
-                if !cleaned.isEmpty && (currentTrimmed.isEmpty || currentText == baselinePartial) {
-                    self.phase = .editing(text: cleaned)
-                }
+                self.onOutcome?(.refineInlineEdit(finalText: cleaned))
             case .cancel:
                 self.phase = .idle
             }
@@ -394,7 +397,7 @@ public final class HoldToDictateController {
         cancelActiveTake()
     }
 
-    /// Cancels everything (including finalizing or editing).
+    /// Cancels everything (including finalizing or background inline refinement).
     public func dismissOverlay() {
         if case .holding = phase {
             cancelActiveTake()
@@ -406,29 +409,12 @@ public final class HoldToDictateController {
         phase = .idle
     }
 
-    /// Updates text inside the focused edit overlay.
-    public func updateEditingText(_ text: String) {
-        guard case .editing = phase else { return }
-        phase = .editing(text: text)
-    }
-
-    /// Taps the `发送` button in the focused edit overlay.
-    public func confirmEditSend(_ overrideText: String? = nil) {
-        let raw: String
-        if let overrideText {
-            raw = overrideText
-        } else if case .editing(let current) = phase {
-            raw = current
-        } else {
-            return
-        }
-        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
+    /// Cancels any pending background refinement when the user sends or undoes the inline voice draft.
+    public func clearInlineEditSession() {
+        guard phase == .idle else { return }
         sessionGeneration &+= 1
         isRefiningEdit = false
         teardownStream()
-        phase = .idle
-        onOutcome?(.sendText(cleaned))
     }
 
     // MARK: - Private
@@ -458,7 +444,7 @@ public final class HoldToDictateController {
             phase = .holding(zone: zone, partialText: trimmed, audioLevel: level)
         case .finalizing(let zone, _):
             phase = .finalizing(zone: zone, partialText: trimmed)
-        case .idle, .editing:
+        case .idle:
             break
         }
     }

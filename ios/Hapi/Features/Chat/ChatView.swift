@@ -67,13 +67,6 @@ struct ChatView: View {
         #endif
     }
 
-    #if !targetEnvironment(macCatalyst)
-    private var isVoiceEditing: Bool {
-        if case .editing = model.holdDictation.phase { return true }
-        return false
-    }
-    #endif
-
     init(
         session: HubSession,
         sessionId: String,
@@ -161,16 +154,8 @@ struct ChatView: View {
         }
         #if !targetEnvironment(macCatalyst)
         .overlay {
-            WeChatVoiceOverlayHost(
-                controller: model.holdDictation,
-                canSendAndSteer: model.interactor.composer.canSendAndSteer,
-                onSteerSend: { text in
-                    model.interactor.appendDictatedText(text)
-                    model.interactor.sendMessage(steer: true)
-                }
-            )
+            WeChatVoiceOverlayHost(controller: model.holdDictation)
         }
-        .toolbar(isVoiceEditing ? .hidden : .visible, for: .navigationBar)
         #endif
         .modifier(FoldedTitleMinimization(isActive: isFoldedOuterScreen))
         .modifier(FoldedSystemTitle(

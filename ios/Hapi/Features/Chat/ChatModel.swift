@@ -395,8 +395,13 @@ final class ChatModel {
             guard let self else { return }
             switch outcome {
             case .sendText(let text):
+                self.interactor.clearVoiceInlineEditTracking()
                 self.interactor.appendDictatedText(text)
                 self.interactor.sendMessage()
+            case .beginInlineEdit(let partialText):
+                self.interactor.beginVoiceInlineEdit(partialText: partialText)
+            case .refineInlineEdit(let finalText):
+                self.interactor.applyRefinedVoiceInlineEdit(finalText)
             case .noProvider:
                 self.showNotice(String(localized: "No transcription provider configured on hub"))
             case .error(let message):

@@ -4,12 +4,12 @@ import HapiUI
 import SwiftUI
 import UIKit
 
-/// Full-screen Hold-to-Dictate & Focused Voice Edit overlays (iOS only),
-/// unified with MyDots' lower-screen thumb layout and harmonized with `HapiTheme`.
+/// Full-screen Hold-to-Dictate overlay (iOS only), unified with MyDots'
+/// lower-screen thumb layout and harmonized with `HapiTheme`.
+/// Right-sliding to `编辑` immediately dismisses this overlay and hands off
+/// the draft directly to the main morphing `ChatComposerView`.
 struct WeChatVoiceOverlayHost: View {
     let controller: HoldToDictateController
-    var canSendAndSteer: Bool = false
-    var onSteerSend: ((String) -> Void)?
 
     var body: some View {
         switch controller.phase {
@@ -33,23 +33,6 @@ struct WeChatVoiceOverlayHost: View {
             )
             .allowsHitTesting(false)
             .transition(.opacity.animation(.easeOut(duration: 0.14)))
-        case .editing(let currentText):
-            WeChatVoiceEditOverlay(
-                controllerText: currentText,
-                isRefining: controller.isRefiningEdit,
-                canSendAndSteer: canSendAndSteer,
-                onTextChanged: { controller.updateEditingText($0) },
-                onCancel: { controller.dismissOverlay() },
-                onSend: { text, steer in
-                    if steer, let onSteerSend {
-                        controller.dismissOverlay()
-                        onSteerSend(text)
-                    } else {
-                        controller.confirmEditSend(text)
-                    }
-                }
-            )
-            .transition(.opacity.animation(.easeOut(duration: 0.16)))
         }
     }
 }
@@ -356,226 +339,6 @@ private struct WeChatBottomArcTopCurve: Shape {
             control: CGPoint(x: rect.width * 0.5, y: -18)
         )
         return p
-    }
-}
-
-// MARK: - Theme-Harmonious Voice Edit Overlay
-
-private struct WeChatVoiceEditOverlay: View {
-    let controllerText: String
-    let isRefining: Bool
-    let canSendAndSteer: Bool
-    let onTextChanged: (String) -> Void
-    let onCancel: () -> Void
-    let onSend: (String, Bool) -> Void
-
-    @State private var text: String
-    @Environment(\.hapiTheme) private var theme
-
-    init(
-        controllerText: String,
-        isRefining: Bool,
-        canSendAndSteer: Bool,
-        onTextChanged: @escaping (String) -> Void,
-        onCancel: @escaping () -> Void,
-        onSend: @escaping (String, Bool) -> Void
-    ) {
-        self.controllerText = controllerText
-        self.isRefining = isRefining
-        self.canSendAndSteer = canSendAndSteer
-        self.onTextChanged = onTextChanged
-        self.onCancel = onCancel
-        self.onSend = onSend
-        _text = State(initialValue: controllerText)
-    }
-
-    private var canSubmit: Bool {
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        ZStack {
-            theme.background
-                .ignoresSafeArea()
-                .onTapGesture {
-                    // Keep focus in editor; only explicit ✕ cancels.
-                }
-
-            VStack(spacing: 0) {
-                HStack {
-                    Button(action: onCancel) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(width: 42, height: 42)
-                            .background(theme.surface, in: Circle())
-                            .overlay(Circle().strokeBorder(theme.divider, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("取消语音编辑")
-
-                    Spacer()
-
-                    if isRefining {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(theme.accent)
-                            Text("正在润色识别结果…")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(theme.textSecondary)
-                        }
-                    }
-
-                    Spacer()
-                    Color.clear.frame(width: 42, height: 42)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-
-                VoiceEditAutoFocusTextView(
-                    text: Binding(
-                        get: { text },
-                        set: { next in
-                            text = next
-                            onTextChanged(next)
-                        }
-                    ),
-                    isDark: theme.isDark,
-                    textColor: UIColor(theme.textPrimary),
-                    tintColor: UIColor(theme.accent),
-                    onSendReturn: {
-                        if canSubmit {
-                            onSend(text, false)
-                        }
-                    }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .fill(theme.surface)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(theme.divider, lineWidth: 1)
-                )
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-
-                HStack {
-                    Spacer()
-                    Button {
-                        guard canSubmit else { return }
-                        onSend(text, false)
-                    } label: {
-                        Text("发送")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 26)
-                            .padding(.vertical, 12)
-                            .background(
-                                Capsule()
-                                    .fill(canSubmit ? theme.accent : theme.divider)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSubmit)
-                    .accessibilityLabel("发送编辑后的文字")
-                    .contextMenu {
-                        if canSendAndSteer && canSubmit {
-                            Button {
-                                onSend(text, true)
-                            } label: {
-                                Label("发送并插入当前回合", systemImage: "arrow.turn.down.right")
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-            }
-        }
-        .onChange(of: controllerText) { _, updated in
-            if updated != text {
-                text = updated
-            }
-        }
-    }
-}
-
-private struct VoiceEditAutoFocusTextView: UIViewRepresentable {
-    @Binding var text: String
-    let isDark: Bool
-    let textColor: UIColor
-    let tintColor: UIColor
-    let onSendReturn: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSendReturn: onSendReturn)
-    }
-
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.backgroundColor = .clear
-        textView.textColor = textColor
-        textView.tintColor = tintColor
-        textView.font = .systemFont(ofSize: 19.5, weight: .medium)
-        textView.returnKeyType = .send
-        textView.keyboardAppearance = isDark ? .dark : .light
-        textView.isScrollEnabled = true
-        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
-        textView.textContainer.lineFragmentPadding = 0
-        textView.delegate = context.coordinator
-        textView.text = text
-        let end = (text as NSString).length
-        textView.selectedRange = NSRange(location: end, length: 0)
-        DispatchQueue.main.async {
-            textView.becomeFirstResponder()
-        }
-        return textView
-    }
-
-    func updateUIView(_ uiView: UITextView, context: Context) {
-        context.coordinator.onSendReturn = onSendReturn
-        uiView.textColor = textColor
-        uiView.tintColor = tintColor
-        uiView.keyboardAppearance = isDark ? .dark : .light
-        if uiView.markedTextRange == nil && uiView.text != text {
-            uiView.text = text
-            let end = (text as NSString).length
-            uiView.selectedRange = NSRange(location: end, length: 0)
-        }
-    }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var text: Binding<String>
-        var onSendReturn: () -> Void
-
-        init(text: Binding<String>, onSendReturn: @escaping () -> Void) {
-            self.text = text
-            self.onSendReturn = onSendReturn
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            if textView.markedTextRange == nil {
-                text.wrappedValue = textView.text ?? ""
-            }
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText replacement: String
-        ) -> Bool {
-            if replacement == "\n" && textView.markedTextRange == nil {
-                text.wrappedValue = textView.text ?? ""
-                onSendReturn()
-                return false
-            }
-            return true
-        }
     }
 }
 #endif

@@ -715,6 +715,9 @@ struct ChatComposerView: View {
         }
         historyIndex = nil
         draftBeforeHistory = ""
+        #if !targetEnvironment(macCatalyst)
+        holdDictation?.clearInlineEditSession()
+        #endif
         interactor.sendMessage(steer: steer)
         #if !targetEnvironment(macCatalyst)
         textFocused = false
@@ -1098,6 +1101,43 @@ struct ChatComposerView: View {
         addAttachmentButton
         if interactor.scratchlist != nil, scratchlistMode || interactor.scratchlistCount > 0 {
             scratchlistButton
+        }
+        if !scratchlistMode {
+            if holdDictation?.isRefiningEdit == true {
+                HStack(spacing: 5) {
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("润色中…")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+                .transition(.opacity)
+            }
+            if interactor.hasUndoableVoiceEdit {
+                Button {
+                    holdDictation?.clearInlineEditSession()
+                    let becameEmpty = interactor.undoVoiceInlineEdit()
+                    if becameEmpty {
+                        textFocused = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("撤销")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.07), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("撤销语音文字")
+            }
         }
         #endif
     }

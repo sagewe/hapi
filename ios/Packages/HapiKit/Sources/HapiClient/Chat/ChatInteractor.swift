@@ -93,6 +93,11 @@ public final class ChatInteractor {
 
     /// Local focus intent, observed by the composer without changing its draft.
     public private(set) var composerFocusRequest = 0
+    /// True after right-sliding from Hold-to-Dictate into the main composer, allowing
+    /// one-tap undo of just the newly dictated segment.
+    public private(set) var hasUndoableVoiceEdit = false
+    @ObservationIgnored private var voiceEditBaseDraft: String?
+    @ObservationIgnored private var voiceEditExpectedDraft: String?
     public private(set) var composerDestination: ComposerDestination = .chat
     public private(set) var scratchlistBusy = false
     public private(set) var scratchlistError: String?
@@ -301,6 +306,7 @@ public final class ChatInteractor {
         case nil:
             break
         }
+        clearVoiceInlineEditTracking()
         composerText = ""
         draftTask?.cancel()
         draftTask = nil
@@ -401,6 +407,9 @@ public final class ChatInteractor {
            SlashCommandSuggestions.query(of: composerText) == nil {
             loadSlashCommands()
         }
+        if hasUndoableVoiceEdit, Self.isBlank(text), voiceEditExpectedDraft != text {
+            clearVoiceInlineEditTracking()
+        }
         composerText = text
         draftTask?.cancel()
         guard let drafts else { return }
@@ -443,6 +452,7 @@ public final class ChatInteractor {
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachmentMetadata = attachments.consume()
         guard !text.isEmpty || attachmentMetadata != nil else { return }
+        clearVoiceInlineEditTracking()
         composerText = ""
         draftTask?.cancel()
         draftTask = nil
@@ -483,6 +493,52 @@ public final class ChatInteractor {
     /// `appendTranscript`).
     public func appendDictatedText(_ transcript: String) {
         setComposerText(appendTranscript(composerText, transcript: transcript))
+    }
+
+    /// Right-slide release from Hold-to-Dictate (`松开 编辑文字`): immediately (`0ms`)
+    /// inserts the live streaming draft into the main morphing composer and focuses it,
+    /// recording the pre-voice draft so background refinement or one-tap undo only
+    /// affects the newly dictated span.
+    public func beginVoiceInlineEdit(partialText: String) {
+        let base = composerText
+        let trimmed = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let combined = trimmed.isEmpty ? base : appendTranscript(base, transcript: trimmed)
+        voiceEditBaseDraft = base
+        voiceEditExpectedDraft = combined
+        hasUndoableVoiceEdit = true
+        setComposerText(combined)
+        focusComposer()
+    }
+
+    /// Background `gpt-4o-transcribe` refinement finished: seamlessly replaces ONLY
+    /// the newly dictated span if the user hasn't started typing manual edits yet.
+    public func applyRefinedVoiceInlineEdit(_ finalText: String) {
+        guard hasUndoableVoiceEdit,
+              let base = voiceEditBaseDraft,
+              let expected = voiceEditExpectedDraft,
+              composerText == expected else { return }
+        let trimmed = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let refined = appendTranscript(base, transcript: trimmed)
+        voiceEditExpectedDraft = refined
+        setComposerText(refined)
+    }
+
+    /// Undoes the last inline voice-edit segment, restoring the exact pre-voice draft.
+    /// Returns `true` when the restored composer is completely empty (so the caller can
+    /// also dismiss keyboard focus and collapse back to the pill).
+    @discardableResult
+    public func undoVoiceInlineEdit() -> Bool {
+        guard hasUndoableVoiceEdit, let base = voiceEditBaseDraft else { return false }
+        clearVoiceInlineEditTracking()
+        setComposerText(base)
+        return Self.isBlank(base) && attachments.items.isEmpty
+    }
+
+    public func clearVoiceInlineEditTracking() {
+        voiceEditBaseDraft = nil
+        voiceEditExpectedDraft = nil
+        hasUndoableVoiceEdit = false
     }
 
     /// Screen-level notices (attachment prep failures, mic permission) ride

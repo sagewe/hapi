@@ -106,7 +106,8 @@ struct ComposerTextView: UIViewRepresentable {
         textView.showsVerticalScrollIndicator = true
         #else
         let minimum = ceil(font.lineHeight)
-        let maximum = ceil(font.lineHeight * 6)
+        let maximum = ceil(font.lineHeight * 8)
+        textView.showsVerticalScrollIndicator = height > maximum
         #endif
         textView.isScrollEnabled = height > maximum
         return CGSize(width: width, height: min(maximum, max(minimum, height)))

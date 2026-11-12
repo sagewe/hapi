@@ -198,9 +198,9 @@ struct HoldToDictateControllerTests {
         #expect(outcomes == [.sendText("这是一个测试")])
     }
 
-    @Test("Sliding right to edit opens focused editor, and confirmEditSend submits edited text")
+    @Test("Sliding right to edit immediately hands off draft to main composer and emits background refinement")
     @MainActor
-    func holdSlideEditAndSend() async throws {
+    func holdSlideEditHandsOffToMainComposerAndRefines() async throws {
         let api = FakeHoldDictationApi()
         let streamer = FakeHoldStreamer()
         let recorder = FakeHoldRecorder()
@@ -218,19 +218,18 @@ struct HoldToDictateControllerTests {
         #expect(controller.phase == .holding(zone: .edit, partialText: "这是一个测", audioLevel: 0))
 
         controller.endHold()
-        // Enters `.editing` synchronously at 0ms with the streaming draft while refining in background
-        #expect(controller.phase == .editing(text: "这是一个测"))
+        // Dismisses voice overlay synchronously at 0ms and hands off streaming draft to main composer
+        #expect(controller.phase == .idle)
         #expect(controller.isRefiningEdit == true)
+        #expect(outcomes == [.beginInlineEdit(partialText: "这是一个测")])
 
         try await Task.sleep(nanoseconds: 50_000_000)
 
         #expect(controller.isRefiningEdit == false)
-        #expect(controller.phase == .editing(text: "这是一个测试"))
-        #expect(outcomes.isEmpty)
-
-        controller.confirmEditSend("这是一个测试，已编辑")
-        #expect(controller.phase == .idle)
-        #expect(outcomes == [.sendText("这是一个测试，已编辑")])
+        #expect(outcomes == [
+            .beginInlineEdit(partialText: "这是一个测"),
+            .refineInlineEdit(finalText: "这是一个测试")
+        ])
     }
 
     @Test("Sliding left to cancel discards audio without sending")
