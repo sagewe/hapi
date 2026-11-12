@@ -206,7 +206,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
             this.backend
             && session.sessionId
             && session.queue.size() === 0
-            && this.reactiveWakeup.hasUnreadReactiveSteps(session.sessionId)
+            && this.reactiveWakeup.hasPendingIdleWork(session.sessionId)
         ) {
             return { kind: 'idle-wakeup' };
         }
@@ -227,7 +227,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 && this.backend
                 && session.sessionId
                 && session.queue.size() === 0
-                && this.reactiveWakeup.hasUnreadReactiveSteps(session.sessionId)
+                && this.reactiveWakeup.hasPendingIdleWork(session.sessionId)
             ) {
                 wokeOnReactive = true;
                 waitAbort.abort();
@@ -307,6 +307,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                     try {
                         const backend = await this.ensureBackend(msg.mode);
                         if (this.stopping || this.aborting) throw new Error('Antigravity session stopped');
+                        await this.reactiveWakeup.requireResumeSyncBeforePrompt(backend, session.sessionId, session.path, msg.mode);
                         this.activeModeHash = msg.hash;
                         this.steering(true);
                         this.reactiveWakeup.beforePrompt(session.sessionId);

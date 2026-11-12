@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { AgyAcpDriver } from './agyAcpDriver';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
-import type { AgyReactiveWakeupOptions, AgyRawTranscriptStep } from './agyReactiveWakeup';
+import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions, type AgyRawTranscriptStep } from './agyReactiveWakeup';
 import { canonicalizeQuestionToolInput } from '@/agent/utils';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -547,5 +547,993 @@ describe('Antigravity ACP delivery', () => {
                 }
             })
         );
+    });
+
+    it('settles orphaned reactive tool calls on stream interruption gap (393 -> 398) while preserving live background tasks and finishing thinking=false', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-stream-gap-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const appendSteps = (steps: AgyRawTranscriptStep[]) => {
+                appendFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+            writeFileSync(transcriptPath, '', 'utf8');
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+
+            // Synchronous turn spawns two background tasks: task-377 and task-378
+            appendSteps([
+                { step_index: 375, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 376,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [
+                        { name: 'run_command', args: { CommandLine: 'build-mac', WaitMsBeforeAsync: 500 } },
+                        { name: 'run_command', args: { CommandLine: 'build-ios', WaitMsBeforeAsync: 500 } }
+                    ]
+                },
+                {
+                    step_index: 377,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: 'Tool is running as a background task with task id: agy-native/task-377\n'
+                },
+                {
+                    step_index: 378,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: 'Tool is running as a background task with task id: agy-native/task-378\n'
+                },
+                { step_index: 382, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'Waiting on builds...' }
+            ]);
+            h.turn.resolve();
+
+            // task-377 finishes, step 393 emits 4 file write/edit calls (expecting 394..397),
+            // then stream interrupts at step 398 while task-378 is STILL running!
+            appendSteps([
+                {
+                    step_index: 383,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\nTask id "agy-native/task-377" finished with result:\nCommand exited with code 0.\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 393,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [
+                        { name: 'write_file', args: { Path: '/tmp/a.md', Content: 'a' } },
+                        { name: 'edit_file', args: { Path: '/tmp/b.md' } },
+                        { name: 'edit_file', args: { Path: '/tmp/c.md' } },
+                        { name: 'edit_file', args: { Path: '/tmp/d.md' } }
+                    ]
+                },
+                {
+                    step_index: 398,
+                    source: 'SYSTEM',
+                    type: 'ERROR_MESSAGE',
+                    status: 'DONE',
+                    content: 'Error: The stream was interrupted. Please continue the task you were working on.'
+                },
+                {
+                    step_index: 399,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'Recovered after interruption; waiting for task-378.'
+                }
+            ]);
+
+            await new Promise((r) => setTimeout(r, 50));
+            // task-378 is still running, so turn must NOT prematurely report ready
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+
+            // Now task-378 finishes and step 412 completes the turn
+            appendSteps([
+                {
+                    step_index: 411,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\nTask id "agy-native/task-378" finished with result:\nCommand exited with code 0.\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 412,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'All builds and docs complete.'
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.session.onThinkingChange).toHaveBeenCalledWith(false);
+
+            const sentPayloads = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
+            for (const offset of [0, 1, 2, 3]) {
+                expect(sentPayloads).toContainEqual(expect.objectContaining({
+                    type: 'tool-call-result',
+                    callId: `call_reactive_393_${offset}`,
+                    is_error: true
+                }));
+                expect(sentPayloads).not.toContainEqual(expect.objectContaining({
+                    type: 'tool-call-result',
+                    callId: `call_reactive_393_${offset}`,
+                    is_error: false
+                }));
+            }
+            expect(sentPayloads).toContainEqual({
+                type: 'message',
+                message: 'All builds and docs complete.'
+            });
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('processes in-place same-step_index RUNNING -> DONE transitions without dropping text or tool results', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-inplace-step-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+
+            const baseSteps: AgyRawTranscriptStep[] = [
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'sleep 1', WaitMsBeforeAsync: 500 } }]
+                },
+                {
+                    step_index: 2,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: 'Tool is running as a background task with task id: agy-native/task-2\n'
+                },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'waiting' },
+                {
+                    step_index: 4,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\nTask id "agy-native/task-2" finished with result:\nCommand exited with code 0.\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 5,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'RUNNING',
+                    content: 'partial'
+                }
+            ];
+            writeSteps(baseSteps);
+            h.turn.resolve();
+
+            // Allow multiple poll cycles while step 5 is still RUNNING
+            await new Promise((r) => setTimeout(r, 45));
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+
+            // Rewrite step 5 in-place as DONE with full content
+            writeSteps([
+                ...baseSteps.slice(0, -1),
+                {
+                    step_index: 5,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'full final reactive answer'
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith({
+                type: 'message',
+                message: 'full final reactive answer'
+            });
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not deadlock when a reactive wakeup turn ends on ask_question without a GENERIC step', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-reactive-ask-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const appendSteps = (steps: AgyRawTranscriptStep[]) => {
+                appendFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+            writeFileSync(transcriptPath, '', 'utf8');
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+
+            appendSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'check', WaitMsBeforeAsync: 500 } }]
+                },
+                {
+                    step_index: 2,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: 'Tool is running as a background task with task id: agy-native/task-2\n'
+                },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'checking...' }
+            ]);
+            h.turn.resolve();
+
+            appendSteps([
+                {
+                    step_index: 4,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\nTask id "agy-native/task-2" finished with result:\nCommand exited with code 1.\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 5,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'How should we recover?',
+                    tool_calls: [{
+                        name: 'ask_question',
+                        args: {
+                            questions: [{
+                                question: 'Retry or abort?',
+                                options: ['Retry', 'Abort']
+                            }]
+                        }
+                    }]
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.session.onThinkingChange).toHaveBeenCalledWith(false);
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('settles both pendingTasks and pendingReactiveToolResults on server restart and wakes from empty initial baseline', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-restart-baseline-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            // Note: transcript_full.jsonl intentionally does NOT exist yet when start() calls syncBaseline!
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+            // Finish initial prompt before transcript exists
+            h.turn.resolve();
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            h.session.sendSessionEvent.mockClear();
+            h.session.onThinkingChange.mockClear();
+
+            // Create transcript starting at step_index 0 while idle (verifies empty baseline -1 wakes up)
+            appendFileSync(
+                transcriptPath,
+                `${[
+                    {
+                        step_index: 0,
+                        source: 'MODEL',
+                        type: 'PLANNER_RESPONSE',
+                        status: 'DONE',
+                        tool_calls: [{ name: 'write_file', args: { Path: '/tmp/out.txt', Content: 'hi' } }]
+                    },
+                    {
+                        step_index: 2,
+                        source: 'SYSTEM',
+                        type: 'SYSTEM_MESSAGE',
+                        status: 'DONE',
+                        content: 'All your subagents and background tasks have been stopped due to server restart.'
+                    }
+                ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+                'utf8'
+            );
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            const sentPayloads = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
+            expect(sentPayloads).toContainEqual(expect.objectContaining({
+                type: 'tool-call-result',
+                callId: 'call_reactive_0_0',
+                is_error: true
+            }));
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('retains SkipHistory resumeSession debt when resumeSession fails and flushes it before the next prompt, plus caches unchanged transcript reads', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-resume-debt-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            writeFileSync(
+                transcriptPath,
+                `${[
+                    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                    { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'ok' }
+                ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+                'utf8'
+            );
+
+            // Verify stat-gated cache returns identical array reference when file is untouched
+            const standalone = new AgyReactiveWakeupTracker({ brainDir });
+            const firstRead = standalone.readSteps('agy-native');
+            const secondRead = standalone.readSteps('agy-native');
+            expect(secondRead).toBe(firstRead);
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            h.backend.resumeSession
+                .mockRejectedValueOnce(new Error('transient RPC timeout'))
+                .mockResolvedValue('agy-native');
+
+            const { running } = await h.start();
+            h.turn.resolve();
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            h.session.sendSessionEvent.mockClear();
+
+            // Idle wakeup appends reactive steps; first resumeSession fails transiently
+            appendFileSync(
+                transcriptPath,
+                `${[
+                    {
+                        step_index: 2,
+                        source: 'SYSTEM',
+                        type: 'SYSTEM_MESSAGE',
+                        status: 'DONE',
+                        content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:00Z sender=agy-native/task-9 priority=HIGH content=ping\n</SYSTEM_MESSAGE>'
+                    },
+                    { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'pong' }
+                ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+                'utf8'
+            );
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.backend.resumeSession).toHaveBeenCalledTimes(1);
+
+            // Next user prompt flushes pending SkipHistory sync before calling backend.prompt()
+            h.backend.prompt.mockImplementationOnce(async () => {});
+            h.queue.push('follow-up', mode, 'second-id');
+            await vi.waitFor(() => {
+                expect(h.backend.prompt).toHaveBeenCalledTimes(2);
+            });
+            expect(h.backend.resumeSession).toHaveBeenCalledTimes(2);
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks backend.prompt and restores user message via abort-restore if SkipHistory resumeSession persistently fails', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-resume-gate-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            writeFileSync(
+                transcriptPath,
+                `${[
+                    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                    { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'ok' }
+                ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+                'utf8'
+            );
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            h.backend.resumeSession.mockRejectedValue(new Error('persistent resume failure'));
+
+            const { running } = await h.start();
+            h.turn.resolve();
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            h.session.sendSessionEvent.mockClear();
+
+            appendFileSync(
+                transcriptPath,
+                `${[
+                    {
+                        step_index: 2,
+                        source: 'SYSTEM',
+                        type: 'SYSTEM_MESSAGE',
+                        status: 'DONE',
+                        content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:00Z sender=agy-native/task-9 priority=HIGH content=ping\n</SYSTEM_MESSAGE>'
+                    },
+                    { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'pong' }
+                ].map((s) => JSON.stringify(s)).join('\n')}\n`,
+                'utf8'
+            );
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.backend.resumeSession).toHaveBeenCalledTimes(1);
+            h.session.sendSessionEvent.mockClear();
+
+            // Queue follow-up while resumeSession still rejects: prompt MUST NOT be called!
+            h.queue.push('follow-up', mode, 'second-id');
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({
+                    type: 'abort-restore',
+                    text: 'follow-up'
+                });
+            });
+            expect(h.backend.prompt).toHaveBeenCalledTimes(1);
+            expect(h.backend.resumeSession).toHaveBeenCalledTimes(2);
+            expect(h.backend.disconnect).toHaveBeenCalled();
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not falsely fail RUNNING tools/planner when ordinary SYSTEM_MESSAGE arrives and preserves call_reactive_* callId on late DONE', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-running-sysmsg-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+
+            // Sync turn ends at step 1; reactive wakeup has step 2 (SYSTEM_MESSAGE),
+            // step 3 (PLANNER calling run_command), step 4 (GENERIC:RUNNING non-bg),
+            // AND an async background notification arrives at step 5 while step 4 is RUNNING!
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync ok' },
+                {
+                    step_index: 2,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:00Z sender=agy-native/task-1 priority=HIGH content=wake\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 3,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'long-sync-cmd', WaitMsBeforeAsync: 10000 } }]
+                },
+                {
+                    step_index: 4,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: ''
+                },
+                {
+                    step_index: 5,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:02Z sender=agy-native/task-99 priority=NORMAL content=other-note\n</SYSTEM_MESSAGE>'
+                }
+            ]);
+            h.turn.resolve();
+
+            await new Promise((r) => setTimeout(r, 45));
+            const midPayloads = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
+            // Step 4 MUST NOT have been marked failed by ordinary SYSTEM_MESSAGE at step 5!
+            expect(midPayloads).not.toContainEqual(expect.objectContaining({
+                type: 'tool-call-result',
+                callId: 'call_reactive_3_0',
+                is_error: true
+            }));
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+
+            // Now step 4 completes in-place as DONE and step 6 finishes the reactive turn
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync ok' },
+                {
+                    step_index: 2,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:00Z sender=agy-native/task-1 priority=HIGH content=wake\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 3,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'long-sync-cmd', WaitMsBeforeAsync: 10000 } }]
+                },
+                {
+                    step_index: 4,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'DONE',
+                    content: 'Command exited with code 0.\nok'
+                },
+                {
+                    step_index: 5,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T15:00:02Z sender=agy-native/task-99 priority=NORMAL content=other-note\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 6,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    content: 'done cleanly'
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            const finalPayloads = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
+            expect(finalPayloads).toContainEqual(expect.objectContaining({
+                type: 'tool-call-result',
+                callId: 'call_reactive_3_0',
+                is_error: false
+            }));
+            expect(finalPayloads).not.toContainEqual(expect.objectContaining({
+                type: 'tool-call-result',
+                callId: 'call_reactive_4'
+            }));
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not duplicate reactive messages on mid-write malformed lines or temporary short rewrite snapshots', () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-torn-read-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+
+            const step0: AgyRawTranscriptStep = { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' };
+            const step1: AgyRawTranscriptStep = { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync1' };
+            const step2: AgyRawTranscriptStep = { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive2' };
+            const step3: AgyRawTranscriptStep = { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive3' };
+            const step4: AgyRawTranscriptStep = { step_index: 4, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive4' };
+
+            writeFileSync(transcriptPath, `${[step0, step1].map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            const tracker = new AgyReactiveWakeupTracker({ brainDir });
+            tracker.syncBaseline('agy-native');
+
+            const emitted: AgentMessage[] = [];
+            const onUpdate = (m: AgentMessage) => emitted.push(m);
+
+            // Emit reactive2 and reactive3 once
+            writeFileSync(transcriptPath, `${[step0, step1, step2, step3].map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            (tracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(tracker.readSteps('agy-native'), '/tmp', onUpdate);
+            expect(emitted.filter((m) => m.type === 'text')).toEqual([
+                { type: 'text', text: 'reactive2' },
+                { type: 'text', text: 'reactive3' }
+            ]);
+
+            // Simulate torn rewrite 1: step0, step1 + truncated JSON tail
+            writeFileSync(transcriptPath, `${JSON.stringify(step0)}\n${JSON.stringify(step1)}\n{"step_index":2,"source":"MO`, 'utf8');
+            (tracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(tracker.readSteps('agy-native'), '/tmp', onUpdate);
+
+            // Simulate torn rewrite 2: momentary 0-byte window
+            writeFileSync(transcriptPath, '', 'utf8');
+            (tracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(tracker.readSteps('agy-native'), '/tmp', onUpdate);
+
+            // Simulate torn rewrite 3: clean newline prefix [step0, step1] before step2..step4 flush
+            writeFileSync(transcriptPath, `${[step0, step1].map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            (tracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(tracker.readSteps('agy-native'), '/tmp', onUpdate);
+
+            // Writer finishes flushing [step0..step4]: ONLY reactive4 may be emitted!
+            writeFileSync(transcriptPath, `${[step0, step1, step2, step3, step4].map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            (tracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(tracker.readSteps('agy-native'), '/tmp', onUpdate);
+
+            expect(emitted.filter((m) => m.type === 'text')).toEqual([
+                { type: 'text', text: 'reactive2' },
+                { type: 'text', text: 'reactive3' },
+                { type: 'text', text: 'reactive4' }
+            ]);
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('settles BACKGROUND_RUNNING in-place DONE transitions without SYSTEM_MESSAGE and wakes on divergent truncation below promptEndStepIndex', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-bg-inplace-truncate-test-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const { running } = await h.start();
+            h.getUpdate()({
+                type: 'tool_call',
+                id: 'call_sync_bg_2',
+                name: 'bg-job',
+                title: 'bg-job',
+                kind: 'execute',
+                input: { CommandLine: 'bg-job' },
+                status: 'in_progress'
+            });
+
+            // Sync turn has step 2 as background task (step_index 2 <= promptEndStepIndex 3)
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'bg-job', WaitMsBeforeAsync: 500 } }]
+                },
+                {
+                    step_index: 2,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    content: 'Tool is running as a background task with task id: agy-native/task-2\n'
+                },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'started bg-job' }
+            ]);
+            h.turn.resolve();
+
+            await new Promise((r) => setTimeout(r, 35));
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+
+            // Transition step 2 in-place to DONE WITHOUT any SYSTEM_MESSAGE!
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'bg-job', WaitMsBeforeAsync: 500 } }]
+                },
+                {
+                    step_index: 2,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'DONE',
+                    content: 'Command exited with code 0.\nbg finished directly'
+                },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'started bg-job' }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
+                type: 'tool-call-result',
+                callId: 'call_sync_bg_2',
+                is_error: false
+            }));
+
+            h.session.sendSessionEvent.mockClear();
+
+            // Now truncate/replace transcript below old promptEndStepIndex (3) with new step at index 1!
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'post-truncate wakeup below old promptEnd' }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith({
+                type: 'message',
+                message: 'post-truncate wakeup below old promptEnd'
+            });
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('settles Turn 1 pendingTasks when old background step becomes DONE in-place either before Turn 2 beforePrompt or during Turn 2 foreground prompt', async () => {
+        for (const completionWindow of ['before-second-beforePrompt', 'during-second-foreground-prompt'] as const) {
+            const brainDir = mkdtempSync(join(tmpdir(), `agy-cross-turn-bg-${completionWindow}-`));
+            try {
+                const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+                mkdirSync(logsDir, { recursive: true });
+                const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+                const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                    writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+                };
+
+                const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+                const turn2 = deferred<void>();
+                void turn2.promise.catch(() => {});
+
+                const { running } = await h.start();
+                h.getUpdate()({
+                    type: 'tool_call',
+                    id: 'call_turn1_bg',
+                    name: 'turn1-bg-cmd',
+                    title: 'turn1-bg-cmd',
+                    kind: 'execute',
+                    input: { CommandLine: 'turn1-bg-cmd' },
+                    status: 'in_progress'
+                });
+
+                const turn1RunningSteps: AgyRawTranscriptStep[] = [
+                    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                    {
+                        step_index: 1,
+                        source: 'MODEL',
+                        type: 'PLANNER_RESPONSE',
+                        status: 'DONE',
+                        tool_calls: [{ name: 'run_command', args: { CommandLine: 'turn1-bg-cmd', WaitMsBeforeAsync: 500 } }]
+                    },
+                    {
+                        step_index: 2,
+                        source: 'MODEL',
+                        type: 'GENERIC',
+                        status: 'RUNNING',
+                        content: 'Tool is running as a background task with task id: agy-native/task-2\n'
+                    },
+                    { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'turn1 waiting' }
+                ];
+                writeSteps(turn1RunningSteps);
+
+                // Prepare Turn 2 prompt mock before queueing Turn 2 so Turn 1 yields to Turn 2
+                h.backend.prompt.mockImplementationOnce(async (_id, _content, sink) => {
+                    if (completionWindow === 'before-second-beforePrompt') {
+                        // Already rewritten before beforePrompt ran (see below)
+                    } else {
+                        // Window B: task-2 was still RUNNING during Turn 2 beforePrompt(),
+                        // and transitions in-place to DONE during Turn 2 foreground execution!
+                        writeSteps([
+                            turn1RunningSteps[0],
+                            turn1RunningSteps[1],
+                            {
+                                step_index: 2,
+                                source: 'MODEL',
+                                type: 'GENERIC',
+                                status: 'DONE',
+                                content: 'Command exited with code 0.\nturn1 bg done in foreground'
+                            },
+                            turn1RunningSteps[3],
+                            { step_index: 4, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'second' },
+                            { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'turn2 answer' }
+                        ]);
+                    }
+                    sink({ type: 'text', text: 'turn2 answer' });
+                    await turn2.promise;
+                });
+
+                if (completionWindow === 'before-second-beforePrompt') {
+                    // Pause resume/load or rewrite right as Turn 1 yields before Turn 2 beforePrompt()
+                    h.turn.resolve();
+                    await new Promise((r) => setTimeout(r, 25));
+                    // Window A: task-2 becomes DONE in-place right BEFORE Turn 2 is queued / beforePrompt() runs,
+                    // and Turn 2 is immediately queued before idle watcher drains it!
+                    writeSteps([
+                        turn1RunningSteps[0],
+                        turn1RunningSteps[1],
+                        {
+                            step_index: 2,
+                            source: 'MODEL',
+                            type: 'GENERIC',
+                            status: 'DONE',
+                            content: 'Command exited with code 0.\nturn1 bg done before beforePrompt'
+                        },
+                        turn1RunningSteps[3],
+                        { step_index: 4, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'second' },
+                        { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'turn2 answer' }
+                    ]);
+                    h.queue.push('second', mode, 'second-id');
+                } else {
+                    h.queue.push('second', mode, 'second-id');
+                    h.turn.resolve();
+                }
+
+                await vi.waitFor(() => {
+                    expect(h.backend.prompt).toHaveBeenCalledTimes(2);
+                });
+                h.session.sendSessionEvent.mockClear();
+                turn2.resolve();
+
+                await vi.waitFor(() => {
+                    expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+                });
+                expect(h.session.onThinkingChange).toHaveBeenLastCalledWith(false);
+
+                const toolResults = h.client.sendAgentMessage.mock.calls
+                    .map((c) => c[0])
+                    .filter((m) => m.type === 'tool-call-result' && m.callId === 'call_turn1_bg');
+                expect(toolResults).toHaveLength(1);
+                expect(toolResults[0]).toEqual(expect.objectContaining({
+                    type: 'tool-call-result',
+                    callId: 'call_turn1_bg',
+                    is_error: false
+                }));
+                expect((h.driver as unknown as { reactiveWakeup: AgyReactiveWakeupTracker }).reactiveWakeup.hasPendingTasks()).toBe(false);
+
+                await h.driver.stop();
+                await running;
+            } finally {
+                rmSync(brainDir, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('exits bounded awaiting-next-planner grace window when a trailing SYSTEM_MESSAGE produces no follow-up planner and detects tool_calls arg-only divergence', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-grace-and-arg-diverge-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 15, nextPlannerGraceMs: 40 });
+            const { running } = await h.start();
+
+            // Step 1 is RUNNING while ordinary notification step 2 arrives
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync' },
+                { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'RUNNING', content: 'streaming...' },
+                {
+                    step_index: 3,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T16:00:00Z sender=agy-native/task-9 priority=MESSAGE_PRIORITY_LOW content=canceled\n</SYSTEM_MESSAGE>'
+                }
+            ]);
+            h.turn.resolve();
+
+            await new Promise((r) => setTimeout(r, 25));
+            const tracker = (h.driver as unknown as { reactiveWakeup: AgyReactiveWakeupTracker }).reactiveWakeup;
+            expect(tracker.getReactiveFlightState(tracker.readSteps('agy-native'))).toBe('active-step');
+
+            // Step 2 finishes in-place as DONE while step 3 remains trailing SYSTEM_MESSAGE with NO follow-up step 4
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync' },
+                { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'completed reply' },
+                {
+                    step_index: 3,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T16:00:00Z sender=agy-native/task-9 priority=MESSAGE_PRIORITY_LOW content=canceled\n</SYSTEM_MESSAGE>'
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+            expect(tracker.getReactiveFlightState(tracker.readSteps('agy-native'))).toBe('idle');
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith({
+                type: 'message',
+                message: 'completed reply'
+            });
+
+            await h.driver.stop();
+            await running;
+
+            // Verify standalone arg-only divergence detection (`CommandLine: old-command -> new-command`)
+            const argTracker = new AgyReactiveWakeupTracker({ brainDir });
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-13T00:00:00Z',
+                    content: '',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'old-command' } }]
+                },
+                { step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: 'Command exited with code 0.\nold' },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'done old' }
+            ]);
+            argTracker.syncBaseline('agy-native');
+            expect(argTracker.hasUnreadReactiveSteps('agy-native')).toBe(false);
+
+            // Rewrite step 1 with identical step_index, type, created_at, content, and tool name — ONLY CommandLine changed!
+            writeSteps([
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-13T00:00:00Z',
+                    content: '',
+                    tool_calls: [{ name: 'run_command', args: { CommandLine: 'new-command' } }]
+                }
+            ]);
+            expect(argTracker.hasUnreadReactiveSteps('agy-native')).toBe(true);
+            const argEmitted: AgentMessage[] = [];
+            (argTracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
+                .processNewReactiveSteps(argTracker.readSteps('agy-native'), '/tmp', (m) => argEmitted.push(m));
+            expect(argEmitted).toContainEqual(expect.objectContaining({
+                type: 'tool_call',
+                id: 'call_reactive_1_0',
+                title: 'new-command'
+            }));
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
     });
 });
