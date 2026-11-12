@@ -330,6 +330,11 @@ struct ChatComposerView: View {
             if api != nil, configModel.showsComposerModelMenu {
                 configModel.loadModels()
             }
+            #if !targetEnvironment(macCatalyst)
+            if api != nil, configModel.showsQuota {
+                configModel.loadQuota()
+            }
+            #endif
         }
         .onChange(of: machineId) { _, newValue in
             if configModel.machineId != newValue {
@@ -947,7 +952,6 @@ struct ChatComposerView: View {
         guard case .idle = controller.phase else { return }
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
-            textFocused = false
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             controller.beginHold(
                 fingerX: Double(location.x),
@@ -955,6 +959,7 @@ struct ChatComposerView: View {
                 containerWidth: Double(windowSize.width),
                 containerHeight: Double(windowSize.height)
             )
+            textFocused = false
         case .denied:
             interactor.postNotice(String(localized: "Microphone access is disabled — allow it in Settings to dictate"))
         case .undetermined:
@@ -1038,9 +1043,14 @@ struct ChatComposerView: View {
         #if targetEnvironment(macCatalyst)
         return false
         #else
-        let isRecordingLegacyDictation: Bool = {
-            if let dictation, case .recording = dictation.state { return true }
-            return false
+        let isLegacyDictationActive: Bool = {
+            guard let dictation else { return false }
+            return dictation.state != .idle
+        }()
+        let isHoldDictationActive: Bool = {
+            guard let holdDictation else { return false }
+            if case .idle = holdDictation.phase { return false }
+            return true
         }()
         return !textFocused
             && composer.text.isEmpty
@@ -1048,7 +1058,8 @@ struct ChatComposerView: View {
             && !scratchlistMode
             && interactor.pendingSchedule == nil
             && interactor.scratchlistError == nil
-            && !isRecordingLegacyDictation
+            && !isLegacyDictationActive
+            && !isHoldDictationActive
         #endif
     }
 
@@ -1142,6 +1153,65 @@ struct ChatComposerView: View {
         #endif
     }
 
+    @ViewBuilder
+    private var composerModelMenuSections: some View {
+        if configModel.showsModel {
+            Section("Model") {
+                if configModel.config.modelOptionsLoading {
+                    Text("Loading models…")
+                } else if configModel.modelLoadFailed {
+                    Text("Failed to load models")
+                    Button("Retry", systemImage: "arrow.clockwise") {
+                        configModel.loadModels()
+                    }
+                } else if let options = configModel.config.modelOptions, !options.isEmpty {
+                    Picker("Model", selection: Binding(
+                        get: { configModel.currentModel },
+                        set: { configModel.selectModel($0) }
+                    )) {
+                        if let current = configModel.unlistedModelOption {
+                            Text(verbatim: current.label).tag(current.value).disabled(true)
+                        }
+                        ForEach(options, id: \.value) { option in
+                            Text(verbatim: option.label)
+                                .tag(option.value)
+                                .accessibilityIdentifier("session-config-model-\(option.value ?? "default")")
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } else if configModel.canDiscoverModels {
+                    Button("Load Models", systemImage: "arrow.clockwise") {
+                        configModel.loadModels()
+                    }
+                } else {
+                    Text("Model list unavailable")
+                }
+            }
+        } else if configModel.canDiscoverModels {
+            Section("Model") {
+                Button("Load Models", systemImage: "arrow.clockwise") {
+                    configModel.loadModels()
+                }
+            }
+        }
+        if configModel.showsEffort {
+            Section("Effort") {
+                Picker("Effort", selection: Binding(
+                    get: { configModel.currentEffort },
+                    set: { configModel.selectEffort($0) }
+                )) {
+                    ForEach(configModel.effortOptions, id: \.value) { option in
+                        Text(verbatim: option.label)
+                            .tag(option.value)
+                            .disabled(!configModel.canSelectEffort(option.value))
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        }
+    }
+
+    #if targetEnvironment(macCatalyst)
     private var composerModelMenu: some View {
         let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
         return Menu {
@@ -1150,68 +1220,13 @@ struct ChatComposerView: View {
             } else if configModel.config.controlledByUser {
                 Text("Controlled from terminal")
             }
-            if configModel.showsModel {
-                Section("Model") {
-                    if configModel.config.modelOptionsLoading {
-                        Text("Loading models…")
-                    } else if configModel.modelLoadFailed {
-                        Text("Failed to load models")
-                        Button("Retry", systemImage: "arrow.clockwise") {
-                            configModel.loadModels()
-                        }
-                    } else if let options = configModel.config.modelOptions, !options.isEmpty {
-                        Picker("Model", selection: Binding(
-                            get: { configModel.currentModel },
-                            set: { configModel.selectModel($0) }
-                        )) {
-                            if let current = configModel.unlistedModelOption {
-                                Text(verbatim: current.label).tag(current.value).disabled(true)
-                            }
-                            ForEach(options, id: \.value) { option in
-                                Text(verbatim: option.label)
-                                    .tag(option.value)
-                                    .accessibilityIdentifier("session-config-model-\(option.value ?? "default")")
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    } else if configModel.canDiscoverModels {
-                        Button("Load Models", systemImage: "arrow.clockwise") {
-                            configModel.loadModels()
-                        }
-                    } else {
-                        Text("Model list unavailable")
-                    }
-                }
-            } else if configModel.canDiscoverModels {
-                Section("Model") {
-                    Button("Load Models", systemImage: "arrow.clockwise") {
-                        configModel.loadModels()
-                    }
-                }
-            }
-            if configModel.showsEffort {
-                Section("Effort") {
-                    Picker("Effort", selection: Binding(
-                        get: { configModel.currentEffort },
-                        set: { configModel.selectEffort($0) }
-                    )) {
-                        ForEach(configModel.effortOptions, id: \.value) { option in
-                            Text(verbatim: option.label)
-                                .tag(option.value)
-                                .disabled(!configModel.canSelectEffort(option.value))
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
+            composerModelMenuSections
         } label: {
             HStack(spacing: 4) {
                 toolGlyph("cpu", active: hasCustomEffort ? AnyShapeStyle(.tint) : nil)
-                #if targetEnvironment(macCatalyst)
                 Text(verbatim: configModel.modelSummaryValue)
                     .font(.caption).lineLimit(1).truncationMode(.middle)
                     .frame(maxWidth: 180)
-                #endif
             }
         }
         .menuStyle(.button)
@@ -1222,6 +1237,7 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("chat.composer-model")
         .help(configModel.modelSummaryHelp)
     }
+    #endif
 
     private var permissionIconName: String {
         switch configModel.permission.tone {
@@ -1246,46 +1262,50 @@ struct ChatComposerView: View {
         }
     }
 
+    @ViewBuilder
+    private var composerPermissionMenuSections: some View {
+        if !configModel.config.permissionModes.isEmpty {
+            Section("Permission mode") {
+                Picker("Permission mode", selection: Binding(
+                    get: { configModel.permission },
+                    set: { configModel.selectPermission($0) }
+                )) {
+                    if !configModel.config.permissionModes.contains(where: { $0.mode == configModel.permission }) {
+                        composerPermissionOption(PermissionModeOption(mode: configModel.permission)).disabled(true)
+                    }
+                    ForEach(configModel.config.permissionModes, id: \.mode) { option in
+                        composerPermissionOption(option)
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        }
+        if configModel.showsCollaborationMode {
+            Section("Collaboration Mode") {
+                Picker("Collaboration Mode", selection: Binding(
+                    get: { configModel.collaborationMode },
+                    set: { configModel.selectCollaborationMode($0) }
+                )) {
+                    ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
+                        Text(LocalizedStringKey(mode.label)).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+                .disabled(!configModel.config.canChangeCollaborationMode)
+            }
+        }
+    }
+
+    #if targetEnvironment(macCatalyst)
     private var composerPermissionMenu: some View {
         Menu {
-            if !configModel.config.permissionModes.isEmpty {
-                Section("Permission mode") {
-                    Picker("Permission mode", selection: Binding(
-                        get: { configModel.permission },
-                        set: { configModel.selectPermission($0) }
-                    )) {
-                        if !configModel.config.permissionModes.contains(where: { $0.mode == configModel.permission }) {
-                            composerPermissionOption(PermissionModeOption(mode: configModel.permission)).disabled(true)
-                        }
-                        ForEach(configModel.config.permissionModes, id: \.mode) { option in
-                            composerPermissionOption(option)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
-            if configModel.showsCollaborationMode {
-                Section("Collaboration Mode") {
-                    Picker("Collaboration Mode", selection: Binding(
-                        get: { configModel.collaborationMode },
-                        set: { configModel.selectCollaborationMode($0) }
-                    )) {
-                        ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
-                            Text(LocalizedStringKey(mode.label)).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .disabled(!configModel.config.canChangeCollaborationMode)
-                }
-            }
+            composerPermissionMenuSections
         } label: {
             HStack(spacing: 4) {
                 toolGlyph(permissionIconName, active: permissionIconStyle)
-                #if targetEnvironment(macCatalyst)
                 Text(verbatim: configModel.permissionSummaryValue)
                     .font(.caption).lineLimit(1)
                     .frame(maxWidth: 140)
-                #endif
             }
         }
         .menuStyle(.button)
@@ -1296,6 +1316,7 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("chat.composer-permission")
         .help(configModel.permissionSummaryHelp)
     }
+    #endif
 
     private func composerPermissionOption(_ option: PermissionModeOption) -> some View {
         Group {
@@ -1313,6 +1334,7 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("session-config-permission-\(option.mode.rawValue)")
     }
 
+    #if targetEnvironment(macCatalyst)
     private var quotaIconStyle: AnyShapeStyle? {
         guard let peak = configModel.quotaPeakUsedPercent else { return nil }
         if peak >= 90 { return AnyShapeStyle(.red) }
@@ -1336,6 +1358,107 @@ struct ChatComposerView: View {
                 .presentationCompactAdaptation(.popover)
         }
     }
+    #endif
+
+    #if !targetEnvironment(macCatalyst)
+    private var showsComposerSessionControls: Bool {
+        configModel.showsComposerModelMenu || configModel.showsComposerPermissionMenu || configModel.showsQuota
+    }
+
+    private var composerControlsIconStyle: AnyShapeStyle? {
+        if configModel.permission.tone == .danger || (configModel.quotaPeakUsedPercent ?? 0) >= 90 {
+            return AnyShapeStyle(.red)
+        }
+        if configModel.permission.tone == .warning || (configModel.quotaPeakUsedPercent ?? 0) >= 75 {
+            return AnyShapeStyle(.orange)
+        }
+        let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
+        let hasCustomPermission = configModel.permission != .default
+            || (configModel.showsCollaborationMode && configModel.collaborationMode != .default)
+        if hasCustomEffort || hasCustomPermission {
+            return AnyShapeStyle(.tint)
+        }
+        return nil
+    }
+
+    private var quotaMenuSubtitle: String? {
+        guard case .loaded(let result) = configModel.quotaState else { return nil }
+        let fiveHour = result.groups?.first?.fiveHour ?? result.fiveHour
+        let sevenDay = result.groups?.first?.sevenDay ?? result.sevenDay
+        var parts: [String] = []
+        if let fiveHour {
+            parts.append("5H \(fiveHour.usedPercentInt)%")
+        }
+        if let sevenDay {
+            parts.append("7D \(sevenDay.usedPercentInt)%")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var composerSessionControlsButton: some View {
+        Menu {
+            if !configModel.config.active {
+                Text("Session is offline")
+            } else if configModel.config.controlledByUser {
+                Text("Controlled from terminal")
+            }
+            if configModel.showsComposerModelMenu {
+                Menu {
+                    composerModelMenuSections
+                } label: {
+                    Label {
+                        Text("Model")
+                        Text(verbatim: configModel.modelSummaryValue)
+                    } icon: {
+                        Image(systemName: "cpu")
+                    }
+                }
+                .accessibilityIdentifier("chat.composer-model")
+            }
+            if configModel.showsComposerPermissionMenu {
+                Menu {
+                    composerPermissionMenuSections
+                } label: {
+                    Label {
+                        Text("Permission mode")
+                        Text(verbatim: configModel.permissionSummaryValue)
+                    } icon: {
+                        Image(systemName: permissionIconName)
+                    }
+                }
+                .accessibilityIdentifier("chat.composer-permission")
+            }
+            if configModel.showsQuota {
+                Divider()
+                Button {
+                    quotaPopoverOpen = true
+                } label: {
+                    Label {
+                        Text("Subscription Quota")
+                        if let subtitle = quotaMenuSubtitle {
+                            Text(verbatim: subtitle)
+                        }
+                    } icon: {
+                        Image(systemName: "gauge.with.dots.needle.33percent")
+                    }
+                }
+                .accessibilityIdentifier("chat.composer-quota")
+            }
+        } label: {
+            toolGlyph("gauge.with.needle", active: composerControlsIconStyle)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .disabled(configModel.isApplying || interactor.scratchlistBusy)
+        .accessibilityLabel(String(localized: "Session controls"))
+        .accessibilityValue(Text(verbatim: "\(configModel.modelSummaryValue) · \(configModel.permissionSummaryValue)"))
+        .accessibilityIdentifier("chat.composer-controls")
+        .popover(isPresented: $quotaPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+            ComposerQuotaPopoverView(model: configModel)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+    #endif
 
     @ViewBuilder
     private func trailingActions(
@@ -1352,16 +1475,8 @@ struct ChatComposerView: View {
             .padding(.trailing, 6)
             .allowsHitTesting(false)
         #else
-        if !collapsed && !scratchlistMode {
-            if configModel.showsComposerModelMenu {
-                composerModelMenu
-            }
-            if configModel.showsComposerPermissionMenu {
-                composerPermissionMenu
-            }
-            if configModel.showsQuota {
-                composerQuotaButton
-            }
+        if !collapsed && !scratchlistMode && showsComposerSessionControls {
+            composerSessionControlsButton
         }
         #endif
         if scratchlistMode, composer.canStop {
@@ -1376,9 +1491,8 @@ struct ChatComposerView: View {
             micButton(dictation)
         }
         #else
-        let hasDraft = !composer.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty
-        if hasDraft, holdDictation == nil, let dictation, dictation.isAvailable, dictation.state == .idle {
-            micButton(dictation)
+        if !collapsed, hasVoiceInput, scratchlistMode || primaryAction(composer, attachments: attachments) != .voice {
+            composerMicButton
         }
         #endif
         if scratchlistMode { parkButton }
@@ -1547,14 +1661,20 @@ struct ChatComposerView: View {
         // A scheduled send is text-only and never steers.
         let attachmentsBusy = attachments.contains { $0.status != .ready }
         let attachmentsReady = !attachments.isEmpty && !attachmentsBusy
+        let isDictating: Bool = {
+            guard let dictation else { return false }
+            return dictation.state != .idle
+        }()
         let canSubmit = scheduled
-            ? hasText && attachments.isEmpty && !composer.isSending
-            : (hasText || attachmentsReady) && !attachmentsBusy && !composer.isSending
+            ? hasText && attachments.isEmpty && !composer.isSending && !isDictating
+            : (hasText || attachmentsReady) && !attachmentsBusy && !composer.isSending && !isDictating
         if composer.isSending {
             return .sending
         }
         #if !targetEnvironment(macCatalyst)
-        if let dictation, dictation.state != .idle {
+        let usesPrimaryVoiceSlot = isCollapsed(composer, attachments: attachments)
+            || (!hasDraft && !scheduled && !composer.canStop)
+        if isDictating && usesPrimaryVoiceSlot {
             return .voice
         }
         #endif
@@ -1586,6 +1706,7 @@ struct ChatComposerView: View {
             .buttonStyle(.plain)
             .disabled(true)
             .accessibilityLabel("Send")
+            .accessibilityIdentifier("chat.composer-send")
         case .stop:
             Button {
                 interactor.abortSession()
@@ -1662,6 +1783,69 @@ struct ChatComposerView: View {
 
     #if !targetEnvironment(macCatalyst)
     @ViewBuilder
+    private var composerMicButton: some View {
+        let isBusy = dictation?.state == .starting || dictation?.state == .transcribing
+        let isRecording: Bool = {
+            if let dictation, case .recording = dictation.state { return true }
+            return false
+        }()
+        let holdEnabled = !scratchlistMode && holdDictation != nil
+
+        if isBusy {
+            ProgressView()
+                .controlSize(.small)
+                .frame(minWidth: 34, minHeight: 40)
+                .accessibilityLabel(String(localized: "Dictate"))
+                .accessibilityIdentifier("chat.composer-mic")
+        } else if isRecording, let dictation {
+            Button {
+                toggleDictation(dictation)
+            } label: {
+                toolGlyph("stop.circle.fill", active: AnyShapeStyle(.red))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Stop dictation"))
+            .accessibilityIdentifier("chat.composer-mic")
+        } else {
+            toolGlyph("mic")
+                .overlay {
+                    VoicePrimaryTouchSurface(
+                        a11yLabel: String(localized: "Dictate"),
+                        a11yIdentifier: "chat.composer-mic",
+                        holdEnabled: holdEnabled,
+                        onTap: {
+                            if let dictation {
+                                toggleDictation(dictation)
+                            } else if holdEnabled {
+                                interactor.postNotice(String(localized: "Hold to dictate"))
+                            }
+                        },
+                        onHoldBegan: { location, windowSize in
+                            if let holdDictation, holdEnabled {
+                                handleHoldBegan(location, windowSize: windowSize, controller: holdDictation)
+                            }
+                        },
+                        onHoldChanged: { location, windowSize in
+                            if let holdDictation, holdEnabled {
+                                handleHoldChanged(location, windowSize: windowSize, controller: holdDictation)
+                            }
+                        },
+                        onHoldEnded: {
+                            if holdEnabled {
+                                holdDictation?.endHold()
+                            }
+                        },
+                        onHoldCancelled: {
+                            if holdEnabled {
+                                holdDictation?.cancelIfHolding()
+                            }
+                        }
+                    )
+                }
+        }
+    }
+
+    @ViewBuilder
     private var voicePrimaryButton: some View {
         let isBusy = dictation?.state == .starting || dictation?.state == .transcribing
         let isRecording: Bool = {
@@ -1708,6 +1892,8 @@ struct ChatComposerView: View {
             }
             .overlay {
                 VoicePrimaryTouchSurface(
+                    a11yLabel: String(localized: "Voice input"),
+                    a11yIdentifier: "chat.composer-voice",
                     holdEnabled: holdDictation != nil,
                     onTap: {
                         if let dictation {
@@ -1735,10 +1921,6 @@ struct ChatComposerView: View {
                     }
                 )
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(String(localized: "Voice input"))
-            .accessibilityIdentifier("chat.composer-voice")
         }
     }
     #endif
@@ -1997,7 +2179,7 @@ private struct ComposerCardSurface: ViewModifier {
     }
 }
 
-private enum ComposerPrimaryAction {
+private enum ComposerPrimaryAction: Equatable {
     case sending
     case stop
     #if !targetEnvironment(macCatalyst)
@@ -2016,6 +2198,8 @@ private enum ComposerPrimaryAction {
 /// - Quick tap (`< 150ms`) toggles hands-free dictation (`RecordingChipView` -> inserts draft).
 /// - Stationary hold (`>= 150ms`) or drag (`> 14pt`) engages WeChat Hold-to-Dictate seamlessly.
 private struct VoicePrimaryTouchSurface: UIViewRepresentable {
+    var a11yLabel: String
+    var a11yIdentifier: String
     var holdEnabled: Bool
     var onTap: () -> Void
     var onHoldBegan: (CGPoint, CGSize) -> Void
@@ -2052,6 +2236,8 @@ private struct VoicePrimaryTouchSurface: UIViewRepresentable {
             super.init(frame: frame)
             backgroundColor = .clear
             isMultipleTouchEnabled = false
+            isAccessibilityElement = true
+            accessibilityTraits = [.button]
             addGestureRecognizer(exclusiveRecognizer)
         }
 
@@ -2060,6 +2246,13 @@ private struct VoicePrimaryTouchSurface: UIViewRepresentable {
 
         func configure(with surface: VoicePrimaryTouchSurface) {
             self.config = surface
+            accessibilityLabel = surface.a11yLabel
+            accessibilityIdentifier = surface.a11yIdentifier
+        }
+
+        override func accessibilityActivate() -> Bool {
+            config?.onTap()
+            return true
         }
 
         private var currentWindowSize: CGSize {

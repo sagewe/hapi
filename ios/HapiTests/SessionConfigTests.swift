@@ -1,6 +1,7 @@
 import HapiClient
 import HapiProtocol
 import SwiftUI
+import UIKit
 import XCTest
 @testable import Hapi
 
@@ -264,6 +265,138 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertFalse(dsh.model.showsComposerPermissionMenu)
         XCTAssertFalse(dsh.model.showsQuota)
     }
+
+    #if !targetEnvironment(macCatalyst)
+    func testIOSComposerCollapsesSessionControlsAndRetainsMicWhenDraftHasText() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        let dictation = DictationController(api: harness.api, recorder: AVAudioRecorderDictation())
+        let holdDictation = HoldToDictateController(
+            api: harness.api,
+            streamer: HubStreamingAsrClient(api: harness.api),
+            recorder: PCMStreamingAudioRecorder()
+        )
+        let rootView = VStack {
+            Spacer()
+            ChatComposerView(
+                interactor: harness.interactor,
+                dictation: dictation,
+                holdDictation: holdDictation,
+                api: harness.api,
+                machineId: "studio"
+            )
+            .padding(.horizontal, 12)
+        }
+        .frame(width: 393, height: 320)
+        .background(Color(uiColor: .systemBackground))
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 320)
+        let host = UIHostingController(rootView: rootView)
+        host.traitOverrides.horizontalSizeClass = .compact
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        func collectViews(in root: UIView) -> [UIView] {
+            var all: [UIView] = [root]
+            for sub in root.subviews {
+                all.append(contentsOf: collectViews(in: sub))
+            }
+            return all
+        }
+
+        func isEffectivelyVisible(_ view: UIView) -> Bool {
+            guard view.window != nil, view.bounds.width > 0, view.bounds.height > 0 else { return false }
+            var current: UIView? = view
+            var alphaProduct: CGFloat = 1.0
+            while let v = current {
+                if v.isHidden { return false }
+                alphaProduct *= v.alpha * CGFloat(v.layer.opacity)
+                if alphaProduct <= 0.01 { return false }
+                current = v.superview
+            }
+            return true
+        }
+
+        func visibleMenuButtons(in root: UIView) -> [UIButton] {
+            collectViews(in: root)
+                .compactMap { $0 as? UIButton }
+                .filter { $0.showsMenuAsPrimaryAction && isEffectivelyVisible($0) }
+        }
+
+        func waitUntil(timeoutMs: Int = 2500, condition: () -> Bool) async throws {
+            let steps = max(1, timeoutMs / 80)
+            for _ in 0..<steps {
+                host.view.layoutIfNeeded()
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(80))
+            }
+            host.view.layoutIfNeeded()
+        }
+
+        func maybeCapture(_ name: String) throws {
+            guard let dirPath = ProcessInfo.processInfo.environment["HAPI_COMPOSER_CAPTURE"] else { return }
+            let dir = URL(fileURLWithPath: dirPath, isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let img = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try XCTUnwrap(img.pngData()).write(to: dir.appendingPathComponent("\(name).png"))
+        }
+
+        try await waitUntil {
+            let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
+            return ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 1
+        }
+        try maybeCapture("1-collapsed")
+
+        // 1. Collapsed empty capsule: shows primary voice TouchView (`chat.composer-voice`),
+        //    only 1 menu button (`+` attachment), and NO `chat.composer-mic`
+        let collapsedViews = collectViews(in: host.view).filter(isEffectivelyVisible)
+        let collapsedIDs = Set(collapsedViews.compactMap(\.accessibilityIdentifier))
+        let collapsedMenuButtons = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(collapsedIDs.contains("chat.composer-voice"), "Collapsed empty composer must show primary voice button")
+        XCTAssertFalse(collapsedIDs.contains("chat.composer-mic"), "Collapsed composer must not duplicate mic button")
+        XCTAssertEqual(collapsedMenuButtons.count, 1, "Collapsed composer must only show the + attachment menu button")
+
+        // 2. Focused empty state: shows `+` attachment menu + unified `gauge.with.needle` controls menu (2 menu buttons, NOT 4!),
+        //    and `chat.composer-voice` primary button
+        harness.interactor.focusComposer()
+        try await waitUntil {
+            visibleMenuButtons(in: host.view).count == 2
+        }
+        try maybeCapture("2-expanded-empty")
+
+        let expandedEmptyViews = collectViews(in: host.view).filter(isEffectivelyVisible)
+        let expandedEmptyIDs = Set(expandedEmptyViews.compactMap(\.accessibilityIdentifier))
+        let expandedEmptyMenus = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(expandedEmptyIDs.contains("chat.composer-voice"), "Expanded empty composer must show primary voice button")
+        XCTAssertEqual(
+            expandedEmptyMenus.count,
+            2,
+            "Expanded composer must collapse Model + Permission + Quota into 1 unified controls menu alongside + attachment menu (got \(expandedEmptyMenus.count))"
+        )
+
+        // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send`, plus the 2 menus (`+` and `gauge.with.needle`)!
+        harness.interactor.setComposerText("检查家庭网关")
+        try await waitUntil {
+            let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
+            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 2
+        }
+        try maybeCapture("3-expanded-draft")
+
+        let expandedDraftViews = collectViews(in: host.view).filter(isEffectivelyVisible)
+        let expandedDraftIDs = Set(expandedDraftViews.compactMap(\.accessibilityIdentifier))
+        let expandedDraftMenus = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(expandedDraftIDs.contains("chat.composer-mic"), "Expanded composer with text must retain voice mic button")
+        XCTAssertFalse(expandedDraftIDs.contains("chat.composer-voice"), "Primary voice circle must morph into Send circle when draft has text")
+        XCTAssertEqual(expandedDraftMenus.count, 2, "Expanded composer with text must keep + and unified speedometer controls menu")
+    }
+    #endif
 }
 
 /// Real app model, interactor, store and API over fake HTTP. No hub connection,

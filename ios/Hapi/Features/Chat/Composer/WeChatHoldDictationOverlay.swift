@@ -146,6 +146,7 @@ private struct WeChatHoldDictationOverlay: View {
                 bottomArcPad
             }
         }
+        .ignoresSafeArea(.keyboard)
         .animation(.spring(response: 0.22, dampingFraction: 0.82), value: zone)
         .onChange(of: zone) { _, _ in
             UISelectionFeedbackGenerator().selectionChanged()
