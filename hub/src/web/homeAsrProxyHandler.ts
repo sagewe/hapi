@@ -27,7 +27,7 @@ export interface HomeAsrProxyHandler {
 }
 
 const WS_OPEN = 1
-const MAX_PENDING_BYTES = 1024 * 1024 // 1 MiB (~32s of 16 kHz 16-bit mono PCM)
+const MAX_PENDING_BYTES = 6 * 1024 * 1024 // 6 MiB (~196s of 16 kHz 16-bit mono PCM)
 
 function toClientCloseCode(code: number): number {
     return code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 && code !== 1015

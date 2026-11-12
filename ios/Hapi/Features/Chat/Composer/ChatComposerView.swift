@@ -1973,8 +1973,8 @@ private enum ComposerPrimaryAction {
 
 #if !targetEnvironment(macCatalyst)
 /// Raw touch surface over the empty-state `waveform` voice input circle:
-/// - Quick tap (`< 200ms`) toggles hands-free dictation (`RecordingChipView` -> inserts draft).
-/// - Stationary hold (`>= 200ms`) or drag (`> 14pt`) engages WeChat Hold-to-Dictate seamlessly.
+/// - Quick tap (`< 150ms`) toggles hands-free dictation (`RecordingChipView` -> inserts draft).
+/// - Stationary hold (`>= 150ms`) or drag (`> 14pt`) engages WeChat Hold-to-Dictate seamlessly.
 private struct VoicePrimaryTouchSurface: UIViewRepresentable {
     var holdEnabled: Bool
     var onTap: () -> Void
@@ -2050,7 +2050,7 @@ private struct VoicePrimaryTouchSurface: UIViewRepresentable {
                 self?.engageHoldNow()
             }
             holdTimer = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.20, execute: item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: item)
         }
 
         override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {

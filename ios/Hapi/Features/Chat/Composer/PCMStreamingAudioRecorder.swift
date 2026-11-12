@@ -11,6 +11,7 @@ private final class PCMTapProcessor: @unchecked Sendable {
     private let outputFormat: AVAudioFormat
     private let onChunk: @Sendable (Data, Float) -> Void
     private let targetChunkBytes = 3_200 // 100ms @ 16kHz 16-bit mono
+    private let maxAccumulatedBytes = 16_000 * 2 * 180 // 180s cap (~5.76 MB)
 
     private var pendingChunk = Data()
     private var accumulatedPCM = Data()
@@ -26,7 +27,7 @@ private final class PCMTapProcessor: @unchecked Sendable {
         self.converter = converter
         self.onChunk = onChunk
         self.pendingChunk.reserveCapacity(targetChunkBytes * 2)
-        self.accumulatedPCM.reserveCapacity(16_000 * 2 * 10)
+        self.accumulatedPCM.reserveCapacity(16_000 * 2 * 15)
     }
 
     func installTap(on inputNode: AVAudioInputNode) {
@@ -86,7 +87,10 @@ private final class PCMTapProcessor: @unchecked Sendable {
             lock.unlock()
             return
         }
-        accumulatedPCM.append(rawBytes)
+        let remainingCap = maxAccumulatedBytes - accumulatedPCM.count
+        if remainingCap > 0 {
+            accumulatedPCM.append(rawBytes.prefix(remainingCap))
+        }
         pendingChunk.append(rawBytes)
         while pendingChunk.count >= targetChunkBytes {
             let slice = Data(pendingChunk.prefix(targetChunkBytes))
@@ -127,6 +131,179 @@ private final class PCMTapProcessor: @unchecked Sendable {
     }
 }
 
+/// Off-main-actor CoreAudio lifecycle coordinator so `AVAudioSession.setActive`
+/// and `AVAudioEngine.start()` / `stop()` never stall `@MainActor` UI animations.
+private final class AudioHardwareCoordinator: @unchecked Sendable {
+    private enum Phase {
+        case idle
+        case starting(UInt64)
+        case running(UInt64, AVAudioEngine, PCMTapProcessor)
+    }
+
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "com.sagewe.hapi.pcm-recorder", qos: .userInteractive)
+    private var phase: Phase = .idle
+    private var generation: UInt64 = 0
+
+    func start(
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) throws {
+        lock.lock()
+        switch phase {
+        case .starting, .running:
+            lock.unlock()
+            throw PCMStreamingAudioRecorder.RecorderError.alreadyRecording
+        case .idle:
+            generation &+= 1
+            let gen = generation
+            phase = .starting(gen)
+            lock.unlock()
+
+            queue.async { [weak self] in
+                self?.startOnQueue(generation: gen, onChunk: onChunk, onError: onError)
+            }
+        }
+    }
+
+    func stop() -> Data {
+        lock.lock()
+        let current = phase
+        generation &+= 1
+        phase = .idle
+        lock.unlock()
+
+        switch current {
+        case .idle, .starting:
+            return Data()
+        case .running(_, let engine, let processor):
+            let drained = processor.finishAndDrain()
+            queue.async {
+                engine.inputNode.removeTap(onBus: 0)
+                engine.stop()
+                Self.deactivateSession()
+            }
+            return drained
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        let current = phase
+        generation &+= 1
+        phase = .idle
+        lock.unlock()
+
+        if case .running(_, let engine, let processor) = current {
+            processor.discard()
+            queue.async {
+                engine.inputNode.removeTap(onBus: 0)
+                engine.stop()
+                Self.deactivateSession()
+            }
+        }
+    }
+
+    private func isStillStarting(generation gen: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if case .starting(let activeGen) = phase, activeGen == gen {
+            return true
+        }
+        return false
+    }
+
+    private func startOnQueue(
+        generation gen: UInt64,
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) {
+        guard isStillStarting(generation: gen) else { return }
+
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(
+                .playAndRecord,
+                mode: .measurement,
+                options: [.defaultToSpeaker, .allowBluetoothHFP]
+            )
+            try session.setPreferredSampleRate(16_000)
+            try session.setPreferredIOBufferDuration(0.04)
+            try session.setActive(true)
+
+            guard isStillStarting(generation: gen) else {
+                Self.deactivateSession()
+                return
+            }
+
+            let audioEngine = AVAudioEngine()
+            let inputNode = audioEngine.inputNode
+            let inputFormat = inputNode.outputFormat(forBus: 0)
+            guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                Self.deactivateSession()
+                throw PCMStreamingAudioRecorder.RecorderError.invalidInputFormat
+            }
+
+            guard let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 16_000,
+                channels: 1,
+                interleaved: true
+            ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+                Self.deactivateSession()
+                throw PCMStreamingAudioRecorder.RecorderError.converterCreationFailed
+            }
+
+            let tapProcessor = PCMTapProcessor(
+                inputFormat: inputFormat,
+                outputFormat: targetFormat,
+                converter: converter,
+                onChunk: onChunk
+            )
+            tapProcessor.installTap(on: inputNode)
+
+            do {
+                audioEngine.prepare()
+                try audioEngine.start()
+            } catch {
+                inputNode.removeTap(onBus: 0)
+                tapProcessor.discard()
+                Self.deactivateSession()
+                throw error
+            }
+
+            lock.lock()
+            if case .starting(let activeGen) = phase, activeGen == gen {
+                phase = .running(gen, audioEngine, tapProcessor)
+                lock.unlock()
+            } else {
+                lock.unlock()
+                inputNode.removeTap(onBus: 0)
+                audioEngine.stop()
+                tapProcessor.discard()
+                Self.deactivateSession()
+            }
+        } catch {
+            lock.lock()
+            let shouldNotify: Bool
+            if case .starting(let activeGen) = phase, activeGen == gen {
+                phase = .idle
+                shouldNotify = true
+            } else {
+                shouldNotify = false
+            }
+            lock.unlock()
+            if shouldNotify {
+                onError?(error)
+            }
+        }
+    }
+
+    private static func deactivateSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+}
+
 /// Real-time 16 kHz mono Int16 PCM capture over `AVAudioEngine` for iOS Hold-to-Dictate.
 @MainActor
 final class PCMStreamingAudioRecorder: HoldAudioCapturing {
@@ -147,86 +324,25 @@ final class PCMStreamingAudioRecorder: HoldAudioCapturing {
         }
     }
 
-    private var engine: AVAudioEngine?
-    private var processor: PCMTapProcessor?
+    private let hardware = AudioHardwareCoordinator()
 
     func start(onChunk: @escaping @Sendable (Data, Float) -> Void) throws {
-        guard engine == nil else { throw RecorderError.alreadyRecording }
+        try hardware.start(onChunk: onChunk, onError: nil)
+    }
 
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(
-            .playAndRecord,
-            mode: .measurement,
-            options: [.defaultToSpeaker, .allowBluetoothHFP]
-        )
-        try session.setPreferredSampleRate(16_000)
-        try session.setPreferredIOBufferDuration(0.04)
-        try session.setActive(true)
-
-        let audioEngine = AVAudioEngine()
-        let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            deactivateSession()
-            throw RecorderError.invalidInputFormat
-        }
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: true
-        ), let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            deactivateSession()
-            throw RecorderError.converterCreationFailed
-        }
-
-        let tapProcessor = PCMTapProcessor(
-            inputFormat: inputFormat,
-            outputFormat: targetFormat,
-            converter: converter,
-            onChunk: onChunk
-        )
-        tapProcessor.installTap(on: inputNode)
-
-        do {
-            audioEngine.prepare()
-            try audioEngine.start()
-            self.engine = audioEngine
-            self.processor = tapProcessor
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            tapProcessor.discard()
-            deactivateSession()
-            throw error
-        }
+    func start(
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) throws {
+        try hardware.start(onChunk: onChunk, onError: onError)
     }
 
     func stop() -> Data {
-        guard let audioEngine = engine, let tapProcessor = processor else {
-            return Data()
-        }
-        engine = nil
-        processor = nil
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-        let data = tapProcessor.finishAndDrain()
-        deactivateSession()
-        return data
+        hardware.stop()
     }
 
     func cancel() {
-        guard let audioEngine = engine, let tapProcessor = processor else { return }
-        engine = nil
-        processor = nil
-        audioEngine.inputNode.removeTap(onBus: 0)
-        audioEngine.stop()
-        tapProcessor.discard()
-        deactivateSession()
-    }
-
-    private func deactivateSession() {
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        hardware.cancel()
     }
 }
 #endif

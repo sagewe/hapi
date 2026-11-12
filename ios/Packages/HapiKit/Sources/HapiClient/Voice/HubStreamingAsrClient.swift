@@ -22,7 +22,7 @@ public final class HubStreamingAsrClient: HoldAsrStreaming, Sendable {
         let token = try await api.authManager.validToken()
         var request = URLRequest(url: wsURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 15
+        request.timeoutInterval = 45
 
         let task = URLSession.shared.webSocketTask(with: request)
         let session = WebSocketAsrStreamSession(task: task, onPartial: onPartial)
@@ -37,6 +37,7 @@ actor WebSocketAsrStreamSession: HoldAsrStreamSession {
     private var receiveLoopTask: Task<Void, Never>?
     private var latestPartial: String = ""
     private var finalResult: String?
+    private var sentPCMBytes: Int = 0
     private var finished = false
     private var closed = false
     private var finishContinuation: CheckedContinuation<String?, Never>?
@@ -55,6 +56,7 @@ actor WebSocketAsrStreamSession: HoldAsrStreamSession {
 
     func sendAudioChunk(_ pcmData: Data) async {
         guard !closed, !finished, !pcmData.isEmpty else { return }
+        sentPCMBytes += pcmData.count
         try? await task.send(.data(pcmData))
     }
 
@@ -78,13 +80,19 @@ actor WebSocketAsrStreamSession: HoldAsrStreamSession {
             return finalResult
         }
 
+        let audioSecs = Double(sentPCMBytes) / 32_000.0
+        let timeoutNs = min(
+            max(6_500_000_000, UInt64((5.0 + audioSecs * 0.40) * 1_000_000_000)),
+            22_000_000_000
+        )
+
         let result = await withTaskGroup(of: String?.self) { group in
             group.addTask { [weak self] in
                 guard let self else { return nil }
                 return await self.awaitFinalContinuation()
             }
             group.addTask { [weak self] in
-                try? await Task.sleep(nanoseconds: 4_500_000_000)
+                try? await Task.sleep(nanoseconds: timeoutNs)
                 await self?.resumeContinuationOnTimeout()
                 return nil
             }

@@ -310,11 +310,11 @@ struct ComposerTextView: UIViewRepresentable {
     }
 
     /// Raw UIResponder touch surface for the unfocused composer box:
-    /// - Short tap (`< 240ms`) focuses `NativeTextView` for keyboard editing.
-    /// - Stationary hold (`>= 240ms`, zero movement required) OR early upward pull
+    /// - Short tap (`< 180ms`) focuses `NativeTextView` for keyboard editing.
+    /// - Stationary hold (`>= 180ms`, zero movement required) OR early upward pull
     ///   immediately starts Hold-to-Dictate and tracks thumb movement in window space.
     final class HoldOrTapOverlayView: UIView {
-        static let holdThresholdSeconds: TimeInterval = 0.24
+        static let holdThresholdSeconds: TimeInterval = 0.18
 
         weak var hostView: ComposerHostView?
         private let exclusiveRecognizer = ExclusiveTouchHoldRecognizer(target: nil, action: nil)

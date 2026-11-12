@@ -80,11 +80,28 @@ public protocol HoldAudioCapturing: AnyObject {
     /// ~100ms PCM chunks and normalized RMS audio level (`0...1`).
     func start(onChunk: @escaping @Sendable (Data, Float) -> Void) throws
 
+    /// Starts capturing with an optional asynchronous hardware-startup error handler
+    /// so `AVAudioSession` / `AVAudioEngine` warmup can run off `@MainActor` without
+    /// delaying the overlay popup.
+    func start(
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) throws
+
     /// Stops capturing and returns the complete 16 kHz mono s16le PCM buffer.
     func stop() -> Data
 
     /// Immediately stops capturing and discards buffered audio.
     func cancel()
+}
+
+public extension HoldAudioCapturing {
+    func start(
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) throws {
+        try start(onChunk: onChunk)
+    }
 }
 
 /// Active WebSocket streaming ASR session handle.
@@ -195,18 +212,30 @@ public final class HoldToDictateController {
         activeSession = nil
         streamFailed = false
 
+        // Enter `.holding` immediately (0ms visual overlay + haptic parity with MyDots)
+        // before starting CoreAudio hardware.
+        phase = .holding(zone: .send, partialText: "", audioLevel: 0)
+
         do {
-            try recorder.start { [weak self] chunk, level in
-                Task { @MainActor [weak self] in
-                    self?.handleCapturedChunk(chunk, level: level, generation: gen)
+            try recorder.start(
+                onChunk: { [weak self] chunk, level in
+                    Task { @MainActor [weak self] in
+                        self?.handleCapturedChunk(chunk, level: level, generation: gen)
+                    }
+                },
+                onError: { [weak self] error in
+                    Task { @MainActor [weak self] in
+                        guard let self, self.sessionGeneration == gen else { return }
+                        self.cancelActiveTake()
+                        self.onOutcome?(.error(Self.errorMessage(error, fallback: "无法启动麦克风录音")))
+                    }
                 }
-            }
+            )
         } catch {
+            phase = .idle
             onOutcome?(.error(Self.errorMessage(error, fallback: "无法启动麦克风录音")))
             return
         }
-
-        phase = .holding(zone: .send, partialText: "", audioLevel: 0)
 
         if let streamer {
             activeStreamTask = Task { [weak self] in
@@ -388,7 +417,7 @@ public final class HoldToDictateController {
             Task {
                 await session.sendAudioChunk(chunk)
             }
-        } else if preOpenChunks.count < 300 {
+        } else if preOpenChunks.count < 1_800 {
             preOpenChunks.append(chunk)
         }
     }

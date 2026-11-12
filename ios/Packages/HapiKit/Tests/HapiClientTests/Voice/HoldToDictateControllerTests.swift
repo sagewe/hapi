@@ -94,6 +94,7 @@ private actor FakeHoldStreamer: HoldAsrStreaming {
 private final class FakeHoldRecorder: HoldAudioCapturing {
     var stopPCM = Data(repeating: 0x10, count: 6_400)
     private var onChunk: (@Sendable (Data, Float) -> Void)?
+    private var onError: (@Sendable (any Error) -> Void)?
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
@@ -103,8 +104,21 @@ private final class FakeHoldRecorder: HoldAudioCapturing {
         self.onChunk = onChunk
     }
 
+    func start(
+        onChunk: @escaping @Sendable (Data, Float) -> Void,
+        onError: (@Sendable (any Error) -> Void)?
+    ) throws {
+        startCount += 1
+        self.onChunk = onChunk
+        self.onError = onError
+    }
+
     func pushChunk(_ data: Data, level: Float = 0.45) {
         onChunk?(data, level)
+    }
+
+    func triggerAsyncError(_ error: any Error) {
+        onError?(error)
     }
 
     func stop() -> Data {
@@ -258,5 +272,28 @@ struct HoldToDictateControllerTests {
         #expect(calls.count == 1)
         #expect(calls.first?.mimeType == "audio/wav")
         #expect(calls.first?.audio.prefix(4) == Data([0x52, 0x49, 0x46, 0x46])) // "RIFF"
+    }
+
+    @Test("beginHold enters holding immediately and handles async audio hardware error cleanly")
+    @MainActor
+    func asyncHardwareErrorCancelsHoldingCleanly() async throws {
+        let api = FakeHoldDictationApi()
+        let streamer = FakeHoldStreamer()
+        let recorder = FakeHoldRecorder()
+        let controller = HoldToDictateController(api: api, streamer: streamer, recorder: recorder)
+
+        var outcomes: [HoldDictationOutcome] = []
+        controller.onOutcome = { outcomes.append($0) }
+
+        controller.beginHold(fingerX: 196, fingerY: 790, containerWidth: 393, containerHeight: 852)
+        // Must enter `.holding` synchronously at 0ms before async tasks settle
+        #expect(controller.phase == .holding(zone: .send, partialText: "", audioLevel: 0))
+
+        recorder.triggerAsyncError(HoldTestError(message: "麦克风硬件占用"))
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        #expect(controller.phase == .idle)
+        #expect(recorder.cancelCount == 1)
+        #expect(outcomes == [.error("麦克风硬件占用")])
     }
 }
