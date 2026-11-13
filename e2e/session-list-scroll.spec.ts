@@ -12,6 +12,34 @@ for (const nativeAnchoring of [true, false]) {
             }
         })
 
+        test('preserves screen position when the quick status bar appears and disappears', async ({ page }) => {
+            await page.goto('/e2e-fixtures/session-list-scroll-fixture.html')
+            const row = page.getByRole('button', { name: /^Session 20 / })
+            await row.waitFor()
+            await row.evaluate(element => element.scrollIntoView({ block: 'center' }))
+            const before = (await row.boundingBox())!.y
+            const scroller = page.locator('.session-list-scrollbar-left')
+            const viewportTop = (await scroller.boundingBox())!.y
+            const bar = page.getByTestId('session-quick-status-bar')
+            await expect(bar).toHaveCount(0)
+
+            // Keep the project pinned: only background status and header geometry change.
+            await page.evaluate(() => window.updateSession('session-0', { active: true, backgroundTaskCount: 1 }))
+            await expect(bar).toBeVisible()
+            expect((await scroller.boundingBox())!.y).toBeGreaterThan(viewportTop)
+            await expect.poll(async () => Math.abs((await row.boundingBox())!.y - before)).toBeLessThan(2)
+
+            await page.evaluate(() => window.updateSession('session-0', { backgroundTaskCount: 0 }))
+            await expect(bar).toHaveCount(0)
+            await expect.poll(async () => Math.abs((await row.boundingBox())!.y - before)).toBeLessThan(2)
+
+            // At the top, new status UI must not scroll the list away from its start.
+            await scroller.evaluate(element => { element.scrollTop = 0 })
+            await page.evaluate(() => window.updateSession('session-0', { backgroundTaskCount: 1 }))
+            await expect(bar).toBeVisible()
+            expect(await scroller.evaluate(element => element.scrollTop)).toBe(0)
+        })
+
         test('keeps the visible session in place across background pin and activity changes', async ({ page }) => {
             await page.goto('/e2e-fixtures/session-list-scroll-fixture.html')
             const row = page.getByRole('button', { name: /^Session 20 / })

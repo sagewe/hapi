@@ -2,7 +2,7 @@ import { Component, createRef, type ReactNode } from 'react'
 import type { SessionSummary } from '@/types/api'
 
 type Props = { children: ReactNode; className: string; sessions: SessionSummary[] }
-type Snapshot = { scrollTop: number; anchors: { element: HTMLElement; top: number }[] }
+type Snapshot = { scrollTop: number; viewportTop: number; anchors: { element: HTMLElement; top: number }[] }
 
 /** Read the old DOM at commit time, before rows move between pinned sections. */
 export class SessionListScrollAnchor extends Component<Props, object, Snapshot | null> {
@@ -25,7 +25,7 @@ export class SessionListScrollAnchor extends Component<Props, object, Snapshot |
                 anchors.push({ element, top: rect.top - viewport.top })
             }
         }
-        return { scrollTop: container.scrollTop, anchors }
+        return { scrollTop: container.scrollTop, viewportTop: viewport.top, anchors }
     }
 
     componentDidUpdate(_previousProps: Props, _previousState: object, snapshot: Snapshot | null) {
@@ -47,7 +47,12 @@ export class SessionListScrollAnchor extends Component<Props, object, Snapshot |
             }))
             .sort((a, b) => Math.abs(a.shift) - Math.abs(b.shift))
         const anchor = candidates[0]
-        const scrollTop = anchor ? snapshot.scrollTop + anchor.shift : snapshot.scrollTop
+        // Header/status controls can move the scroll viewport itself. Preserve
+        // the survivor's screen position, not just its offset inside that viewport.
+        // Keep candidate selection in content coordinates so reordered projects
+        // cannot win merely because browser anchoring or the header moved them.
+        const viewportShift = viewportTop - snapshot.viewportTop
+        const scrollTop = anchor ? snapshot.scrollTop + anchor.shift + viewportShift : snapshot.scrollTop
         if (Math.abs(container.scrollTop - scrollTop) > 0.5) container.scrollTop = scrollTop
     }
 
