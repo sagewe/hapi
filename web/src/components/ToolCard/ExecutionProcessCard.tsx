@@ -1,14 +1,11 @@
-import { Component, createRef, useEffect, useState, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Component, createRef, useEffect, useState, type ReactNode } from 'react'
 import type { GeneratedImageBlock } from '@/chat/types'
 import { stripNotifySummaryFooter } from '@hapi/protocol/messages'
-import { buildVisibleChatBlocks, type ToolGroupBlock } from '@/chat/toolGroups'
+import { type ToolGroupBlock } from '@/chat/toolGroups'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { ToolCard } from './ToolCard'
-import { ToolGroupCard } from './ToolGroupCard'
 import { useTranslation } from '@/lib/use-translation'
-import { useCodexExplorationCollapse } from '@/hooks/useCodexExplorationCollapse'
-import { getToolCardDisplayPresentation, useToolCardDisplayMode } from '@/hooks/useToolCardDisplayMode'
 
 /** Preserve the visible step, not just the enclosing assistant card, when an
  * older history page prepends members inside an already-open process. */
@@ -56,16 +53,9 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const open = ctx.openExecutionProcesses?.has(block.id) ?? false
-    const { toolCardDisplayMode } = useToolCardDisplayMode()
-    const { codexExplorationCollapsed } = useCodexExplorationCollapse()
-    const mode = getToolCardDisplayPresentation(toolCardDisplayMode).groupingMode
-    const previousGroups = useRef<ToolGroupBlock[]>([])
-    const members = useMemo(() => buildVisibleChatBlocks(block.processBlocks ?? [], {
-        hasMoreMessages: false, groupingMode: mode, codexExplorationCollapsed, previousGroups: previousGroups.current
-    }), [block.processBlocks, mode, codexExplorationCollapsed])
-    useLayoutEffect(() => {
-        previousGroups.current = members.filter((member): member is ToolGroupBlock => member.kind === 'tool-group')
-    }, [members])
+    // Keep each inspected step mounted as its state changes; regrouping completed
+    // tools would discard an open detail dialog and move the reading position.
+    const members = block.processBlocks ?? []
     return <section data-testid="execution-process" className="min-w-0">
         <button type="button" aria-expanded={open} className="flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
             onClick={() => {
@@ -79,9 +69,7 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
             {block.needsOlderHistory ? <p className="text-xs text-[var(--app-hint)]">{t('chat.executionProcess.partial')}</p> : null}
             <ProcessReadingAnchor revision={members}>
                 {members.map(member => <div key={member.id} data-execution-step={member.id}>
-                    {member.kind === 'tool-group'
-                        ? <ToolGroupCard block={member} metadata={ctx.metadata} />
-                        : member.kind === 'tool-call'
+                    {member.kind === 'tool-call'
                             ? <ToolCard block={member} api={ctx.api} sessionId={ctx.sessionId}
                                 metadata={ctx.metadata} terminalToolDisplayMode={ctx.terminalToolDisplayMode} disabled={ctx.disabled} onDone={ctx.onRefresh} />
                             : member.kind === 'generated-image' ? renderMedia(member)
