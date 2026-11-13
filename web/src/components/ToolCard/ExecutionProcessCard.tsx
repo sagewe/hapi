@@ -1,4 +1,5 @@
 import { Component, createRef, useEffect, useState, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import type { GeneratedImageBlock } from '@/chat/types'
 import { stripNotifySummaryFooter } from '@hapi/protocol/messages'
 import { buildVisibleChatBlocks, type ToolGroupBlock } from '@/chat/toolGroups'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
@@ -51,7 +52,7 @@ function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTimin
 }
 
 /** All providers share this outer disclosure; inner views retain tool semantics. */
-export function ExecutionProcessCard({ block }: { block: ToolGroupBlock }) {
+export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupBlock; renderMedia: (block: GeneratedImageBlock) => ReactNode }) {
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const open = ctx.openExecutionProcesses?.has(block.id) ?? false
@@ -83,6 +84,7 @@ export function ExecutionProcessCard({ block }: { block: ToolGroupBlock }) {
                         : member.kind === 'tool-call'
                             ? <ToolCard block={member} api={ctx.api} sessionId={ctx.sessionId}
                                 metadata={ctx.metadata} terminalToolDisplayMode={ctx.terminalToolDisplayMode} disabled={ctx.disabled} onDone={ctx.onRefresh} />
+                            : member.kind === 'generated-image' ? renderMedia(member)
                             : member.kind === 'agent-text' || member.kind === 'agent-reasoning'
                                 ? <div className={member.kind === 'agent-reasoning' ? 'text-[var(--app-hint)]' : undefined}>
                                     <MarkdownRenderer content={ctx.showSessionSummaryInChat ? member.text : stripNotifySummaryFooter(member.text)} />

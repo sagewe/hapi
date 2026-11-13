@@ -359,7 +359,7 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
         return (
             <div data-hapi-share-exclude="true" className="py-1 min-w-0 max-w-full overflow-x-hidden">
                 {artifact.processBlocks
-                    ? <ExecutionProcessCard block={artifact} />
+                    ? <ExecutionProcessCard block={artifact} renderMedia={block => <GeneratedImageCard block={block} />} />
                     : <ToolGroupCard block={artifact} metadata={ctx.metadata} />}
             </div>
         )

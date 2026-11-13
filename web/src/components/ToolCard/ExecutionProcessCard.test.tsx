@@ -20,7 +20,7 @@ function group(text: string): ToolGroupBlock {
     ], { completedRounds: new Set(['initial']), isRunning: false, hasMoreMessages: false })[0] as ToolGroupBlock
 }
 function tree(block: ToolGroupBlock | null) {
-    return <I18nProvider><HappyChatProvider value={value}>{block ? <ExecutionProcessCard block={block} /> : null}</HappyChatProvider></I18nProvider>
+    return <I18nProvider><HappyChatProvider value={value}>{block ? <ExecutionProcessCard block={block} renderMedia={image => <p>{image.fileName}</p>} /> : null}</HappyChatProvider></I18nProvider>
 }
 it('retains user expansion across stream updates and recycled cards', () => {
     const view = render(tree(group('Earlier progress')))
@@ -50,4 +50,15 @@ it('ticks only while running and freezes when the round completes', () => {
     expect(screen.getByRole('button', { name: 'Took 11s' })).toBeVisible()
     view.rerender(tree({ ...block, processTiming: { startedAt: null, endedAt: 12000, running: false } }))
     expect(screen.getByRole('button', { name: 'Time unavailable' })).toBeVisible()
+})
+
+it('keeps inspected images accessible only inside expanded details', () => {
+    const block = group('Progress')
+    block.processBlocks!.push({ kind: 'generated-image', id: 'image', localId: null, createdAt: 1,
+        imageId: 'image', fileName: 'inspected.png', mimeType: 'image/png',
+        source: { ingress: 'tool_result', toolName: 'view_image' } })
+    render(tree(block))
+    expect(screen.queryByText('inspected.png')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Took/ }))
+    expect(screen.getByText('inspected.png')).toBeVisible()
 })

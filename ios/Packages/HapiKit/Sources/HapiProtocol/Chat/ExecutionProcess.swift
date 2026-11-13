@@ -8,7 +8,11 @@ public func executionRoundTimings(_ messages: [NormalizedMessage]) -> [String: E
         case .user:
             round = message.id
             if let start = message.invokedAt { result[round] = .init(startedAt: start, endedAt: start) }
-        case .agent(let content) where !content.isEmpty:
+        case .agent(let content) where content.contains(where: {
+            if case .toolResult = $0 { return false }
+            if case .generatedImage(let image) = $0, image.source?.ingress == .toolResult, image.source?.toolName == "view_image" { return false }
+            return true
+        }):
             let prior = result[round]
             result[round] = .init(startedAt: prior?.startedAt ?? message.createdAt,
                 endedAt: max(prior?.endedAt ?? message.createdAt, message.createdAt))
@@ -59,6 +63,7 @@ private func canFoldExecutionBlock(_ block: ChatBlock) -> Bool {
     switch block {
     case .agentText(let text): return text.meta?["assistantPhase"]?.stringValue != "final"
     case .agentReasoning: return true
+    case .generatedImage(let image): return image.source?.ingress == .toolResult && image.source?.toolName == "view_image"
     case .toolCall(let tool): return !isProtectedExecutionTool(tool)
     default: return false
     }
@@ -93,7 +98,7 @@ public func buildExecutionProcessBlocks(
             return [block.createdAt]
         }
         let observed = roundTimings[roundID]
-        let timing = ExecutionProcessTiming(
+        var timing = ExecutionProcessTiming(
             startedAt: hasMoreMessages && roundID == "initial" ? nil : observed?.startedAt ?? timestamps.min(),
             endedAt: observed?.endedAt ?? timestamps.max() ?? 0, running: tail && isRunning)
         let lastWork = round.lastIndex { block in
@@ -104,6 +109,7 @@ public func buildExecutionProcessBlocks(
                   text.meta?["assistantPhase"]?.stringValue != "progress" else { return nil }
             return text.id
         })
+        if replies.isEmpty { timing.endedAt = max(timing.endedAt, timestamps.max() ?? timing.endedAt) }
         var decisionContext = Set<String>()
         for (index, block) in round.enumerated() {
             guard case .toolCall(let tool) = block, isInteractiveToolBlock(tool), isProtectedExecutionTool(tool) else { continue }
@@ -166,7 +172,7 @@ public func buildExecutionProcessBlocks(
         var insertionIndex: Int?
         for block in round {
             if !canFoldExecutionBlock(block) || replies.contains(block.id) || explanation.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
-                || ((!completed || replies.isEmpty) && block.id == latest && block.asToolCall == nil) {
+                || ((!completed || replies.isEmpty) && block.id == latest && block.asToolCall == nil && block.kind != "generated-image") {
                 output.append(.block(block))
             } else {
                 if insertionIndex == nil { insertionIndex = output.count }

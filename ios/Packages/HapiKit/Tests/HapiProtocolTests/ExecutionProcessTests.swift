@@ -81,6 +81,21 @@ struct ExecutionProcessTests {
         let ready = NormalizedMessage(id: "r", createdAt: 41000, content: .event(.init(object: ["type": .string("ready")])))
         #expect(executionRoundTimings([prompt, ready])["u"] == .init(startedAt: 1000, endedAt: 41000))
     }
+    @Test func inspectedImagesStayInDetailsWhileExplicitDisplaysRemainVisible() {
+        let image = GeneratedImageBlock(id: "image", localId: nil, createdAt: 3, invokedAt: nil,
+            imageId: "image", fileName: "input.png", mimeType: "image/png",
+            source: .init(ingress: .toolResult, toolName: "view_image"), meta: nil)
+        let input = [user, text("progress", phase: "progress"), tool("read")]
+        let result = project(input + [.generatedImage(image)], running: true)
+        #expect(result.count == 3)
+        #expect(result.last?.testID == "progress")
+        #expect(groups(result).first?.processBlocks?.contains(.generatedImage(image)) == true)
+        var displayed = image
+        displayed.source = .init(ingress: .mcp, toolName: "display_image")
+        #expect(project(input + [.generatedImage(displayed)], running: true).contains { $0.testID == "image" })
+        displayed.source = nil
+        #expect(project(input + [.generatedImage(displayed)], running: true).contains { $0.testID == "image" })
+    }
     @Test func exceptionsAndUserReadingRemainVisible() {
         let error = tool("error", state: .error)
         let question = tool("question", name: "request_user_input")

@@ -14,7 +14,8 @@ export function executionRoundTimings(messages: readonly NormalizedMessage[]): M
             if (message.invokedAt != null) result.set(round, { startedAt: message.invokedAt, endedAt: message.invokedAt })
             continue
         }
-        const agent = message.role === 'agent' && message.content.length > 0
+        const agent = message.role === 'agent' && message.content.some(content => content.type !== 'tool-result'
+            && !(content.type === 'generated-image' && content.source?.ingress === 'tool_result' && content.source.toolName === 'view_image'))
         const ready = message.role === 'event' && message.content.type === 'ready'
             && (!('agentId' in message.content) || !message.content.agentId)
         const prior = result.get(round)
@@ -74,6 +75,7 @@ function activityPresentation(block: ChatBlock, keepInspector: boolean): ChatBlo
 function foldable(block: ChatBlock): boolean {
     if (block.kind === 'agent-text') return !isObject(block.meta) || block.meta.assistantPhase !== 'final'
     if (block.kind === 'agent-reasoning') return true
+    if (block.kind === 'generated-image') return block.source?.ingress === 'tool_result' && block.source.toolName === 'view_image'
     return block.kind === 'tool-call' && !protectedTool(block)
 }
 
@@ -117,6 +119,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         // Preserve all trailing answer paragraphs for older providers without phase metadata.
         const replies = new Set(round.filter((block, index) => block.kind === 'agent-text' && index > lastWork
             && (!isObject(block.meta) || block.meta.assistantPhase !== 'progress')).map(block => block.id))
+        if (replies.size === 0) processTiming.endedAt = Math.max(processTiming.endedAt, ...timestamps)
         // A pending decision must keep the prose that explains what the user is answering.
         const decisionContext = new Set<string>()
         round.forEach((block, index) => {
@@ -173,7 +176,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         let insertionIndex: number | null = null
         for (const block of round) {
             if (!foldable(block) || replies.has(block.id) || explanation.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
-                || ((!completed || replies.size === 0) && block.id === latest && block.kind !== 'tool-call')) {
+                || ((!completed || replies.size === 0) && block.id === latest && block.kind !== 'tool-call' && block.kind !== 'generated-image')) {
                 output.push(activityPresentation(block, Boolean(options.keepVisibleIds?.has(block.id) && options.previousActivityIds?.has(block.id))))
             } else {
                 insertionIndex ??= output.length

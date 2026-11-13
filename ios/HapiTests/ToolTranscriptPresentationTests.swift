@@ -87,8 +87,8 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         XCTAssertEqual(groups.map(\.tools.count), [42, 5])
         let first = try XCTUnwrap(groups.first)
         let last = try XCTUnwrap(groups.last)
-        XCTAssertEqual(ToolGroupPresentation(first).title, "42 tool calls")
-        XCTAssertEqual(ToolGroupPresentation(last).title, "5 tool calls")
+        XCTAssertEqual(ToolGroupPresentation(first).title, String(format: String(localized: "%lld tool calls"), Int64(42)))
+        XCTAssertEqual(ToolGroupPresentation(last).title, String(format: String(localized: "%lld tool calls"), Int64(5)))
         let processID = try XCTUnwrap(model.messageRows.compactMap { row -> String? in
             if case .group(let presentation) = row.kind, presentation.isExecutionProcess { return presentation.id }
             return nil

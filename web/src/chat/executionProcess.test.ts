@@ -74,9 +74,23 @@ describe('execution process projection', () => {
             { ...base, id: 'u', role: 'user', invokedAt: 1000, content: { type: 'text', text: 'request' } },
             { ...base, id: 'text', role: 'agent', content: [{ type: 'text', text: 'work', uuid: 'text', parentUUID: null }] },
             { ...base, id: 'ready', createdAt: 12000, role: 'event', content: { type: 'ready' } },
+            { ...base, id: 'late', createdAt: 88000, role: 'agent', content: [{ type: 'tool-result', tool_use_id: 'tool', content: 'late output', is_error: false, uuid: 'late', parentUUID: null }] },
+            { ...base, id: 'read-image', createdAt: 90000, role: 'agent', content: [{ type: 'generated-image', imageId: 'img', fileName: 'input.png', mimeType: 'image/png', uuid: 'read-image', parentUUID: null, source: { ingress: 'tool_result', toolName: 'view_image' } }] },
             { ...base, id: 'child', createdAt: 99000, role: 'event', content: { type: 'ready', agentId: 'child' } }
         ]
         expect(executionRoundTimings(messages).get('u')).toEqual({ startedAt: 1000, endedAt: 12000 })
+    })
+    it('folds inspected screenshots but preserves explicit display and generated media', () => {
+        const inspected: ChatBlock = { kind: 'generated-image', id: 'inspect', localId: null, createdAt: 3,
+            imageId: 'image', fileName: 'input.png', mimeType: 'image/png',
+            source: { ingress: 'tool_result', toolName: 'view_image' } }
+        const live = buildExecutionProcessBlocks([user(), text('progress', 'progress'), tool('read'), inspected], { ...options, isRunning: true })
+        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
+        expect(process(live)[0].processBlocks).toContain(inspected)
+        for (const source of [undefined, { ingress: 'mcp' as const, toolName: 'display_image' }, { ingress: 'tool_result' as const, toolName: 'hapi_display_image' }]) {
+            const displayed = { ...inspected, source }
+            expect(buildExecutionProcessBlocks([user(), tool('read'), displayed], { ...options, isRunning: true })).toContain(displayed)
+        }
     })
     it('keeps pending requests, questions, plans and user shell commands outside', () => {
         const permission = tool('permission'); permission.tool.permission = { id: 'p', status: 'pending' }
