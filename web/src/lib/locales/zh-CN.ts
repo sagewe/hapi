@@ -1,4 +1,6 @@
 export default {
+  'chat.executionProcess': '执行过程',
+  'chat.executionProcess.partial': '更早的执行过程尚未加载。',
   'sessions.timeFilter.label': '按最后活动时间筛选会话',
   'sessions.timeFilter.pickStart': '选择开始日期',
   'sessions.timeFilter.pickEnd': '选择结束日期',
@@ -1084,7 +1086,7 @@ export default {
   'settings.chat.toolCardDisplay.preview.compact': '各工具调用分开显示，终端卡片仅显示命令',
   'settings.chat.toolCardDisplay.preview.detailed': '各工具调用分开显示，终端卡片同时显示输出预览',
   'settings.chat.codexExplorationCollapsed': '收起已探索工具组',
-  'settings.chat.codexExplorationCollapsed.desc': '收起Codex的读取和搜索活动，点击后查看详情。',
+  'settings.chat.codexExplorationCollapsed.desc': '在展开的执行过程中，合并 Codex 的读取和搜索活动。',
   'settings.chat.reasoningCollapsed': '思考默认折叠',
   'settings.chat.reasoningCollapsed.desc': 'AI 思考内容默认保持折叠，流式输出期间也不会自动展开。',
   'settings.chat.conciseView': '简约模式',

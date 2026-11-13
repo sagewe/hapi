@@ -159,8 +159,11 @@ export class SharedCodexProjection {
         const events = this.converter.handleNotification(method, params);
         for (const event of events) {
             const callId = string(event.call_id);
-            const key = `${turnId ?? 'thread'}:${itemId ?? callId ?? createHash('sha256').update(JSON.stringify(event)).digest('hex')}:${event.type}`;
-            if (event.type === 'agent_message') send({ type: 'message', message: event.message }, key);
+            // Presentation metadata must not change fallback message identities on resume.
+            const identityEvent = { ...event };
+            if (event.type === 'agent_message') delete identityEvent.phase;
+            const key = `${turnId ?? 'thread'}:${itemId ?? callId ?? createHash('sha256').update(JSON.stringify(identityEvent)).digest('hex')}:${event.type}`;
+            if (event.type === 'agent_message') send({ type: 'message', message: event.message, ...(event.phase ? { phase: event.phase } : {}) }, key);
             else if (event.type === 'agent_reasoning') send({ type: 'reasoning', message: event.text }, key);
             else if (event.type === 'exec_command_begin' && callId) {
                 send({ type: 'tool-call', name: 'CodexBash', callId, input: event }, key);

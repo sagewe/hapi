@@ -138,6 +138,7 @@ describe('convertCodexEvent', () => {
             messages: [{
                 type: 'message',
                 message: 'visible commentary',
+                phase: 'progress',
                 id: 'agent-147'
             }]
         });
@@ -263,6 +264,7 @@ describe('convertCodexEvent', () => {
             messages: [{
                 type: 'message',
                 message: 'complete final answer',
+                phase: 'final',
                 id: 'final-1'
             }]
         });
@@ -404,10 +406,12 @@ describe('convertCodexEvent', () => {
         expect(getAgentMessages(mirrored)).toEqual([{
             type: 'message',
             message: 'visible final A',
+            phase: 'final',
             id: 'final-a'
         }, {
             type: 'message',
             message: 'visible final B',
+            phase: 'final',
             id: 'final-b'
         }]);
         expect(convert({
@@ -446,6 +450,7 @@ describe('convertCodexEvent', () => {
         }))).toEqual([{
             type: 'message',
             message: 'same visible text',
+            phase: 'final',
             id: 'paired-final'
         }]);
 
@@ -466,6 +471,7 @@ describe('convertCodexEvent', () => {
         }))).toEqual([{
             type: 'message',
             message: 'same visible text',
+            phase: 'final',
             id: 'response-only-final'
         }]);
     });
@@ -489,6 +495,7 @@ describe('convertCodexEvent', () => {
         expect(getAgentMessages(convert.finalize())).toEqual([{
             type: 'message',
             message: 'visible answer at EOF',
+            phase: 'final',
             id: 'final-at-eof'
         }]);
         expect(convert.finalize()).toEqual([]);
@@ -519,6 +526,7 @@ describe('convertCodexEvent', () => {
             message: {
                 type: 'message',
                 message: 'visible final answer',
+                phase: 'final',
                 id: 'visible-final'
             }
         }, {
@@ -554,6 +562,7 @@ describe('convertCodexEvent', () => {
         }))).toEqual([{
             type: 'message',
             message: 'visible final answer',
+            phase: 'final',
             id: 'visible-final'
         }, expect.objectContaining({
             type: 'tool-call',
@@ -597,6 +606,7 @@ describe('convertCodexEvent', () => {
         }))).toEqual([{
             type: 'message',
             message: 'earlier visible final answer',
+            phase: 'final',
             id: 'earlier-visible-final'
         }]);
         expect(convert({
@@ -662,6 +672,7 @@ describe('convertCodexEvent', () => {
         expect(getAgentMessages(completed)).toEqual([{
             type: 'message',
             message: 'visible final answer',
+            phase: 'final',
             id: 'visible-final'
         }]);
     });
@@ -702,6 +713,7 @@ describe('convertCodexEvent', () => {
         expect(getAgentMessages(completed)).toEqual([{
             type: 'message',
             message: 'visible before remote compaction',
+            phase: 'final',
             id: 'visible-before-remote-compaction'
         }]);
         expect(completed.at(-1)).toEqual({ type: 'turn-finished', turnId: 'turn-1' });

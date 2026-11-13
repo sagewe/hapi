@@ -1137,6 +1137,8 @@ export function normalizeAgentRecord(
         }
 
         if (data.type === 'message' && typeof data.message === 'string') {
+            const messageMeta = (data.phase === 'final' || data.phase === 'progress') && (meta == null || isObject(meta))
+                ? { ...(isObject(meta) ? meta : {}), assistantPhase: data.phase } : meta
             const streamId = asString(data.id)
             const isPiStreamSnapshot = data.streamSnapshot === true
                 || (streamId !== null && /^pi-.+-turn-\d+-message-\d+-text-\d+$/.test(streamId))
@@ -1149,7 +1151,7 @@ export function normalizeAgentRecord(
                     role: 'agent',
                     isSidechain: false,
                     content: [{ type: 'codex-review', review, uuid: messageId, parentUUID: null }],
-                    meta
+                    meta: messageMeta
                 }
             }
             return {
@@ -1165,7 +1167,7 @@ export function normalizeAgentRecord(
                     ...(streamId !== null ? { streamId } : {}),
                     parentUUID: null
                 }],
-                meta
+                meta: messageMeta
             }
         }
 

@@ -46,6 +46,10 @@ public actor ChatPipeline {
     private var lastDirectSendIDs: Set<String> = []
     private var lastOutput: [VisibleChatBlock] = []
 
+    private var completedRounds = Set<String>()
+
+    public func executionCompletionEvidence() -> Set<String> { completedRounds }
+
     public init() {}
 
     /// One pipeline run over the current window + agent state. Pure with
@@ -99,6 +103,7 @@ public actor ChatPipeline {
             normalizeCache = normalizeCache.filter { seenIds.contains($0.key) }
         }
 
+        completedRounds = completedExecutionRounds(normalized)
         let reduced = reduceChatBlocks(normalized, agentState: agentState)
         let visible = buildVisibleChatBlocks(
             Self.filterEmptyReasoning(reduced.blocks),
@@ -135,6 +140,10 @@ public actor ChatPipeline {
 
     /// Forget all memo state (session switch / tests).
     public func reset() {
+        completedRounds = []
+        lastMessages = nil
+        lastAgentState = nil
+        lastOutput = []
         normalizeCache = [:]
         previousGroups = []
     }

@@ -1,3 +1,5 @@
+import { ExecutionActivityCard } from '@/components/ToolCard/ExecutionActivityCard'
+import { ExecutionProcessCard } from '@/components/ToolCard/ExecutionProcessCard'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { ChatBlock } from '@/chat/types'
@@ -356,12 +358,15 @@ export function HappyToolMessage(props: ToolCallMessagePartProps) {
     if (isToolGroupBlock(artifact)) {
         return (
             <div data-hapi-share-exclude="true" className="py-1 min-w-0 max-w-full overflow-x-hidden">
-                <ToolGroupCard
-                    block={artifact}
-                    metadata={ctx.metadata}
-                />
+                {artifact.processBlocks
+                    ? <ExecutionProcessCard block={artifact} />
+                    : <ToolGroupCard block={artifact} metadata={ctx.metadata} />}
             </div>
         )
+    }
+
+    if (isToolCallBlock(artifact) && artifact.executionActivity) {
+        return <ExecutionActivityCard block={artifact} />
     }
 
     if (isGeneratedImageBlock(artifact)) {

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { buildExecutionProcessBlocks, completedExecutionRounds } from '@/chat/executionProcess'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -579,7 +580,7 @@ function renderedResponseGroups(blocks: readonly VisibleChatBlock[]): { id: stri
     for (const { block, threadMessageId } of assignThreadMessageIds(blocks)) {
         if (visibleBlockRole(block) !== 'assistant') { group = null; continue }
         if (!group) { group = { id: threadMessageId, keys: [] }; groups.push(group) }
-        group.keys.push(...(block.kind === 'tool-group' ? block.tools.map(responseBlockKey) : [responseBlockKey(block)]))
+        group.keys.push(...(block.kind === 'tool-group' ? (block.processBlocks ?? block.tools).map(responseBlockKey) : [responseBlockKey(block)]))
     }
     return groups
 }
@@ -798,6 +799,17 @@ function SessionChatInner(props: SessionChatProps) {
     const focusComposerRef = useRef<(() => void) | null>(null)
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const visibleGroupsRef = useRef<ToolGroupBlock[]>([])
+    const executionGroupsRef = useRef<ToolGroupBlock[]>([])
+    const executionVisibleRef = useRef<VisibleChatBlock[]>([])
+    const [heldExecution, setHeldExecution] = useState<{ sessionId: string; ids: ReadonlySet<string> }>({ sessionId: props.session.id, ids: new Set() })
+    const preserveExecutionReading = useCallback(() => {
+        const ids = executionVisibleRef.current.filter(block => block.kind !== 'tool-group').map(block => block.id)
+        setHeldExecution(previous => {
+            const old = previous.sessionId === props.session.id ? previous.ids : new Set<string>()
+            if (ids.every(id => old.has(id))) return previous
+            return { sessionId: props.session.id, ids: new Set([...old, ...ids]) }
+        })
+    }, [props.session.id])
     const visibleGroupsModeRef = useRef(toolGroupingMode)
     const [rememberedTailBoundary, setRememberedTailBoundary] = useState<CompletedBoundaryMemory | null>(null)
     const [forceScrollToken, setForceScrollToken] = useState(0)
@@ -1555,6 +1567,7 @@ function SessionChatInner(props: SessionChatProps) {
         normalizedCacheRef.current.clear()
         blocksByIdRef.current.clear()
         visibleGroupsRef.current = []
+        executionGroupsRef.current = []
         setOutlineOpen(false)
     }, [props.session.id])
 
@@ -1573,6 +1586,7 @@ function SessionChatInner(props: SessionChatProps) {
             normalizedCacheRef.current.clear()
             blocksByIdRef.current.clear()
             visibleGroupsRef.current = []
+            executionGroupsRef.current = []
         }
         prevSessionIdRef.current = props.session.id
 
@@ -1658,15 +1672,35 @@ function SessionChatInner(props: SessionChatProps) {
     )
 
     const visibleBlocks = useMemo(
-        () => buildVisibleChatBlocks(threadBlocks, {
-            hasMoreMessages: props.hasMoreMessages,
-            previousGroups: visibleGroupsRef.current,
-            previousGroupingMode: visibleGroupsModeRef.current,
-            groupingMode: toolGroupingMode,
-            codexExplorationCollapsed
-        }),
-        [threadBlocks, props.hasMoreMessages, toolGroupingMode, codexExplorationCollapsed]
+        () => conciseViewActive || props.initialTargetMessageId
+            ? buildVisibleChatBlocks(threadBlocks, {
+                hasMoreMessages: props.hasMoreMessages, previousGroups: visibleGroupsRef.current,
+                previousGroupingMode: visibleGroupsModeRef.current, groupingMode: toolGroupingMode,
+                codexExplorationCollapsed
+            })
+            : buildExecutionProcessBlocks(threadBlocks, {
+                completedRounds: completedExecutionRounds(normalizedMessages),
+                isRunning: props.session.thinking || hasRunningChildAgent,
+                hasMoreMessages: props.hasMoreMessages, previousGroups: executionGroupsRef.current,
+                previousActivityIds: new Set(executionVisibleRef.current.filter(block => block.kind === 'tool-call' && block.executionActivity).map(block => block.id)),
+                keepVisibleIds: new Set([
+                    ...(heldExecution.sessionId === props.session.id ? heldExecution.ids : []),
+                    ...(props.viewMode === 'history' ? executionVisibleRef.current.filter(block => block.kind !== 'tool-group').map(block => block.id) : [])
+                ])
+            }),
+        [threadBlocks, props.hasMoreMessages, toolGroupingMode, codexExplorationCollapsed,
+            conciseViewActive, props.initialTargetMessageId, props.session.id, props.session.thinking,
+            hasRunningChildAgent, normalizedMessages, heldExecution, props.viewMode]
     )
+    useLayoutEffect(() => {
+        executionVisibleRef.current = visibleBlocks
+        if (!conciseViewActive && !props.initialTargetMessageId) executionGroupsRef.current = visibleBlocks.filter(isToolGroupBlock)
+    }, [visibleBlocks, conciseViewActive, props.initialTargetMessageId])
+    useEffect(() => {
+        if (props.viewMode === 'history') preserveExecutionReading()
+        else setHeldExecution(previous => previous.ids.size === 0 && previous.sessionId === props.session.id
+            ? previous : { sessionId: props.session.id, ids: new Set() })
+    }, [props.viewMode, preserveExecutionReading])
 
     // Fork-current must compare against assistant-ui message ids (`kind:id`),
     // not raw hub message ids — MessageActions receive the rendered card id,
@@ -2113,7 +2147,11 @@ function SessionChatInner(props: SessionChatProps) {
     })
 
     return (
-        <div className="flex h-full min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col" onFocusCapture={(event) => {
+            if (event.target instanceof Element && event.target.closest('[data-hapi-message-role="assistant"]')) preserveExecutionReading()
+        }} onPointerDownCapture={(event) => {
+            if (event.target instanceof Element && event.target.closest('[data-hapi-message-role="assistant"]')) preserveExecutionReading()
+        }}>
             <SessionHeader
                 session={props.session}
                 serviceTier={effectiveCodexServiceTier}
@@ -2187,6 +2225,9 @@ function SessionChatInner(props: SessionChatProps) {
                         <div className={(terminalVisible && canViewAgentTerminal) ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
 
                     <HappyThread
+                        onExecutionInspect={(id) => setHeldExecution(previous => ({
+                            sessionId: props.session.id, ids: new Set([...(previous.sessionId === props.session.id ? previous.ids : []), id])
+                        }))}
                         // Key with prefix: different components under the same session
                         // (thread, scratchlist, composer) must have distinct keys to avoid
                         // React reconciliation issues when switching sessions rapidly.

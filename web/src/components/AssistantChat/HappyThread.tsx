@@ -683,6 +683,7 @@ export function ConversationOutlinePanel(props: {
 
 export function HappyThread(props: {
     api: ApiClient
+    onExecutionInspect?: (id: string) => void
     session: Session
     serviceTier?: string | null
     sessionId: string
@@ -2513,6 +2514,7 @@ export function HappyThread(props: {
             showSessionSummaryInChat,
             disabled: props.disabled,
             onRefresh: props.onRefresh,
+            onExecutionInspect: props.onExecutionInspect,
             codexPlanProposalId: props.session.active && props.session.metadata?.capabilities?.concurrentClients
                 ? props.session.agentState?.codexPlanProposalId : null,
             onContinuePlan: props.onContinuePlan,

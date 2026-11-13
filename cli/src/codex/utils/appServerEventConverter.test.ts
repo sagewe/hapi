@@ -10,7 +10,7 @@ describe('AppServerEventConverter', () => {
         converter.handleNotification('item/agentMessage/delta', { itemId: 'progress', delta: `Still working.\n${footer}` });
         expect(converter.handleNotification('item/completed', {
             item: { id: 'progress', type: 'agentMessage', phase }
-        })).toEqual([{ type: 'agent_message', message: 'Still working.' }]);
+        })).toEqual([{ type: 'agent_message', message: 'Still working.', phase: 'progress' }]);
     });
 
     it.each(['final_answer', undefined, null, 'unknown'])('preserves summary footers when phase is %s', phase => {
@@ -18,7 +18,7 @@ describe('AppServerEventConverter', () => {
         const message = `Finished.\n${footer}`;
         expect(converter.handleNotification('item/completed', {
             item: { id: 'answer', type: 'agentMessage', text: message, phase }
-        })).toEqual([{ type: 'agent_message', message }]);
+        })).toEqual([{ type: 'agent_message', message, ...(phase === 'final_answer' ? { phase: 'final' } : {}) }]);
     });
 
     it('suppresses and deduplicates footer-only commentary without suppressing the final answer', () => {
@@ -28,7 +28,7 @@ describe('AppServerEventConverter', () => {
         expect(converter.handleNotification('item/completed', { item: { ...item, phase: undefined } })).toEqual([]);
         expect(converter.handleNotification('item/completed', {
             item: { ...item, id: 'final', phase: 'final_answer' }
-        })).toEqual([{ type: 'agent_message', message: footer }]);
+        })).toEqual([{ type: 'agent_message', message: footer, phase: 'final' }]);
     });
 
     it('leaves literal examples and malformed footers in commentary unchanged', () => {
@@ -36,7 +36,7 @@ describe('AppServerEventConverter', () => {
         for (const text of [`Example: ${footer}`, `${footer}\nMore explanation.`, 'AGENT_NOTIFY_SUMMARY {invalid}']) {
             expect(converter.handleNotification('item/completed', {
                 item: { id: text, type: 'agentMessage', text, phase: 'commentary' }
-            })).toEqual([{ type: 'agent_message', message: text }]);
+            })).toEqual([{ type: 'agent_message', message: text, phase: 'progress' }]);
         }
     });
 

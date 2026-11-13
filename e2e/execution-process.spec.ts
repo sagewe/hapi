@@ -1,0 +1,64 @@
+import { expect, test } from '@playwright/test'
+
+
+for (const agent of ['codex', 'agy']) {
+    test(`${agent}: completed process folds while all answer paragraphs remain visible`, async ({ page }) => {
+        await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}`)
+        const process = page.getByTestId('execution-process')
+        await expect(process).toHaveCount(1)
+        await expect(process.getByRole('button', { name: 'Execution process' })).toHaveAttribute('aria-expanded', 'false')
+        await expect(page.getByText('Inspecting the fixture.', { exact: true })).toHaveCount(0)
+        await page.getByRole('button', { name: 'Complete turn' }).click()
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+        await page.getByRole('button', { name: 'Add paragraph' }).click()
+        await expect(page.getByText('Additional final paragraph.', { exact: true })).toBeVisible()
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+        await expect(process.getByRole('button', { name: 'Execution process' })).toHaveAttribute('aria-expanded', 'false')
+    })
+    test(`${agent}: explicit expansion survives completion without moving the reading anchor`, async ({ page }) => {
+        await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}`)
+        const toggle = page.getByTestId('execution-process').getByRole('button', { name: 'Execution process' })
+        await toggle.click()
+        await expect(page.getByText('Inspecting the fixture.', { exact: true })).toBeVisible()
+        await page.waitForTimeout(500)
+        const before = (await toggle.boundingBox())!.y
+        await page.getByRole('button', { name: 'Complete turn' }).click()
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+        await page.waitForTimeout(500)
+        expect(Math.abs((await toggle.boundingBox())!.y - before)).toBeLessThan(2)
+        await expect(page.getByText('Inspecting the fixture.', { exact: true })).toBeVisible()
+    })
+
+    test(`${agent}: inspecting the current step survives the final answer`, async ({ page }) => {
+        await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}`)
+        const activity = page.getByTestId('execution-activity')
+        await expect(activity).toHaveCount(1)
+        const before = (await activity.boundingBox())!.y
+        await activity.click()
+        const dialog = page.getByRole('dialog')
+        await expect(dialog).toBeVisible()
+        await page.evaluate(() => (window as unknown as { completeProcess: () => void }).completeProcess())
+        await expect(dialog).toBeVisible()
+        await expect(activity).toHaveCount(1)
+        await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+        await expect(dialog).toHaveCount(0)
+        await page.waitForTimeout(500)
+        expect(Math.abs((await activity.boundingBox())!.y - before)).toBeLessThan(2)
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+    })
+
+    test(`${agent}: a newly failed step remains visible without closing its open inspector`, async ({ page }) => {
+        await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}`)
+        await page.getByTestId('execution-activity').click()
+        const dialog = page.getByRole('dialog')
+        await expect(dialog).toBeVisible()
+        await page.evaluate(() => (window as unknown as { failProcess: () => void }).failProcess())
+        await expect(dialog).toBeVisible()
+        await expect(page.locator('[data-execution-step="current-check"]')).toHaveCount(0)
+        await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+        await expect(dialog).toHaveCount(0)
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+    })
+
+}

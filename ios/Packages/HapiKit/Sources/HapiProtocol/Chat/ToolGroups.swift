@@ -56,6 +56,7 @@ public struct ToolGroupBlock: Equatable, Sendable {
     public var firstToolId: String
     public var lastToolId: String
     public var tools: [ToolCallBlock]
+    public var processBlocks: [ChatBlock]? = nil
     public var defaultOpen: Bool
     public var historyState: HistoryState
     public var needsOlderHistory: Bool
@@ -220,7 +221,7 @@ private func getPrimaryOtherTarget(_ block: ToolCallBlock) -> String? {
 }
 
 /// Port of `summarizeToolGroup`.
-private func summarizeToolGroup(_ tools: [ToolCallBlock]) -> ToolGroupSummary {
+func summarizeToolGroup(_ tools: [ToolCallBlock]) -> ToolGroupSummary {
     var countsByKind: [ToolGroupActionKind: Int] = [
         .read: 0, .search: 0, .command: 0, .mutation: 0, .web: 0, .other: 0,
     ]
@@ -279,7 +280,7 @@ private func summarizeToolGroup(_ tools: [ToolCallBlock]) -> ToolGroupSummary {
 
 // MARK: - Eligibility
 
-private func isInteractiveToolBlock(_ block: ToolCallBlock) -> Bool {
+func isInteractiveToolBlock(_ block: ToolCallBlock) -> Bool {
     interactiveToolNames.contains(block.tool.name)
         || block.tool.permission?.status == .pending
         || isAskUserQuestionToolName(block.tool.name)

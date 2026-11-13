@@ -8,3 +8,10 @@ export function codexAssistantText(text: string, phase: unknown): string {
     // Missing/unknown phases provide no evidence that a message is interim.
     return text;
 }
+
+/** Common presentation phase, preserving native evidence rather than guessing prose. */
+export function codexAssistantPhase(phase: unknown): 'progress' | 'final' | undefined {
+    if (phase === 'final_answer') return 'final';
+    if (phase === 'commentary' || phase === 'partial_answer') return 'progress';
+    return undefined;
+}

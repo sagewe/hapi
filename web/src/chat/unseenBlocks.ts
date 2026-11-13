@@ -29,9 +29,9 @@ export function createUnseenWatermark(blocks: readonly VisibleChatBlock[]): Unse
             // A display-mode switch can replace a group with its member
             // tool-call blocks. Keep those ids in the watermark so the same
             // historical tools are not reported as new content.
-            for (const tool of block.tools) {
+            for (const tool of block.processBlocks ?? block.tools) {
                 ids.add(tool.id)
-                if (tool.localId) {
+                if ('localId' in tool && tool.localId) {
                     localIds.add(tool.localId)
                 }
             }

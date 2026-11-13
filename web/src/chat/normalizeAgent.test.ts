@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { normalizeAgentRecord } from '@/chat/normalizeAgent'
 
 describe('normalizeAgentRecord — agentTimestamp exposure', () => {
+    it.each(['progress', 'final'])('retains the common assistant phase %s', (phase) => {
+        const result = normalizeAgentRecord('phase-row', null, 1, {
+            type: 'codex', data: { type: 'message', message: 'answer', phase }
+        }, { sentFrom: 'cli' })
+        expect(result?.meta).toMatchObject({ sentFrom: 'cli', assistantPhase: phase })
+    })
+
     it.each(['blocked', 'usageLimited'] as const)('preserves %s Codex goal status', (status) => {
         const normalized = normalizeAgentRecord('goal-row', null, 1, {
             type: 'codex',

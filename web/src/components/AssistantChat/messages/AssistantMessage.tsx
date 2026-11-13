@@ -1,3 +1,4 @@
+import { isObject } from '@hapi/protocol'
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
 import { Reasoning, ReasoningGroup } from '@/components/assistant-ui/reasoning'
 import { HappyToolMessage } from '@/components/AssistantChat/messages/ToolMessage'
@@ -44,6 +45,8 @@ export function HappyAssistantMessage() {
         if (custom?.kind !== 'cli-output') return ''
         return s.message.content.find((part): part is TextMessagePart => part.type === 'text')?.text ?? ''
     })
+    const hasExecutionPresentation = useAuiState((s) => s.message.content.some(part =>
+        part.type === 'tool-call' && isObject(part.artifact) && (Array.isArray(part.artifact.processBlocks) || part.artifact.executionActivity === true)))
     const toolOnly = useAuiState((s) => {
         if (s.message.role !== 'assistant') return false
         const parts = s.message.content
@@ -72,7 +75,7 @@ export function HappyAssistantMessage() {
         && ctx.onForkConversation
     )
 
-    const rootClass = toolOnly
+    const rootClass = toolOnly && !hasExecutionPresentation
         ? 'py-1 min-w-0 max-w-full overflow-x-hidden'
         : 'px-1 min-w-0 max-w-full overflow-x-hidden'
 

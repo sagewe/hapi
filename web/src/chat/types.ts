@@ -325,6 +325,8 @@ export type AgentEventBlock = {
 }
 
 export type ToolCallBlock = {
+    /** Presentation-only hint for the provider-neutral current-step summary. */
+    executionActivity?: boolean
     kind: 'tool-call'
     id: string
     localId: string | null

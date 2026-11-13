@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { INCLUSIVE_INPUT_TOKEN_USAGE_MARKER, type InclusiveInputTokenUsageMarker } from '@hapi/protocol/usage';
 import { z } from 'zod';
 import { logger } from '@/ui/logger';
-import { codexAssistantText } from './assistantText';
+import { codexAssistantPhase, codexAssistantText } from './assistantText';
 
 const CodexSessionEventSchema = z.object({
     timestamp: z.string().optional(),
@@ -514,6 +514,7 @@ export function convertCodexEvent(rawEvent: unknown): CodexEventProjection | nul
                 messages: [{
                     type: 'message',
                     message,
+                    ...(codexAssistantPhase(payloadRecord.phase) ? { phase: codexAssistantPhase(payloadRecord.phase) } : {}),
                     id: randomUUID()
                 }]
             };
@@ -543,6 +544,7 @@ export function convertCodexEvent(rawEvent: unknown): CodexEventProjection | nul
                     messages: [{
                         type: 'message',
                         message,
+                        ...(codexAssistantPhase(item?.phase) ? { phase: codexAssistantPhase(item?.phase) } : {}),
                         id: asString(item?.id) ?? randomUUID()
                     }]
                 };
@@ -634,6 +636,7 @@ export function convertCodexEvent(rawEvent: unknown): CodexEventProjection | nul
                 messages: [{
                     type: 'message',
                     message,
+                    ...(codexAssistantPhase(payloadRecord.phase) ? { phase: codexAssistantPhase(payloadRecord.phase) } : {}),
                     id: asString(payloadRecord.id) ?? randomUUID()
                 }]
             };

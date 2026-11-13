@@ -29,6 +29,8 @@ export type ToolGroupBlock = {
     firstToolId: string
     lastToolId: string
     tools: ToolCallBlock[]
+    /** Provider-neutral execution history; absent on legacy tool-only groups. */
+    processBlocks?: ChatBlock[]
     defaultOpen: boolean
     historyState: 'complete' | 'needs-older-history'
     needsOlderHistory: boolean
@@ -230,7 +232,7 @@ function getPrimaryOtherTarget(block: ToolCallBlock): string | null {
     return block.tool.name
 }
 
-function summarizeToolGroup(tools: ToolCallBlock[]): ToolGroupSummary {
+export function summarizeToolGroup(tools: ToolCallBlock[]): ToolGroupSummary {
     const countsByKind: Record<ToolGroupActionKind, number> = {
         read: 0,
         search: 0,

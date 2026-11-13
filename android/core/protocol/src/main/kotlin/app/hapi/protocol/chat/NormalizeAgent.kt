@@ -885,6 +885,10 @@ fun normalizeAgentRecord(
         if (dataType == "message") {
             val message = asString(data["message"])
             if (message != null) {
+                val phase = asString(data["phase"])
+                val messageMeta = if ((phase == "final" || phase == "progress") && (meta == null || meta == JsonNull || meta is JsonObject)) {
+                    JsonObject((meta as? JsonObject).orEmpty() + ("assistantPhase" to JsonPrimitive(phase)))
+                } else meta
                 val streamId = asString(data["id"])
                 val isPiStreamSnapshot = data["streamSnapshot"] == JsonPrimitive(true)
                     || (streamId != null && Regex("^pi-.+-turn-\\d+-message-\\d+-text-\\d+$").matches(streamId))
@@ -898,7 +902,7 @@ fun normalizeAgentRecord(
                         content = listOf(
                             NormalizedAgentContent.CodexReviewContent(review = review, uuid = messageId, parentUUID = null)
                         ),
-                        meta = meta,
+                        meta = messageMeta,
                     )
                 }
                 return NormalizedMessage.Agent(
@@ -909,7 +913,7 @@ fun normalizeAgentRecord(
                     content = listOf(
                         NormalizedAgentContent.Text(text = message, uuid = messageId, streamId = streamId, parentUUID = null)
                     ),
-                    meta = meta,
+                    meta = messageMeta,
                 )
             }
         }

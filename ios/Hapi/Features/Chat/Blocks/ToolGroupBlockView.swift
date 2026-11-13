@@ -11,9 +11,11 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     let countsByKind: [ToolGroupActionKind: Int]
     let runningCount: Int
     let errorCount: Int
+    let isExecutionProcess: Bool
 
     init(_ block: ToolGroupBlock) {
         id = block.id
+        isExecutionProcess = block.processBlocks != nil
         activityTitle = block.activityTitle
         totalTools = block.summary.totalTools
         countsByKind = block.summary.countsByKind
@@ -22,12 +24,14 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     }
 
     var title: String {
+        if isExecutionProcess { return String(localized: "Execution process") }
         let title = totalTools == 1 ? String(localized: "1 tool call")
             : String(format: String(localized: "%lld tool calls"), Int64(totalTools))
         return activityTitle.map { "\($0) · \(title)" } ?? title
     }
 
     var categorySummary: String {
+        if isExecutionProcess { return "" }
         let parts = ToolGroupActionKind.allCases.compactMap { kind -> String? in
             let count = countsByKind[kind] ?? 0
             guard count > 0 else { return nil }
@@ -62,6 +66,20 @@ struct ToolGroupBlockView: View {
     @Environment(\.hapiTypography) private var typography
 
     var body: some View {
+        if presentation.isExecutionProcess {
+            Button { openGroup?(presentation.id) } label: {
+                Label("Execution process", systemImage: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("tool-group-\(presentation.id)")
+        } else { legacyBody }
+    }
+
+    private var legacyBody: some View {
         Button { openGroup?(presentation.id) } label: {
             let layout = typography.usesStackedToolLayout
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))

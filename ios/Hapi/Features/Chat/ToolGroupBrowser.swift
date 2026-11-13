@@ -14,22 +14,46 @@ struct ToolGroupBrowser: View {
     @State private var positionedInitially = false
     @Environment(\.hapiTheme) private var theme
 
+    @ViewBuilder
+    private func processRow(_ block: ChatBlock) -> some View {
+        switch block {
+        case .toolCall(let tool):
+            ToolSummaryRow(presentation: toolSummaryPresentation(tool.tool, basePath: basePath), state: tool.tool.state) {
+                selectTool(tool.id)
+            }
+        case .agentReasoning(let reasoning):
+            CachedMarkdownView(markdown: reasoning.text).foregroundStyle(theme.textSecondary)
+        default:
+            ChatSubBlockView(block: block, basePath: basePath)
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(group.tools, id: \.id) { block in
-                    ToolSummaryRow(presentation: toolSummaryPresentation(block.tool, basePath: basePath),
-                                   state: block.tool.state) {
-                        selectTool(block.id)
+                if let process = group.processBlocks {
+                    ForEach(process, id: \.id) { block in
+                        processRow(block)
+                            .hapiReadingColumn()
+                            .listRowBackground(theme.background)
+                            .listRowSeparator(.hidden)
+                            .id(block.id)
                     }
-                    .accessibilityHint(opensToolProcess(block)
-                        ? String(localized: "View agent process") : String(localized: "View tool details"))
-                    .accessibilityIdentifier("tool-browser-row-\(block.id)")
-                    .hapiReadingColumn()
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(theme.surface)
-                    .listRowSeparatorTint(theme.divider)
-                    .id(block.id)
+                } else {
+                    ForEach(group.tools, id: \.id) { block in
+                        ToolSummaryRow(presentation: toolSummaryPresentation(block.tool, basePath: basePath),
+                                       state: block.tool.state) {
+                            selectTool(block.id)
+                        }
+                        .accessibilityHint(opensToolProcess(block)
+                            ? String(localized: "View agent process") : String(localized: "View tool details"))
+                        .accessibilityIdentifier("tool-browser-row-\(block.id)")
+                        .hapiReadingColumn()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(theme.surface)
+                        .listRowSeparatorTint(theme.divider)
+                        .id(block.id)
+                    }
                 }
             }
             .listStyle(.plain)
@@ -37,37 +61,41 @@ struct ToolGroupBrowser: View {
             .background(theme.background)
             .accessibilityIdentifier("tool-browser")
             .task {
-                guard !positionedInitially, let id = group.tools.last?.id else { return }
+                guard !positionedInitially, let id = (group.processBlocks?.last?.id ?? group.tools.last?.id) else { return }
                 positionedInitially = true
                 proxy.scrollTo(id, anchor: .bottom)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(ToolGroupPresentation(group).categorySummary)
-                        .lineLimit(2)
-                        .foregroundStyle(theme.textSecondary)
-                    if isStale {
-                        Label("Showing the last available group. Live group updates are unavailable.", systemImage: "clock.arrow.circlepath")
-                    } else if isReconnecting {
-                        Label("Live updates interrupted — reconnecting…", systemImage: "wifi.slash")
+                if group.processBlocks == nil || isStale || isReconnecting || group.needsOlderHistory {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !ToolGroupPresentation(group).categorySummary.isEmpty {
+                            Text(ToolGroupPresentation(group).categorySummary)
+                                .lineLimit(2)
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        if isStale {
+                            Label("Showing the last available group. Live group updates are unavailable.", systemImage: "clock.arrow.circlepath")
+                        } else if isReconnecting {
+                            Label("Live updates interrupted — reconnecting…", systemImage: "wifi.slash")
+                        }
+                        if group.needsOlderHistory {
+                            Text("Earlier calls aren't loaded. Close this view and load older messages in the conversation.")
+                        }
                     }
-                    if group.needsOlderHistory {
-                        Text("Earlier calls aren't loaded. Close this view and load older messages in the conversation.")
-                    }
+                    .font(.footnote)
+                    .hapiReadingColumn()
+                    .padding(.vertical, 8)
+                    .background(.bar)
                 }
-                .font(.footnote)
-                .hapiReadingColumn()
-                .padding(.vertical, 8)
-                .background(.bar)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Button {
-                    if let id = group.tools.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                    if let id = (group.processBlocks?.last?.id ?? group.tools.last?.id) { proxy.scrollTo(id, anchor: .bottom) }
                 } label: {
-                    Label("Latest tool", systemImage: "arrow.down")
+                    Label(group.processBlocks == nil ? LocalizedStringKey("Latest tool") : LocalizedStringKey("Latest activity"), systemImage: "arrow.down")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .disabled(group.tools.isEmpty)
+                .disabled(group.processBlocks?.isEmpty ?? group.tools.isEmpty)
                 .accessibilityIdentifier("tool-browser-latest")
                 .hapiReadingColumn()
                 .padding(.vertical, 4)

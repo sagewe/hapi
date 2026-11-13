@@ -1213,6 +1213,7 @@ describe('codexLocalLauncher', () => {
             message: {
                 type: 'message',
                 message: 'visible final A',
+                phase: 'final',
                 id: 'final-a',
                 turn_id: 'turn-ordered'
             }
@@ -1224,6 +1225,7 @@ describe('codexLocalLauncher', () => {
             message: {
                 type: 'message',
                 message: 'visible final B',
+                phase: 'final',
                 id: 'final-b',
                 turn_id: 'turn-ordered'
             }
@@ -1322,11 +1324,13 @@ describe('codexLocalLauncher', () => {
         expect(agentMessages).toEqual([{
             type: 'message',
             message: 'visible 0.147 commentary',
+            phase: 'progress',
             id: 'commentary-147',
             turn_id: 'turn-147'
         }, {
             type: 'message',
             message: 'visible 0.147 final answer',
+            phase: 'final',
             id: 'final-147',
             turn_id: 'turn-147'
         }]);
@@ -1375,6 +1379,7 @@ describe('codexLocalLauncher', () => {
         expect(agentMessages).toEqual([{
             type: 'message',
             message: 'visible answer at EOF',
+            phase: 'final',
             id: 'final-at-eof',
             turn_id: 'turn-final-at-eof'
         }]);
@@ -1385,6 +1390,7 @@ describe('codexLocalLauncher', () => {
         expect(agentMessages).toEqual([{
             type: 'message',
             message: 'visible answer at EOF',
+            phase: 'final',
             id: 'final-at-eof',
             turn_id: 'turn-final-at-eof'
         }]);

@@ -1,0 +1,96 @@
+import Testing
+@testable import HapiProtocol
+
+@Suite("Execution process projection")
+struct ExecutionProcessTests {
+    private func text(_ id: String, phase: String? = nil) -> ChatBlock {
+        .agentText(.init(id: id, localId: nil, createdAt: 1, invokedAt: nil, durationMs: nil,
+            usage: nil, model: nil, text: id, meta: phase.map { .object(["assistantPhase": .string($0)]) }))
+    }
+    private func tool(_ id: String, name: String = "Bash", state: ToolCallState = .completed) -> ChatBlock {
+        .toolCall(.init(id: id, localId: nil, createdAt: 1, invokedAt: nil, durationMs: nil,
+            usage: nil, model: nil, tool: .init(id: id, name: name, state: state, createdAt: 1), children: [], meta: nil))
+    }
+    private var user: ChatBlock {
+        .userText(.init(id: "u", localId: nil, createdAt: 0, invokedAt: nil, text: "request", attachments: nil,
+            status: nil, originalText: nil, meta: nil))
+    }
+    private func project(_ blocks: [ChatBlock], running: Bool = false, held: Set<String> = [], more: Bool = false,
+                         previous: [ToolGroupBlock] = []) -> [VisibleChatBlock] {
+        buildExecutionProcessBlocks(blocks.map { .block($0) }, completedRounds: ["u"], isRunning: running,
+            hasMoreMessages: more, keepVisibleIds: held, previousGroups: previous)
+    }
+    private func groups(_ blocks: [VisibleChatBlock]) -> [ToolGroupBlock] {
+        blocks.compactMap { if case .toolGroup(let group) = $0 { return group }; return nil }
+    }
+    @Test(arguments: ["CodexBash", "run_command", "Bash", "Shell"])
+    func allProvidersUseTheSamePresentation(_ name: String) {
+        let result = project([user, text("progress", phase: "progress"), tool("tool", name: name), text("answer", phase: "final")])
+        #expect(result.count == 3)
+        #expect(groups(result).first?.processBlocks?.map(\.id) == ["progress", "tool"])
+        #expect(result.last?.testID == "answer")
+    }
+    @Test func currentActivityMovesIntoStableProcessAfterFinalAnswer() {
+        let input = [user, text("progress", phase: "progress"), tool("tool")]
+        let before = project(input, running: true)
+        #expect(before.last?.testID == "tool")
+        let after = project(input + [text("answer", phase: "final")], previous: groups(before))
+        #expect(groups(before).first?.id == groups(after).first?.id)
+        #expect(groups(after).first?.processBlocks?.map(\.id) == ["progress", "tool"])
+    }
+    @Test func exceptionsAndUserReadingRemainVisible() {
+        let error = tool("error", state: .error)
+        let question = tool("question", name: "request_user_input")
+        let plan = tool("plan", name: "ExitPlanMode")
+        let result = project([user, text("reading", phase: "progress"), tool("work"), error, question, plan, text("answer")], held: ["reading"])
+        for id in ["reading", "error", "question", "plan", "answer"] { #expect(result.contains { $0.testID == id }) }
+    }
+    @Test func resolvedQuestionsCanJoinTheProcess() {
+        var answered = tool("answered", name: "request_user_input").asToolCall!
+        answered.tool.permission = ToolPermission(id: "question", status: .resolved)
+        let result = project([user, .toolCall(answered), text("answer")])
+        #expect(groups(result).first?.tools.first?.tool.permission?.status == .resolved)
+        #expect(!result.contains { $0.testID == "answered" })
+    }
+
+    @Test func trailingAnswerParagraphsAreNeverLostWithoutPhaseMetadata() {
+        let input = [user, tool("work"), text("part1"), text("part2")]
+        for running in [true, false] {
+            let result = project(input, running: running)
+            #expect(result.contains { $0.testID == "part1" })
+            #expect(result.contains { $0.testID == "part2" })
+        }
+    }
+    @Test func paginationAndSplittingKeepStableUniqueIdentities() {
+        let first = project([tool("c"), tool("d"), text("answer")], more: true)
+        #expect(groups(first).first?.needsOlderHistory == true)
+        let grown = project([user, tool("a"), tool("b"), tool("c"), tool("d"), text("answer")], previous: groups(first))
+        #expect(groups(grown).first?.id == groups(first).first?.id)
+        let split = project([user, tool("a"), tool("b"), tool("error", state: .error), tool("c"), tool("d"), text("answer")], previous: groups(grown))
+        #expect(groups(split).count == 2)
+        #expect(Set(split.map(\.testID)).count == split.count)
+    }
+    @Test(arguments: ["progress", "final"])
+    func nativePhasesSurviveNormalization(_ phase: String) {
+        let wire = DecryptedMessage(id: "phase", seq: 1, content: [
+            "role": "agent", "meta": .null, "content": ["type": "codex", "data": [
+                "type": "message", "message": "answer", "phase": .string(phase)
+            ]]
+        ], createdAt: 1)
+        #expect(normalizeDecryptedMessage(wire)?.meta?["assistantPhase"] == .string(phase))
+    }
+
+    @Test func rootReadyEvidenceDoesNotSurviveNewActivity() {
+        let prompt = NormalizedMessage(id: "u", createdAt: 0, content: .user(text: "request", attachments: nil))
+        let ready = NormalizedMessage(id: "ready", createdAt: 1, content: .event(.init(object: ["type": .string("ready")])))
+        #expect(completedExecutionRounds([prompt, ready]) == ["u"])
+        let activity = NormalizedMessage(id: "next", createdAt: 2, content: .agent([.text(.init(text: "next", uuid: "next", parentUUID: nil))]))
+        #expect(completedExecutionRounds([prompt, ready, activity]).isEmpty)
+    }
+}
+
+private extension VisibleChatBlock {
+    var testID: String {
+        switch self { case .block(let block): return block.id; case .toolGroup(let group): return group.id }
+    }
+}

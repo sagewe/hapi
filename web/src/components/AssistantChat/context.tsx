@@ -16,6 +16,9 @@ export type HappyChatContextValue = {
     disabled: boolean
     allowInactiveFork?: boolean
     onRefresh: () => void
+    onExecutionInspect?: (id: string) => void
+    openExecutionProcesses?: ReadonlySet<string>
+    setExecutionProcessOpen?: (id: string, open: boolean) => void
     codexPlanProposalId?: string | null
     onContinuePlan?: (planId: string) => void
     continuedPlanIds?: ReadonlySet<string>
@@ -44,8 +47,16 @@ export function HappyChatProvider(props: { value: HappyChatContextValue; childre
         sessionId: props.value.sessionId, ids: new Set()
     })
     const ids = continued.sessionId === props.value.sessionId ? continued.ids : new Set<string>()
+    const [processState, setProcessState] = useState<{ sessionId: string; ids: ReadonlySet<string> }>({ sessionId: props.value.sessionId, ids: new Set() })
+    const processIds = processState.sessionId === props.value.sessionId ? processState.ids : new Set<string>()
     const value: HappyChatContextValue = {
         ...props.value,
+        openExecutionProcesses: processIds,
+        setExecutionProcessOpen: (id, open) => setProcessState(previous => {
+            const ids = new Set(previous.sessionId === props.value.sessionId ? previous.ids : [])
+            if (open) ids.add(id); else ids.delete(id)
+            return { sessionId: props.value.sessionId, ids }
+        }),
         continuedPlanIds: ids,
         onContinuePlan: props.value.onContinuePlan ? (planId) => {
             if (props.value.disabled || props.value.codexPlanProposalId !== planId || ids.has(planId)) return

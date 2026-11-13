@@ -276,3 +276,27 @@ pending entry without approving or denying the native prompt.
 ## Golden fixtures
 
 The golden fixtures in `shared/fixtures/chat/` are the executable form of this section: input `DecryptedMessage` samples paired with the canonical decoded projection, generated from the web pipeline. A native decode implementation is correct when it reproduces them exactly — when the fixtures and this page disagree, the fixtures win.
+
+### Execution process presentation
+
+The normal Web and iOS/Mac conversation view uses a provider-neutral execution
+process projection above the canonical transcript and tool-specific renderers.
+Older progress, reasoning and settled tools are available behind **Execution
+process**. The current ordinary step stays visible as a compact inspection
+entry; final text, generated media, user shell input, plan proposals, unresolved
+questions/approvals and errors stay outside the process. Explicitly handled
+question records can join the process without losing their recorded answers.
+
+Generic agent text payloads may carry `data.phase: "progress" | "final"`. Codex
+adapters preserve native commentary/final evidence in this field, and normalizers
+copy it to `meta.assistantPhase`. Missing/unknown phases are not guessed from
+wording: contiguous trailing text stays visible, including legacy multi-part
+answers. Completion evidence comes from root lifecycle events, never a child's
+ready event. Canonical history and database rows are not removed by folding.
+
+Web retains explicit process expansion outside recycled cards. Inspection and
+history reading protect already-visible progress from automatic folding. Native
+process inspection reuses the live detail sheet and its reading-position rules.
+Search reveals the full target context; raw source identities remain available
+for navigation, history actions and export. Tool display preferences apply to
+details inside the process; the outer grouping does not branch on provider.

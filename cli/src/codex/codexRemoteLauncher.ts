@@ -1570,6 +1570,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     emitAgentRunTraceMessage(agentId, {
                         type: 'message',
                         message,
+                        ...(msg.phase ? { phase: msg.phase } : {}),
                         id: randomUUID()
                     });
                 }
@@ -3189,6 +3190,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     sendRootMessage({
                         type: 'message',
                         message,
+                        ...(msg.phase ? { phase: msg.phase } : {}),
                         id: randomUUID()
                     });
                 }

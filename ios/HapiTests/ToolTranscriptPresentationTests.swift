@@ -35,6 +35,36 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         }
     }
 
+    func testCompletedExecutionProcessPreview() async throws {
+        let credentials = InMemoryCredentialStore()
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: "http://127.0.0.1:1/process-preview-\(UUID().uuidString)",
+            credentialStore: credentials, performer: ToolTranscriptHTTP(errorFirstTool: false)))
+        let model = ChatModel(session: hub, sessionId: "process-preview")
+        defer { model.stop(); hub.shutdown() }
+        model.start()
+        try await eventually { !model.messageRows.isEmpty && !model.isSyncingTail }
+        let processIDs = model.messageRows.compactMap { row -> String? in
+            if case .group(let presentation) = row.kind, presentation.isExecutionProcess { return presentation.id }
+            return nil
+        }
+        XCTAssertEqual(processIDs.count, 1)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 520)
+        let host = UIHostingController(rootView: ChatTranscriptView(model: model)
+            .toolPresentations(model: model, session: hub, owner: "chat", openFile: { _ in })
+            .hapiTypography().hapiTheme(.light)
+            .environment(\.locale, Locale(identifier: "zh-Hans"))
+            .environment(\.hapiMarkdownCache, model.markdownCache))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(500))
+        try capture(window, name: "execution-completed")
+    }
+
     func testGroupBrowserNeverExpandsTranscriptAndDismissalPreservesAnchor() async throws {
         let credentials = InMemoryCredentialStore()
         let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
@@ -54,6 +84,10 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         let last = try XCTUnwrap(groups.last)
         XCTAssertEqual(ToolGroupPresentation(first).title, "42 tool calls")
         XCTAssertEqual(ToolGroupPresentation(last).title, "5 tool calls")
+        let processID = try XCTUnwrap(model.messageRows.compactMap { row -> String? in
+            if case .group(let presentation) = row.kind, presentation.isExecutionProcess { return presentation.id }
+            return nil
+        }.last)
         let controller = await hub.windows.open(sessionId: "tool-transcript")
 
         let cases: [(String, HapiTheme, DynamicTypeSize, CGFloat)] = [
@@ -72,9 +106,9 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             defer { window.isHidden = true }
             host.view.layoutIfNeeded()
             let collection = try XCTUnwrap(findCollection(host.view))
-            try await eventually { collection.numberOfItems(inSection: 0) == 6 }
+            try await eventually { collection.numberOfItems(inSection: 0) == 5 }
             try await Task.sleep(for: .milliseconds(250))
-            for index in [2, 4] {
+            for index in [1, 3] {
                 let summary = try XCTUnwrap(collection.layoutAttributesForItem(at: IndexPath(item: index, section: 0)))
                 XCTAssertGreaterThanOrEqual(summary.frame.height, 44)
                 if size == .large { XCTAssertLessThanOrEqual(summary.frame.height, 100) }
@@ -86,13 +120,13 @@ final class ToolTranscriptPresentationTests: XCTestCase {
                 .sorted { $0.frame.minY < $1.frame.minY }.first)
             let anchorID = cell.accessibilityIdentifier
             let anchorY = cell.frame.minY - collection.contentOffset.y
-            XCTAssertTrue(model.inspectToolGroup(first.id, owner: "chat"))
+            XCTAssertTrue(model.inspectToolGroup(processID, owner: "chat"))
             try await eventually { host.presentedViewController != nil && !model.followsTail }
             try await Task.sleep(for: .milliseconds(600))
             XCTAssertTrue(model.isInspectingContent)
             XCTAssertFalse(model.showsJumpToLatest, "Opening a sheet is not a departure from the bottom")
             XCTAssertNil(model.toolInspection.selection, "Group root must pause following without a selected tool")
-            XCTAssertEqual(collection.numberOfItems(inSection: 0), 6)
+            XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
             let presented = try XCTUnwrap(host.presentedViewController)
             let transcript = try XCTUnwrap(findTranscriptController(host))
             #if DEBUG
@@ -110,7 +144,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
                 await controller.onMessageEvent(.messageReceived(namespace: nil, sessionId: "tool-transcript", message: message))
                 try await eventually { model.toolInspection.tools[tool.id]?.tool.result == .string(result) }
                 XCTAssertTrue(host.presentedViewController === presented)
-                XCTAssertEqual(collection.numberOfItems(inSection: 0), 6)
+                XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
             }
             #if DEBUG
             XCTAssertEqual(transcript.cellConfigurationCount, configurations,
@@ -118,7 +152,8 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             #endif
             if size.isAccessibilitySize {
                 let browser = try XCTUnwrap(findCollection(presented.view))
-                let lastRow = try XCTUnwrap(browser.layoutAttributesForItem(at: IndexPath(item: 41, section: 0)))
+                let lastIndex = try XCTUnwrap(model.toolInspection.groupSelection?.block.processBlocks?.count) - 1
+                let lastRow = try XCTUnwrap(browser.layoutAttributesForItem(at: IndexPath(item: lastIndex, section: 0)))
                 XCTAssertGreaterThan(lastRow.frame.height, 60, "The sheet must inherit the conversation's Dynamic Type")
             }
             try capture(window, name: "\(name)-browser")
@@ -128,7 +163,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             XCTAssertEqual(restored.frame.minY - collection.contentOffset.y, anchorY, accuracy: 1)
             XCTAssertFalse(model.followsTail)
             XCTAssertFalse(model.showsJumpToLatest, "Output-only updates must not create a latest action at bottom")
-            XCTAssertEqual(collection.numberOfItems(inSection: 0), 6)
+            XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
         }
     }
 
@@ -158,7 +193,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
         let collection = try XCTUnwrap(findCollection(host.view))
-        try await eventually { collection.numberOfItems(inSection: 0) == 6 }
+        try await eventually { collection.numberOfItems(inSection: 0) == 5 }
         try await Task.sleep(for: .milliseconds(250))
         let bottomOffset = max(-collection.adjustedContentInset.top,
                                collection.contentSize.height - collection.bounds.height + collection.adjustedContentInset.bottom)
@@ -194,7 +229,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
                 "type": "message", "message": .string(String(repeating: "New visible tail content.\n\n", count: 20)),
             ]]], createdAt: seq * 1000, invokedAt: seq * 1000)
         await controller.onMessageEvent(.messageReceived(namespace: nil, sessionId: model.sessionId, message: message))
-        try await eventually { collection.numberOfItems(inSection: 0) == 7 && model.showsJumpToLatest }
+        try await eventually { collection.numberOfItems(inSection: 0) == 6 && model.showsJumpToLatest }
         model.toolInspection.dismiss(owner: "chat")
         try await eventually { host.presentedViewController == nil && !model.isInspectingContent }
         XCTAssertEqual(collection.contentOffset.y, offset, accuracy: 1)
@@ -225,7 +260,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         model.start()
         try await eventually { !model.blocks.isEmpty && !model.isSyncingTail }
         XCTAssertNotNil(model.markdownCache.cached(plan), "Prewarm plan Markdown before publishing rows")
-        let index = try XCTUnwrap(model.blocks.firstIndex { $0.stableId == "proposal" }) + 1
+        let index = try XCTUnwrap(model.messageRows.firstIndex { $0.id == "proposal" }) + 1
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -238,7 +273,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         let collection = try XCTUnwrap(findCollection(host.view))
         // Force recycling instead of retaining offscreen cells in UIKit's prefetch cache.
         collection.isPrefetchingEnabled = false
-        try await eventually { collection.numberOfItems(inSection: 0) == model.blocks.count + 1 }
+        try await eventually { collection.numberOfItems(inSection: 0) == model.messageRows.count + 1 }
         collection.delegate?.scrollViewWillBeginDragging?(collection)
         collection.scrollToItem(at: IndexPath(item: index, section: 0), at: .top, animated: false)
         try await eventually { collection.cellForItem(at: IndexPath(item: index, section: 0)) != nil }
@@ -311,6 +346,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
 }
 
 private struct ToolTranscriptHTTP: HTTPPerforming {
+    var errorFirstTool = true
     var proposedPlan: String? = nil
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -351,7 +387,7 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
                 tool("CodexBash", input: [
                     "command": "git diff --stat", "command_source": "unifiedExecStartup",
                     "command_actions": [["type": "unknown", "command": "git diff --stat"]],
-                ], error: index == 0)
+                ], error: errorFirstTool && index == 0)
             }
             else if index < 23 { tool("Edit", input: ["file_path": "/workspace/ChatView.swift"]) }
             else { tool("exec", input: ["code": "await tools.exec_command({cmd: 'swift test'})"]) }

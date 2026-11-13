@@ -90,8 +90,8 @@ export function getBlockPresentationTimestamp(block: VisibleChatBlock): number {
         return block.invokedAt ?? block.createdAt
     }
     if (block.kind === 'tool-group') {
-        return block.tools.reduce(
-            (latest, tool) => Math.max(latest, tool.tool.completedAt ?? tool.createdAt),
+        return (block.processBlocks ?? block.tools).reduce(
+            (latest, member) => Math.max(latest, getBlockPresentationTimestamp(member)),
             block.createdAt
         )
     }
@@ -151,6 +151,7 @@ type TurnSource = {
 // kinds map to a single source.
 function turnSourcesFromBlock(block: VisibleChatBlock): TurnSource[] {
     if (block.kind === 'tool-group') {
+        if (block.processBlocks) return block.processBlocks.flatMap(turnSourcesFromBlock)
         return block.tools.map((tool) => ({
             localId: tool.localId,
             invokedAt: tool.invokedAt ?? null,
@@ -401,6 +402,7 @@ export function assignThreadMessageIds(
 }
 
 function getSourceMessageIdsForBlock(block: VisibleChatBlock): string[] {
+    if (block.kind === 'tool-group' && block.processBlocks) return block.processBlocks.flatMap(getSourceMessageIdsForBlock)
     if (
         block.kind === 'agent-text'
         || block.kind === 'agent-reasoning'
@@ -572,7 +574,7 @@ function getAssistantBlockSignatures(blocks: readonly VisibleChatBlock[]): strin
         .filter((block) => visibleBlockRole(block) === 'assistant')
         .map((block) => {
             const text = 'text' in block ? block.text : ''
-            const toolCount = block.kind === 'tool-group' ? block.tools.length : 0
+            const toolCount = block.kind === 'tool-group' ? (block.processBlocks?.length ?? block.tools.length) : 0
             const textMarker = text.length <= 64 ? text : `${text.length}:${text.slice(-32)}`
             return `${block.id}:${getBlockPresentationTimestamp(block)}:${textMarker}:${toolCount}`
         })

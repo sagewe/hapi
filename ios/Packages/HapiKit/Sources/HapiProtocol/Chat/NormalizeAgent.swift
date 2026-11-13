@@ -1051,6 +1051,13 @@ func normalizeAgentRecord(
         }
 
         if dataType == "message", let message = data["message"]?.stringValue {
+            var messageMeta = meta
+            if let phase = data["phase"]?.stringValue, ["final", "progress"].contains(phase),
+               meta == nil || meta == .null || meta?.objectValue != nil {
+                var fields = meta?.objectValue ?? [:]
+                fields["assistantPhase"] = .string(phase)
+                messageMeta = .object(fields)
+            }
             let streamId = asString(data["id"])
             let isPiStreamSnapshot = data["streamSnapshot"] == .bool(true)
                 || (streamId.map { piStreamSnapshotIdRegex.test($0) } ?? false)
@@ -1062,7 +1069,7 @@ func normalizeAgentRecord(
                     createdAt: createdAt,
                     content: .agent([.codexReview(review: review, uuid: messageId, parentUUID: nil)]),
                     isSidechain: false,
-                    meta: meta
+                    meta: messageMeta
                 )
             }
             return NormalizedMessage(
@@ -1071,7 +1078,7 @@ func normalizeAgentRecord(
                 createdAt: createdAt,
                 content: .agent([.text(.init(text: message, uuid: messageId, streamId: streamId, parentUUID: nil))]),
                 isSidechain: false,
-                meta: meta
+                meta: messageMeta
             )
         }
 

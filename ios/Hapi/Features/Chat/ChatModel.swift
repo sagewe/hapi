@@ -165,6 +165,11 @@ final class ChatModel {
 
     private(set) var blocks: [VisibleChatBlock] = []
     private(set) var messageRows: [TranscriptRow] = []
+    @ObservationIgnored private var executionCompletedRounds = Set<String>()
+    @ObservationIgnored private var executionIsRunning = false
+    @ObservationIgnored private var heldExecutionIDs = Set<String>()
+    @ObservationIgnored private var executionGroups: [ToolGroupBlock] = []
+
     private(set) var header: ChatHeaderUI
     /// Workspace root, for path display in tool cards.
     private(set) var basePath: String?
@@ -673,7 +678,12 @@ final class ChatModel {
         let followsTail = isInspectingContent ? false : followsTail
         let needsOlder = isInspectingContent ? false : needsOlder
         let changedMode = self.followsTail != followsTail
+        if !followsTail { holdVisibleExecutionContent() }
         self.followsTail = followsTail
+        if followsTail && changedMode && !heldExecutionIDs.isEmpty {
+            heldExecutionIDs = []
+            rebuildMessageRows()
+        }
         if !followsTail { displayedReadRevision = nil }
         self.isAwayFromBottom = !followsTail && isAwayFromBottom
         viewportNeedsOlder = needsOlder
@@ -793,6 +803,7 @@ final class ChatModel {
         scrollTarget = TranscriptScrollTarget(token: scrollTargetToken, itemID: id, topPadding: 14)
         highlightedBlockID = id
         rebuildMessageRows()
+        holdVisibleExecutionContent()
         highlightTask?.cancel()
         highlightTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(1600))
@@ -1040,11 +1051,13 @@ final class ChatModel {
                     hasMoreMessages: window.hasMore,
                     directSendLocalIds: interactor.directSendLocalIds
                 )
+                let completionEvidence = await pipeline.executionCompletionEvidence()
                 let prepared = await renderPreparation.prepare(visible, previous: blocks, markdownCache: markdownCache)
                 guard !Task.isCancelled else { return }
                 apply(
                     visible,
                     prepared: prepared,
+                    completionEvidence: completionEvidence,
                     window: window,
                     detail: detail,
                     summary: summary,
@@ -1066,6 +1079,7 @@ final class ChatModel {
     private func apply(
         _ visible: [VisibleChatBlock],
         prepared: PreparedChatRender,
+        completionEvidence: Set<String>,
         window: MessageWindowState,
         detail: Session?,
         summary: SessionSummary?,
@@ -1074,8 +1088,15 @@ final class ChatModel {
         machines: [Machine]
     ) {
         guard !chat.isRemoved else { return }
+        let running = detail?.thinking ?? summary?.thinking ?? false
+        let processChanged = executionCompletedRounds != completionEvidence || executionIsRunning != running || hasMore != window.hasMore
+        executionCompletedRounds = completionEvidence
+        executionIsRunning = running
+        hasMore = window.hasMore
         if let previousEpoch = lastEpoch, let epoch = window.epoch, previousEpoch != epoch {
             cancelHistory()
+            heldExecutionIDs = []
+            executionGroups = []
             jumpToLatestToken += 1
             toolInspection.invalidate()
             toolInspection.update(visible)
@@ -1091,31 +1112,10 @@ final class ChatModel {
             blockIndexByID = nav.blockIndexByID
             blockToUserTurnIndex = nav.blockToUserTurnIndex
             blockToRailIndex = nav.blockToRailIndex
-            if let changed = prepared.changedIndices, messageRows.count == visible.count {
-                // Stable structure: update only changed rows. Array COW is still
-                // linear, but unchanged rows need no deep comparisons or rebuilding.
-                var next = messageRows
-                for index in changed {
-                    let block = visible[index]
-                    if case .toolGroup(let group) = block {
-                        let presentation = ToolGroupPresentation(group)
-                        let row = TranscriptRow.group(presentation)
-                        cachedGroupPresentations[group.id] = (group, presentation, row)
-                        next[index] = row
-                    } else {
-                        let highlighted = block.stableId == highlightedBlockID
-                        let row = TranscriptRow.message(block, highlighted)
-                        cachedMessageRows[block.stableId] = (block, highlighted, row)
-                        next[index] = row
-                    }
-                }
-                messageRows = next
-            } else {
-                rebuildMessageRows()
-            }
-            if prepared.toolsChanged { toolInspection.update(visible) }
             presentationState.prune(to: prepared.liveIDs)
+            heldExecutionIDs.formIntersection(prepared.liveIDs)
         }
+        if prepared.navigation != nil || processChanged { rebuildMessageRows() }
 
         header = Self.buildHeader(
             sessionId: sessionId,
@@ -1154,16 +1154,55 @@ final class ChatModel {
         renderedReadState = SessionReadState.merge(detail?.readState, summary?.readState)
     }
 
+    private func holdVisibleExecutionContent() {
+        for row in messageRows {
+            if case .message(let block, _) = row.kind { heldExecutionIDs.insert(block.stableId) }
+        }
+    }
+
     private func rebuildMessageRows() {
+        if !followsTail { holdVisibleExecutionContent() }
+        var keepVisible = heldExecutionIDs
+        for (key, value) in presentationState.values where key.field == "expanded" && (value as? Bool) == true {
+            keepVisible.insert(key.id)
+        }
+        let displayed = highlightedBlockID == nil
+            ? buildExecutionProcessBlocks(blocks, completedRounds: executionCompletedRounds,
+                isRunning: executionIsRunning, hasMoreMessages: hasMore,
+                keepVisibleIds: keepVisible, previousGroups: executionGroups)
+            : blocks
+        for group in executionGroups {
+            blockIndexByID.removeValue(forKey: group.id)
+            blockToUserTurnIndex.removeValue(forKey: group.id)
+            blockToRailIndex.removeValue(forKey: group.id)
+        }
+        var canonicalIndex = blockIndexByID
+        for (index, block) in blocks.enumerated() {
+            if case .toolGroup(let group) = block {
+                for tool in group.tools { canonicalIndex[tool.id] = index }
+            }
+        }
+        let displayedGroups = displayed.compactMap { block -> ToolGroupBlock? in
+            if case .toolGroup(let group) = block { return group }; return nil
+        }
+        if highlightedBlockID == nil { executionGroups = displayedGroups }
+        for group in displayedGroups where group.processBlocks != nil {
+            guard let first = group.processBlocks?.first, let index = canonicalIndex[first.id] else { continue }
+            blockIndexByID[group.id] = index
+            let canonicalID = blocks[index].stableId
+            blockToUserTurnIndex[group.id] = blockToUserTurnIndex[canonicalID]
+            blockToRailIndex[group.id] = blockToRailIndex[canonicalID]
+        }
+        toolInspection.update(displayed + blocks)
         var nextRows: [TranscriptRow] = []
-        nextRows.reserveCapacity(blocks.count)
+        nextRows.reserveCapacity(displayed.count)
         let highlightedID = highlightedBlockID
         var activeIDs = Set<String>()
-        activeIDs.reserveCapacity(blocks.count)
-        for block in blocks {
+        activeIDs.reserveCapacity(displayed.count)
+        for block in displayed {
             if case .toolGroup(let group) = block {
                 activeIDs.insert(group.id)
-                if let cached = cachedGroupPresentations[group.id], cached.group == group {
+                if let cached = cachedGroupPresentations[group.id], cached.presentation == ToolGroupPresentation(group) {
                     nextRows.append(cached.row)
                 } else {
                     let presentation = ToolGroupPresentation(group)
