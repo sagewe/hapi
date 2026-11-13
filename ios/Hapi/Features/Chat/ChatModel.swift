@@ -443,11 +443,34 @@ final class ChatModel {
         }
     }
 
+    func isInlineExecutionGroupExpanded(_ id: String) -> Bool {
+        presentationState.values[.init(id: id, field: "inlineExpanded")] as? Bool ?? false
+    }
+
+    func inlineExecutionMembers(_ id: String, field: String) -> Set<String> {
+        presentationState.values[.init(id: id, field: field)] as? Set<String> ?? []
+    }
+
     func toggleInlineExecutionGroup(_ id: String) {
-        let key = ChatPresentationState.Key(id: id, field: "inlineExpanded")
-        let open = presentationState.values[key] as? Bool ?? false
-        if !open { beginContentInspection() }
-        presentationState.values[key] = !open
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            let open = isInlineExecutionGroupExpanded(id)
+            if !open { beginContentInspection() }
+            presentationState.values[.init(id: id, field: "inlineExpanded")] = !open
+        }
+    }
+
+    func toggleInlineExecutionMembers(_ id: String, field: String, ids: [String]) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            beginContentInspection()
+            var members = inlineExecutionMembers(id, field: field)
+            let open = ids.contains { members.contains($0) }
+            for member in ids { if open { members.remove(member) } else { members.insert(member) } }
+            presentationState.values[.init(id: id, field: field)] = members
+        }
     }
 
     func beginContentInspection() {

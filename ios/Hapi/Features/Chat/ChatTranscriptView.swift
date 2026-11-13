@@ -5,14 +5,18 @@ import SwiftUI
 
 /// Tool groups contribute only their displayed summary to transcript diffs.
 /// Wraps the large value payload in a reference box so copying `TranscriptRow`
-/// across arrays/dictionaries is a single pointer retain (32 bytes instead of
-/// 602 bytes) and equality on unchanged rows short-circuits via `===` in O(1).
+/// across arrays/dictionaries retains a box rather than copying the full payload.
+/// Equality on unchanged rows short-circuits via `===` in O(1).
 struct TranscriptRow: Identifiable, Equatable {
     enum Kind: Equatable {
         case history(ChatHistoryPagingState.Phase, Bool, Bool)
         case message(VisibleChatBlock, Bool)
         case group(ToolGroupPresentation)
         case responseFeedback(InitialResponseState)
+        case executionText(ChatBlock)
+        case executionSection(String, ExecutionDetailSection, Bool)
+        case executionTool(String, ToolCallBlock, Bool)
+        case executionOutput(ToolCallBlock)
     }
 
     final class Box: Equatable {
@@ -28,6 +32,7 @@ struct TranscriptRow: Identifiable, Equatable {
     let id: String
     let role: TranscriptRowRole
     let box: Box
+    var navigationID: String? = nil
 
     var kind: Kind { box.kind }
 
@@ -75,7 +80,40 @@ struct ChatTranscriptView: View {
         let isHistoryDisabled = !model.hasMore || model.isLoadingOlder || model.isSyncingTail
         var result: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore, isHistoryDisabled)]
         result.reserveCapacity(model.messageRows.count + 1)
-        result.append(contentsOf: model.messageRows)
+        for row in model.messageRows {
+            result.append(row)
+            guard case .group(let presentation) = row.kind,
+                  presentation.isExecutionProcess, presentation.processRole != "header",
+                  model.isInlineExecutionGroupExpanded(presentation.id),
+                  let group = model.toolInspection.group(presentation.id) else { continue }
+            let openTools = model.inlineExecutionMembers(group.id, field: "inlineTools")
+            func appendStep(_ block: ChatBlock) {
+                if case .toolCall(let tool) = block {
+                    result.append(TranscriptRow(id: "inline-tool:\(group.id):\(tool.id)", role: .tool,
+                        box: .init(.executionTool(group.id, tool, openTools.contains(tool.id))), navigationID: group.id))
+                    if openTools.contains(tool.id) {
+                        result.append(TranscriptRow(id: "inline-output:\(group.id):\(tool.id)", role: .content,
+                            box: .init(.executionOutput(tool)), navigationID: group.id))
+                    }
+                } else {
+                    result.append(TranscriptRow(id: "inline-text:\(group.id):\(block.id)", role: .content,
+                        box: .init(.executionText(block)), navigationID: group.id))
+                }
+            }
+            if group.processRole == "tools" {
+                for step in group.processBlocks ?? [] { appendStep(step) }
+            } else {
+                let expandedSections = model.inlineExecutionMembers(group.id, field: "inlineSections")
+                for section in executionDetailSections(group.processBlocks ?? []) {
+                    if section.isTools {
+                        let open = section.blocks.contains { expandedSections.contains($0.id) }
+                        result.append(TranscriptRow(id: "inline-section:\(group.id):\(section.id)", role: .tool,
+                            box: .init(.executionSection(group.id, section, open)), navigationID: group.id))
+                        if open { for step in section.blocks { appendStep(step) } }
+                    } else { for step in section.blocks { appendStep(step) } }
+                }
+            }
+        }
         if let state = model.responseFeedback {
             result.append(TranscriptRow(id: "chat-response-feedback", role: .content, box: .init(.responseFeedback(state))))
         }
@@ -84,8 +122,9 @@ struct ChatTranscriptView: View {
 
     var body: some View {
         let basePath = model.basePath
+        let renderedRows = rows
         AnchoredTranscriptList(
-            items: rows,
+            items: renderedRows,
             historyVersion: model.historyVersion,
             jumpToken: model.jumpToLatestToken,
             scrollTarget: model.scrollTarget,
@@ -100,7 +139,8 @@ struct ChatTranscriptView: View {
                 )
             },
             onTopVisibleItemChanged: { topID in
-                model.topVisibleRowChanged(topID)
+                let navigationID = topID.flatMap { id in renderedRows.first { $0.id == id }?.navigationID ?? id }
+                model.topVisibleRowChanged(navigationID)
             },
             onLayout: { version, progress in model.historyLaidOut(version: version, madeProgress: progress) },
             onTailDisplayed: {
@@ -154,6 +194,14 @@ struct ChatTranscriptView: View {
             if presentation.isExecutionProcess && presentation.processRole != "header" {
                 InlineExecutionGroupView(presentation: presentation, model: model, basePath: basePath)
             } else { ToolGroupBlockView(presentation: presentation) }
+        case .executionText(let block):
+            ChatSubBlockView(block: block, basePath: basePath)
+        case .executionSection(let groupID, let section, let expanded):
+            InlineExecutionSectionView(groupID: groupID, section: section, expanded: expanded, model: model)
+        case .executionTool(let groupID, let tool, let expanded):
+            InlineExecutionToolRow(groupID: groupID, tool: tool, expanded: expanded, model: model, basePath: basePath)
+        case .executionOutput(let tool):
+            InlineExecutionToolBody(tool: tool, basePath: basePath)
         case .responseFeedback(let state):
             InitialResponseFeedbackView(state: state)
         }

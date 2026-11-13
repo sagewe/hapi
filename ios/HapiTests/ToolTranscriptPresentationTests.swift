@@ -65,19 +65,26 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         let cell = try XCTUnwrap(collection.cellForItem(at: IndexPath(item: index, section: 0)))
         let originalHeight = cell.frame.height
         let originalY = cell.frame.minY - collection.contentOffset.y
+        let initialCount = collection.numberOfItems(inSection: 0)
+        let sections = executionDetailSections(group.processBlocks ?? [])
         model.toggleInlineExecutionGroup(groupID)
-        try await eventually { cell.frame.height > originalHeight + 100 }
-        XCTAssertNil(host.presentedViewController, "The whole process opens in the transcript, not a sheet")
-        XCTAssertLessThan(cell.frame.height, 700, "47 tools must not fill the overview by default")
-        let overviewHeight = cell.frame.height
-        let section = try XCTUnwrap(executionDetailSections(group.processBlocks ?? []).first { $0.isTools })
-        model.presentationState.values[.init(id: groupID, field: "inlineSections")] = Set(section.blocks.map(\.id))
-        try await eventually { cell.frame.height > overviewHeight + 100 }
+        try await eventually { collection.numberOfItems(inSection: 0) == initialCount + sections.count }
+        XCTAssertNil(host.presentedViewController, "The process opens inline, not a sheet")
+        XCTAssertEqual(cell.frame.height, originalHeight, accuracy: 1, "The header must never become the expanding content container")
+        XCTAssertLessThan(collection.numberOfItems(inSection: 0), 12, "47 tools remain folded in the overview")
+        let sectionIndex = try XCTUnwrap(sections.firstIndex { $0.isTools })
+        let section = sections[sectionIndex]
+        model.toggleInlineExecutionMembers(groupID, field: "inlineSections", ids: section.blocks.map(\.id))
+        let expandedCount = initialCount + sections.count + section.blocks.count
+        try await eventually { collection.numberOfItems(inSection: 0) == expandedCount }
         let tool = try XCTUnwrap(section.blocks.compactMap(\.asToolCall).first)
-        let toolsHeight = cell.frame.height
-        model.presentationState.values[.init(id: groupID, field: "inlineTools")] = Set([tool.id])
-        try await eventually { cell.frame.height > toolsHeight + 40 }
-        XCTAssertLessThan(cell.frame.height - toolsHeight, 420, "Inline output must be height-bounded")
+        model.toggleInlineExecutionMembers(groupID, field: "inlineTools", ids: [tool.id])
+        try await eventually { collection.numberOfItems(inSection: 0) == expandedCount + 1 }
+        let outputIndex = IndexPath(item: index + sectionIndex + 3, section: 0)
+        try await eventually { collection.cellForItem(at: outputIndex) != nil }
+        let body = try XCTUnwrap(collection.cellForItem(at: outputIndex))
+        XCTAssertLessThan(body.frame.height, 420, "Inline output remains height-bounded")
+        XCTAssertGreaterThan(body.frame.height, 40)
         XCTAssertNil(host.presentedViewController)
         let controller = await hub.windows.open(sessionId: "inline")
         let seq = (await controller.state.newestSeq ?? 0) + 1
@@ -89,10 +96,64 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         try await eventually { model.toolInspection.tools[tool.id]?.tool.result == .string("Updated output") }
         XCTAssertEqual(model.presentationState.values[.init(id: groupID, field: "inlineExpanded")] as? Bool, true)
         XCTAssertTrue((model.presentationState.values[.init(id: groupID, field: "inlineTools")] as? Set<String>)?.contains(tool.id) == true)
-        XCTAssertGreaterThan(cell.frame.height, overviewHeight + 100)
+        XCTAssertEqual(collection.numberOfItems(inSection: 0), expandedCount + 1)
         model.toggleInlineExecutionGroup(groupID)
-        try await eventually { abs(cell.frame.height - originalHeight) < 2 }
+        try await eventually { collection.numberOfItems(inSection: 0) == initialCount }
+        XCTAssertEqual(cell.frame.height, originalHeight, accuracy: 1)
         XCTAssertEqual(cell.frame.minY - collection.contentOffset.y, originalY, accuracy: 2)
+    }
+
+    func testInlineDisclosureTransitionFrames() async throws {
+        let credentials = InMemoryCredentialStore()
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: "http://127.0.0.1:1/transition-\(UUID().uuidString)",
+            credentialStore: credentials, performer: ToolTranscriptHTTP(includeUserPrompt: true)))
+        let model = ChatModel(session: hub, sessionId: "transition")
+        defer { model.stop(); hub.shutdown() }
+        model.start()
+        try await eventually { !model.messageRows.isEmpty && !model.isSyncingTail }
+        let groupID = try XCTUnwrap(model.messageRows.compactMap { row -> String? in
+            if case .group(let p) = row.kind, p.isExecutionProcess { return p.id }; return nil
+        }.first)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIHostingController(rootView: NavigationStack {
+            ChatTranscriptView(model: model).navigationTitle("HAPI · Inline check").navigationBarTitleDisplayMode(.inline)
+        }.hapiTypography().hapiTheme(.light))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(500))
+        let collection = try XCTUnwrap(findCollection(host.view))
+        let row = try XCTUnwrap(model.messageRows.firstIndex { $0.id == groupID }) + 1
+        let cell = try XCTUnwrap(collection.cellForItem(at: IndexPath(item: row, section: 0)))
+        let y = cell.frame.minY - collection.contentOffset.y
+        let start = Date().timeIntervalSince1970
+        try await Task.sleep(for: .milliseconds(500))
+        let headerHeight = cell.frame.height
+        for _ in 0..<4 {
+            for _ in 0..<2 {
+                model.toggleInlineExecutionGroup(groupID)
+                for _ in 0..<13 {
+                    try await Task.sleep(for: .milliseconds(50))
+                    let frame = cell.layer.presentation()?.frame ?? cell.frame
+                    XCTAssertEqual(frame.height, headerHeight, accuracy: 1, "Header height must remain fixed throughout disclosure")
+                    XCTAssertEqual(frame.minY - collection.contentOffset.y, y, accuracy: 2)
+                    let frames = collection.visibleCells.map { $0.layer.presentation()?.frame ?? $0.frame }.sorted { $0.minY < $1.minY }
+                    for (a, b) in zip(frames, frames.dropFirst()) {
+                        XCTAssertLessThanOrEqual(a.maxY, b.minY + 1, "Rows must not overlap during expansion or collapse")
+                    }
+                }
+            }
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(cell.frame.minY - collection.contentOffset.y, y, accuracy: 2)
+        if let path = ProcessInfo.processInfo.environment["HAPI_INLINE_MARKER"] {
+            let data = try JSONSerialization.data(withJSONObject: ["start": start, "end": Date().timeIntervalSince1970])
+            try data.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     func testConcurrentExecutionProcessPreview() async throws {
@@ -411,6 +472,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
 }
 
 private struct ToolTranscriptHTTP: HTTPPerforming {
+    var includeUserPrompt = false
     var errorFirstTool = true
     var pendingTools = false
     var proposedPlan: String? = nil
@@ -434,6 +496,11 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
 
     private func messages() -> [DecryptedMessage] {
         var rows: [DecryptedMessage] = []
+        if includeUserPrompt {
+            rows.append(DecryptedMessage(id: "prompt", seq: 1,
+                content: ["role": "user", "content": ["type": "text", "text": "Inspect this change and report the result."]],
+                createdAt: 0, invokedAt: 0))
+        }
         func append(_ data: JSONValue) {
             let seq = rows.count + 1
             rows.append(DecryptedMessage(id: "row-\(seq)", seq: seq,
@@ -449,7 +516,7 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
                 append(["type": "tool-call-result", "callId": .string(id), "output": "Done", "is_error": .bool(error)])
             }
         }
-        append(["type": "message", "message": "工具详情独立阅读；关闭后保留聊天位置。"])
+        append(["type": "message", "message": .string(includeUserPrompt ? "First I will inspect the project and run checks." : "工具详情独立阅读；关闭后保留聊天位置。")])
         for index in 0..<42 {
             // Exercise the shared Codex wire shape, not just legacy Bash calls:
             // unknown actions must remain grouped in the real transcript/inspector.
@@ -462,7 +529,7 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
             else if index < 23 { tool("Edit", input: ["file_path": "/workspace/ChatView.swift"]) }
             else { tool("exec", input: ["code": "await tools.exec_command({cmd: 'swift test'})"]) }
         }
-        append(["type": "message", "message": "实现与测试已完成。正在核对浅色／深色 UI，并清理测试生成文件。"])
+        append(["type": "message", "message": .string(includeUserPrompt ? "The checks passed. I will verify the interface and prepare the release." : "实现与测试已完成。正在核对浅色／深色 UI，并清理测试生成文件。")])
         tool("view_image", input: ["path": "/tmp/hapi-tool-inspector-review-20260911-final/light-summary.png"])
         tool("view_image", input: ["path": "/tmp/hapi-tool-inspector-review-20260911-final/dark-detail.png"])
         tool("Bash", input: ["command": "rm ios/Packages/HapiKit/Package.resolved && git diff --check && git status --short"])
@@ -475,7 +542,7 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
                 append(["type": "message", "id": .string("after-plan-\(index)"), "message": .string("Later message \(index)\n\nKeeps the plan away from the live tail for recycling tests.")])
             }
         }
-        append(["type": "message", "message": .string(pendingTools ? "正在核对剩余任务的结果。" : "检查完成，可以继续对话。")])
+        append(["type": "message", "message": .string(includeUserPrompt ? "All checks are complete. Ready to continue." : pendingTools ? "正在核对剩余任务的结果。" : "检查完成，可以继续对话。")])
         return rows
     }
 }
