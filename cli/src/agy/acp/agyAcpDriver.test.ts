@@ -39,7 +39,7 @@ function harness(reactiveOptions?: AgyReactiveWakeupOptions) {
     const client = {
         updateAgentState: vi.fn(), updateMetadata: vi.fn(),
         rpcHandlerManager: { registerHandler: vi.fn() },
-        emitMessagesConsumed: vi.fn(), sendAgentMessage: vi.fn(),
+        emitMessagesConsumed: vi.fn(), sendAgentMessage: vi.fn(), sendClaudeSessionMessage: vi.fn(),
         setSteerDeliveryState: vi.fn(async () => true), emitSteerIndeterminate: vi.fn()
     };
     const session = {
@@ -81,6 +81,53 @@ function harness(reactiveOptions?: AgyReactiveWakeupOptions) {
 }
 
 describe('Antigravity ACP delivery', () => {
+    it('does not replay ordinary log growth or let a log-only RUNNING step own the session', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-source-ownership-'));
+        const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+        mkdirSync(logsDir, { recursive: true });
+        const path = join(logsDir, 'transcript_full.jsonl');
+        writeFileSync(path, '');
+        const h = harness({ brainDir, pollIntervalMs: 5, quietPeriodMs: 5 });
+        const { running } = await h.start();
+        try {
+            appendFileSync(path, JSON.stringify({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE' }) + '\n'
+                + JSON.stringify({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'working' }) + '\n');
+            h.turn.resolve();
+            await vi.waitFor(() => expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            h.client.sendAgentMessage.mockClear();
+            h.session.onThinkingChange.mockClear();
+            appendFileSync(path, JSON.stringify({ step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'ACP-owned late text' }) + '\n'
+                + JSON.stringify({ step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'RUNNING' }) + '\n');
+            await new Promise((r) => setTimeout(r, 50));
+            expect(h.client.sendAgentMessage).not.toHaveBeenCalled();
+            expect(h.session.onThinkingChange).not.toHaveBeenCalledWith(true);
+        } finally { await h.driver.stop(); await running; rmSync(brainDir, { recursive: true, force: true }); }
+    });
+
+    it('does not re-enter log supplementation when stopping resolves the old prompt', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-stop-source-'));
+        const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+        mkdirSync(logsDir, { recursive: true });
+        const path = join(logsDir, 'transcript_full.jsonl');
+        writeFileSync(path, '');
+        const h = harness({ brainDir, pollIntervalMs: 5, quietPeriodMs: 5 });
+        const { running } = await h.start();
+        try {
+            writeFileSync(path, [
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'started' },
+                { step_index: 2, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'background finished' },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'stale reply' }
+            ].map((v) => JSON.stringify(v)).join('\n') + '\n');
+            h.client.sendAgentMessage.mockClear();
+            h.backend.disconnect.mockImplementation(async () => { h.turn.resolve(); });
+            await h.driver.stop();
+            await running;
+            expect(h.client.sendAgentMessage).not.toHaveBeenCalled();
+            expect(h.backend.resumeSession).not.toHaveBeenCalled();
+        } finally { await h.driver.stop(); await running; rmSync(brainDir, { recursive: true, force: true }); }
+    });
+
     it('steers one reserved row, keeps the next ordinary message queued, and waits for the steer receipt', async () => {
         const h = harness(); const { running } = await h.start();
         h.queue.push('ordinary', mode, 'later'); h.queue.push('pivot', mode, 'pivot');
@@ -144,7 +191,7 @@ describe('Antigravity ACP delivery', () => {
         await h.driver.stop(); await running;
     });
 
-    it('waits for RUNNING background tasks after prompt() resolves, streams Reactive Wakeup steps, and calls resumeSession to advance SkipHistory', async () => {
+    it('releases foreground state while background tasks wait, streams Reactive Wakeup steps, and calls resumeSession to advance SkipHistory', async () => {
         const brainDir = mkdtempSync(join(tmpdir(), 'agy-reactive-test-'));
         try {
             const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
@@ -201,9 +248,13 @@ describe('Antigravity ACP delivery', () => {
             h.turn.resolve();
             await new Promise((r) => setTimeout(r, 40));
 
-            // Turn must NOT report ready or thinking=false while task-2 is still RUNNING
-            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
-            expect(h.session.onThinkingChange).not.toHaveBeenCalledWith(false);
+            // A pending background task must not keep the ACP foreground turn open.
+            expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            expect(h.session.onThinkingChange).toHaveBeenCalledWith(false);
+            h.session.sendSessionEvent.mockClear();
+            expect(h.client.sendClaudeSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
+                subtype: 'background_tasks_changed', tasks: [expect.objectContaining({ task_id: 'agy-native/task-2' })]
+            }));
 
             // Now simulate task-2 finishing and Reactive Wakeup executing steps 4..7
             appendSteps([
@@ -261,6 +312,7 @@ describe('Antigravity ACP delivery', () => {
                 output: { output: 'Command exited with code 0.\n\nCommand output:\ndone', exit_code: 0 },
                 is_error: false
             });
+            expect(h.client.sendClaudeSessionMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }));
             // Reactive read_file tool_call and final text message emitted
             expect(sentPayloads).toContainEqual(expect.objectContaining({
                 type: 'tool-call',
@@ -328,8 +380,7 @@ describe('Antigravity ACP delivery', () => {
             await vi.waitFor(() => {
                 expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
             });
-            expect(h.session.onThinkingChange).toHaveBeenCalledWith(true);
-            expect(h.session.onThinkingChange).toHaveBeenCalledWith(false);
+            expect(h.session.onThinkingChange).not.toHaveBeenCalled();
             expect(h.backend.resumeSession).toHaveBeenCalledWith({
                 cwd: '/tmp',
                 mcpServers: [],
@@ -638,8 +689,9 @@ describe('Antigravity ACP delivery', () => {
             ]);
 
             await new Promise((r) => setTimeout(r, 50));
-            // task-378 is still running, so turn must NOT prematurely report ready
-            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+            // Pending background work does not own foreground readiness.
+            expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            h.session.sendSessionEvent.mockClear();
 
             // Now task-378 finishes and step 412 completes the turn
             appendSteps([
@@ -863,14 +915,17 @@ describe('Antigravity ACP delivery', () => {
                 transcriptPath,
                 `${[
                     {
-                        step_index: 0,
+                        step_index: 0, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'Scheduled wakeup'
+                    },
+                    {
+                        step_index: 1,
                         source: 'MODEL',
                         type: 'PLANNER_RESPONSE',
                         status: 'DONE',
                         tool_calls: [{ name: 'write_file', args: { Path: '/tmp/out.txt', Content: 'hi' } }]
                     },
                     {
-                        step_index: 2,
+                        step_index: 3,
                         source: 'SYSTEM',
                         type: 'SYSTEM_MESSAGE',
                         status: 'DONE',
@@ -881,12 +936,13 @@ describe('Antigravity ACP delivery', () => {
             );
 
             await vi.waitFor(() => {
-                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+                expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call-result', callId: 'call_reactive_1_0' }));
             });
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
             const sentPayloads = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
             expect(sentPayloads).toContainEqual(expect.objectContaining({
                 type: 'tool-call-result',
-                callId: 'call_reactive_0_0',
+                callId: 'call_reactive_1_0',
                 is_error: true
             }));
 
@@ -1161,7 +1217,7 @@ describe('Antigravity ACP delivery', () => {
             const transcriptPath = join(logsDir, 'transcript_full.jsonl');
 
             const step0: AgyRawTranscriptStep = { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' };
-            const step1: AgyRawTranscriptStep = { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync1' };
+            const step1: AgyRawTranscriptStep = { step_index: 1, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'Scheduled wakeup' };
             const step2: AgyRawTranscriptStep = { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive2' };
             const step3: AgyRawTranscriptStep = { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive3' };
             const step4: AgyRawTranscriptStep = { step_index: 4, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'reactive4' };
@@ -1256,7 +1312,8 @@ describe('Antigravity ACP delivery', () => {
             h.turn.resolve();
 
             await new Promise((r) => setTimeout(r, 35));
-            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+            expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            h.session.sendSessionEvent.mockClear();
 
             // Transition step 2 in-place to DONE WITHOUT any SYSTEM_MESSAGE!
             writeSteps([
@@ -1279,8 +1336,9 @@ describe('Antigravity ACP delivery', () => {
             ]);
 
             await vi.waitFor(() => {
-                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+                expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call-result', callId: 'call_sync_bg_2' }));
             });
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
             expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({
                 type: 'tool-call-result',
                 callId: 'call_sync_bg_2',
@@ -1295,12 +1353,10 @@ describe('Antigravity ACP delivery', () => {
                 { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'post-truncate wakeup below old promptEnd' }
             ]);
 
-            await vi.waitFor(() => {
-                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
-            });
-            expect(h.client.sendAgentMessage).toHaveBeenCalledWith({
-                type: 'message',
-                message: 'post-truncate wakeup below old promptEnd'
+            await new Promise((r) => setTimeout(r, 50));
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+            expect(h.client.sendAgentMessage).not.toHaveBeenCalledWith({
+                type: 'message', message: 'post-truncate wakeup below old promptEnd'
             });
 
             await h.driver.stop();
@@ -1455,9 +1511,10 @@ describe('Antigravity ACP delivery', () => {
             writeSteps([
                 { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
                 { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync' },
-                { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'RUNNING', content: 'streaming...' },
+                { step_index: 2, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'Scheduled wakeup' },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'RUNNING', content: 'streaming...' },
                 {
-                    step_index: 3,
+                    step_index: 4,
                     source: 'SYSTEM',
                     type: 'SYSTEM_MESSAGE',
                     status: 'DONE',
@@ -1474,9 +1531,10 @@ describe('Antigravity ACP delivery', () => {
             writeSteps([
                 { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', content: 'initial' },
                 { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'sync' },
-                { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'completed reply' },
+                { step_index: 2, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'Scheduled wakeup' },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'completed reply' },
                 {
-                    step_index: 3,
+                    step_index: 4,
                     source: 'SYSTEM',
                     type: 'SYSTEM_MESSAGE',
                     status: 'DONE',
@@ -1528,11 +1586,11 @@ describe('Antigravity ACP delivery', () => {
                     tool_calls: [{ name: 'run_command', args: { CommandLine: 'new-command' } }]
                 }
             ]);
-            expect(argTracker.hasUnreadReactiveSteps('agy-native')).toBe(true);
+            expect(argTracker.hasUnreadReactiveSteps('agy-native')).toBe(false);
             const argEmitted: AgentMessage[] = [];
             (argTracker as unknown as { processNewReactiveSteps: (s: AgyRawTranscriptStep[], cwd: string, cb: (m: AgentMessage) => void) => boolean })
                 .processNewReactiveSteps(argTracker.readSteps('agy-native'), '/tmp', (m) => argEmitted.push(m));
-            expect(argEmitted).toContainEqual(expect.objectContaining({
+            expect(argEmitted).not.toContainEqual(expect.objectContaining({
                 type: 'tool_call',
                 id: 'call_reactive_1_0',
                 title: 'new-command'
@@ -1676,7 +1734,8 @@ describe('Antigravity ACP delivery', () => {
             await new Promise((r) => setTimeout(r, 30));
 
             // Timer agy-native/task-gen1-2 is still pending so turn must stay active
-            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+            expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            h.session.sendSessionEvent.mockClear();
 
             // Append Gen1 reactive step 4 (colliding with gen0 step_index=4 DONE!) + step 5..6
             const gen1ReactiveBatch1: AgyRawTranscriptStep[] = [

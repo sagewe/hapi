@@ -9,6 +9,12 @@ import { deterministicStringify } from '@/utils/deterministicJson';
 import type { AgyMode } from '../types';
 import { configureAgyAcpSession } from './agyAcpBackend';
 
+export class AgyReactiveContinuationPendingError extends Error {
+    constructor() {
+        super('Antigravity background continuation has not settled; message was not sent. Wait for completion or stop it before sending again.');
+    }
+}
+
 export interface AgyRawTranscriptStep {
     step_index: number;
     source: string;
@@ -79,6 +85,7 @@ export interface AgyReactiveWakeupOptions {
     pollIntervalMs?: number;
     quietPeriodMs?: number;
     nextPlannerGraceMs?: number;
+    maxDrainMs?: number;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 200;
@@ -385,6 +392,9 @@ export class AgyReactiveWakeupTracker {
     private readonly pollIntervalMs: number;
     private readonly quietPeriodMs: number;
     private readonly nextPlannerGraceMs: number;
+    private readonly maxDrainMs: number;
+    private lastDrainedSnapshot: AgyRawTranscriptStep[] | null = null;
+    private promptText = '';
 
     private trackedSessionId: string | null = null;
     private trackedGenesisKey: string | null = null;
@@ -398,7 +408,8 @@ export class AgyReactiveWakeupTracker {
     private pendingResumeSync = false;
     private trailingPlannerHandoff: { stepIndex: number; since: number } | null = null;
     private transcriptCache: CachedTranscriptSnapshot | null = null;
-    private openPromptToolCalls: TrackedToolCall[] = [];
+    private promptToolCalls: TrackedToolCall[] = [];
+    private readonly settledPromptCallIds = new Set<string>();
     private readonly stepSignatures = new Map<number, RecordedStepSignature>();
     private readonly processedReactiveStepStatus = new Map<number, string>();
     private readonly reactiveToolMetaByStep = new Map<number, PendingReactiveToolResult>();
@@ -412,9 +423,12 @@ export class AgyReactiveWakeupTracker {
         this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
         this.quietPeriodMs = options.quietPeriodMs ?? DEFAULT_QUIET_PERIOD_MS;
         this.nextPlannerGraceMs = options.nextPlannerGraceMs ?? DEFAULT_NEXT_PLANNER_GRACE_MS;
+        this.maxDrainMs = options.maxDrainMs ?? 5_000;
     }
 
     reset(): void {
+        this.lastDrainedSnapshot = null;
+        this.promptText = '';
         this.trackedSessionId = null;
         this.trackedGenesisKey = null;
         this.trackedGenerationIndex = 0;
@@ -427,7 +441,8 @@ export class AgyReactiveWakeupTracker {
         this.pendingResumeSync = false;
         this.trailingPlannerHandoff = null;
         this.transcriptCache = null;
-        this.openPromptToolCalls = [];
+        this.promptToolCalls = [];
+        this.settledPromptCallIds.clear();
         this.stepSignatures.clear();
         this.processedReactiveStepStatus.clear();
         this.reactiveToolMetaByStep.clear();
@@ -443,6 +458,7 @@ export class AgyReactiveWakeupTracker {
         generationIndex = 0,
         generationGenesisKeys: Array<string | null> = genesisKey !== null ? [genesisKey] : []
     ): void {
+        this.lastDrainedSnapshot = null;
         this.trackedSessionId = sessionId;
         this.trackedGenesisKey = genesisKey;
         this.trackedGenerationIndex = generationIndex;
@@ -774,7 +790,9 @@ export class AgyReactiveWakeupTracker {
 
     /** Record transcript baseline before dispatching `backend.prompt()`. */
     beforePrompt(sessionId: string | null): void {
-        this.openPromptToolCalls = [];
+        this.promptText = '';
+        this.promptToolCalls = [];
+        this.settledPromptCallIds.clear();
         this.baselineInitialized = true;
         if (!sessionId) {
             this.prePromptMaxStepIndex = -1;
@@ -791,10 +809,11 @@ export class AgyReactiveWakeupTracker {
         this.recordBaselineStepStatuses(steps, maxIdx);
     }
 
-    /** Observe `onUpdate` messages emitted during `backend.prompt()` to track open `tool_call` IDs. */
+    /** Record ACP-owned final text and tool identities; never feed supplemented messages back here. */
     observePromptUpdate(message: AgentMessage): void {
+        if (message.type === 'text' && message.live !== true) this.promptText += message.text;
         if (message.type === 'tool_call') {
-            const idx = this.openPromptToolCalls.findIndex((entry) => entry.id === message.id);
+            const idx = this.promptToolCalls.findIndex((entry) => entry.id === message.id);
             const record: TrackedToolCall = {
                 id: message.id,
                 name: message.name,
@@ -803,16 +822,46 @@ export class AgyReactiveWakeupTracker {
                 ...(message.kind ? { kind: message.kind } : {})
             };
             if (idx >= 0) {
-                this.openPromptToolCalls[idx] = record;
+                this.promptToolCalls[idx] = record;
             } else {
-                this.openPromptToolCalls.push(record);
+                this.promptToolCalls.push(record);
             }
         } else if (message.type === 'tool_result') {
-            const idx = this.openPromptToolCalls.findIndex((entry) => entry.id === message.id);
-            if (idx >= 0) {
-                this.openPromptToolCalls.splice(idx, 1);
+            for (const [taskId, task] of this.pendingTasks) {
+                if (task.id !== message.id) continue;
+                this.pendingTasks.delete(taskId);
+                this.settledToolStepIndices.add(task.stepIndex);
             }
+            this.settledPromptCallIds.add(message.id);
         }
+    }
+
+    /** Only system-initiated continuations belong to the log supplement. A user
+     * boundary always returns ownership to ACP. Old background tools may settle
+     * in place independently of either boundary. */
+    private supplementalSteps(steps: AgyRawTranscriptStep[]): AgyRawTranscriptStep[] {
+        let reactive = false;
+        return steps.filter((step) => {
+            if (step.source === 'USER_EXPLICIT' && step.type === 'USER_INPUT') reactive = false;
+            if (step.source === 'SYSTEM' && step.type === 'SYSTEM_MESSAGE') reactive = true;
+            return (reactive && step.step_index > this.promptEndStepIndex)
+                || (this.hasUnsettledPendingBackgroundTaskAtStep(step.step_index) && isTerminalStepStatus(step.status));
+        });
+    }
+
+    hasCompletedReactiveReply(sessionId: string): boolean {
+        const snapshot = this.readSteps(sessionId);
+        const steps = this.supplementalSteps(snapshot);
+        const last = steps.at(-1);
+        return last?.source === 'MODEL' && last.type === 'PLANNER_RESPONSE'
+            && last.status === 'DONE' && (last.tool_calls?.length ?? 0) === 0
+            && this.getReactiveFlightState(snapshot) === 'idle';
+    }
+
+    getBackgroundTasks(): Array<{ id: string; type: string; description: string }> {
+        return [...this.pendingTasks.values()].map((task) => ({
+            id: task.taskId, type: task.toolName, description: task.title ?? task.name
+        }));
     }
 
     private isStepUnprocessedForReactive(step: AgyRawTranscriptStep): boolean {
@@ -841,7 +890,9 @@ export class AgyReactiveWakeupTracker {
      */
     hasUnreadReactiveSteps(sessionId: string | null): boolean {
         if (!sessionId || !this.baselineInitialized) return false;
-        const steps = this.readSteps(sessionId);
+        const snapshot = this.readSteps(sessionId);
+        if (snapshot === this.lastDrainedSnapshot) return false;
+        const steps = this.supplementalSteps(snapshot);
         if (steps.length === 0) return false;
         const hasPendingBg = this.pendingTasks.size > 0;
         for (let i = steps.length - 1; i >= 0; i--) {
@@ -855,13 +906,11 @@ export class AgyReactiveWakeupTracker {
     }
 
     /**
-     * True when the driver is idle with an empty user queue and should enter
-     * `afterIdleWakeup` (either unread reactive steps exist or a background task
-     * remained pending after an earlier queue-yield).
+     * Wake only for changed supplemental data. An unchanged RUNNING row or a
+     * pending background task alone is not another foreground turn.
      */
     hasPendingIdleWork(sessionId: string | null): boolean {
         if (!sessionId) return false;
-        if (this.pendingTasks.size > 0) return true;
         return this.hasUnreadReactiveSteps(sessionId);
     }
 
@@ -897,6 +946,9 @@ export class AgyReactiveWakeupTracker {
         mode: AgyMode
     ): Promise<void> {
         if (!this.pendingResumeSync || !sessionId) return;
+        if (this.getReactiveFlightState(this.readSteps(sessionId)) !== 'idle') {
+            throw new AgyReactiveContinuationPendingError();
+        }
         await this.syncBackendHistorySkip(backend, sessionId, cwd, mode);
         this.pendingResumeSync = false;
     }
@@ -920,7 +972,18 @@ export class AgyReactiveWakeupTracker {
         const steps = this.readSteps(sessionId);
         if (steps.length === 0) return;
 
-        const promptEndStepIndex = this.findSynchronousPromptEndStepIndex(steps, this.prePromptMaxStepIndex);
+        let promptEndStepIndex = this.findSynchronousPromptEndStepIndex(steps, this.prePromptMaxStepIndex);
+        // ACP may already include a background continuation (especially with
+        // concurrent steering). Consume observed text in order, never replay it
+        // merely because a SYSTEM_MESSAGE appears in the same snapshot.
+        let textOffset = 0;
+        for (const step of steps) {
+            if (step.step_index <= this.prePromptMaxStepIndex || step.type !== 'PLANNER_RESPONSE' || !step.content) continue;
+            const found = this.promptText.indexOf(step.content, textOffset);
+            if (found < 0) continue;
+            textOffset = found + step.content.length;
+            promptEndStepIndex = Math.max(promptEndStepIndex, step.step_index);
+        }
         this.promptEndStepIndex = promptEndStepIndex;
         this.ingestSynchronousTurnSteps(steps, this.prePromptMaxStepIndex, promptEndStepIndex, cwd, onUpdate);
         this.advanceSyncedCursor(promptEndStepIndex);
@@ -1022,7 +1085,8 @@ export class AgyReactiveWakeupTracker {
                 };
                 if (isDaemonToolCall(meta.args)) continue;
 
-                const matchedOpenCall = this.takeMatchingOpenPromptToolCall(meta.toolName, meta.args);
+                const matchedOpenCall = this.takeMatchingPromptToolCall(meta.toolName, meta.args);
+                if (matchedOpenCall && this.settledPromptCallIds.has(matchedOpenCall.id)) continue;
                 const fallbackFormatted = formatReactiveToolCall(meta.toolName, meta.args, cwd);
                 const tracked: PendingBackgroundTask = {
                     taskId,
@@ -1044,14 +1108,14 @@ export class AgyReactiveWakeupTracker {
         }
     }
 
-    private takeMatchingOpenPromptToolCall(
+    private takeMatchingPromptToolCall(
         toolName: string,
         args: Record<string, unknown>
     ): TrackedToolCall | null {
-        if (this.openPromptToolCalls.length === 0) return null;
+        if (this.promptToolCalls.length === 0) return null;
         if (toolName === 'run_command') {
             if (typeof args.CommandLine === 'string') {
-                const idx = this.openPromptToolCalls.findIndex(
+                const idx = this.promptToolCalls.findIndex(
                     (c) =>
                         (isObject(c.input) && (
                             c.input.CommandLine === args.CommandLine ||
@@ -1061,24 +1125,24 @@ export class AgyReactiveWakeupTracker {
                         c.name === args.CommandLine
                 );
                 if (idx >= 0) {
-                    return this.openPromptToolCalls.splice(idx, 1)[0];
+                    return this.promptToolCalls.splice(idx, 1)[0];
                 }
             }
-            const execIdx = this.openPromptToolCalls.findIndex((c) => c.kind === 'execute');
+            const execIdx = this.promptToolCalls.findIndex((c) => c.kind === 'execute');
             if (execIdx >= 0) {
-                return this.openPromptToolCalls.splice(execIdx, 1)[0];
+                return this.promptToolCalls.splice(execIdx, 1)[0];
             }
             return null;
         }
         if (toolName === 'schedule' && typeof args.Prompt === 'string') {
-            const idx = this.openPromptToolCalls.findIndex(
+            const idx = this.promptToolCalls.findIndex(
                 (c) => isObject(c.input) && c.input.Prompt === args.Prompt
             );
             if (idx >= 0) {
-                return this.openPromptToolCalls.splice(idx, 1)[0];
+                return this.promptToolCalls.splice(idx, 1)[0];
             }
         }
-        return this.openPromptToolCalls.shift() ?? null;
+        return this.promptToolCalls.shift() ?? null;
     }
 
     private failPendingReactiveToolResult(
@@ -1233,6 +1297,7 @@ export class AgyReactiveWakeupTracker {
         cwd: string,
         onUpdate: (message: AgentMessage) => void
     ): boolean {
+        steps = this.supplementalSteps(steps);
         let emittedOrAdvanced = false;
         const existingGenericStepIndices = new Set<number>();
         let maxInterruptingBoundaryStepIndex = -1;
@@ -1483,6 +1548,7 @@ export class AgyReactiveWakeupTracker {
     }
 
     getReactiveFlightState(steps: AgyRawTranscriptStep[]): AgyReactiveFlightState {
+        steps = this.supplementalSteps(steps);
         if (this.hasBlockingPendingReactiveToolResults()) {
             this.trailingPlannerHandoff = null;
             return 'pending-tool-result';
@@ -1557,12 +1623,14 @@ export class AgyReactiveWakeupTracker {
         isAborted: () => boolean;
     }): Promise<void> {
         const { sessionId, cwd, mode, backend, onUpdate, shouldYield, isAborted } = params;
+        const startedAt = Date.now();
         let sawReactiveActivityThisDrain = false;
-        let lastActivityAt = Date.now();
+        let lastActivityAt = startedAt;
         let loggedAwaitingNextPlanner = false;
 
         while (!isAborted()) {
             const steps = this.readSteps(sessionId);
+            this.lastDrainedSnapshot = steps;
             const advanced = this.processNewReactiveSteps(steps, cwd, onUpdate);
             if (advanced) {
                 this.pendingResumeSync = true;
@@ -1579,11 +1647,9 @@ export class AgyReactiveWakeupTracker {
             const midFlight = flightState !== 'idle';
             const withinQuietWindow = sawReactiveActivityThisDrain && (Date.now() - lastActivityAt < this.quietPeriodMs);
 
-            if (!midFlight && !withinQuietWindow) {
-                if (this.pendingTasks.size === 0 || shouldYield()) {
-                    break;
-                }
-            }
+            // A log snapshot is not a lifecycle authority. Pending background
+            // tasks and stale RUNNING rows must not hold the foreground loop.
+            if ((!midFlight && !withinQuietWindow) || shouldYield() || Date.now() - startedAt >= this.maxDrainMs) break;
 
             await new Promise<void>((resolve) => {
                 const timer = setTimeout(resolve, this.pollIntervalMs);
@@ -1591,7 +1657,8 @@ export class AgyReactiveWakeupTracker {
             });
         }
 
-        if (this.pendingResumeSync && !isAborted()) {
+        if (this.pendingResumeSync && !isAborted()
+            && this.getReactiveFlightState(this.readSteps(sessionId)) === 'idle') {
             await this.tryFlushPendingResumeSync(backend, sessionId, cwd, mode);
         }
     }

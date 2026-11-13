@@ -35,7 +35,7 @@ Choose a supported coding agent from your terminal and control its sessions remo
 - `hapi grok` - Start Grok Build mode. See `src/grok/runGrok.ts`.
 - `hapi copilot` - Start GitHub Copilot mode.
 - `hapi kimi` - Start Kimi mode.
-- `hapi agy` - Start Antigravity via native `agy acp` (remote-only, verified with agy 1.4.12); supports mid-turn steering.
+- `hapi agy` - Start Antigravity via native `agy acp` (remote-only, verified with agy 1.5.7); supports mid-turn steering. ACP owns foreground turns; a bounded log supplement delivers system-initiated background continuations without keeping the foreground thinking state active. Background task snapshots use the existing Hub/client contract. Cross-process history uses file storage. An unsettled continuation is never cancelled merely to synchronize history: a new prompt is visibly restored if that synchronization cannot safely proceed.
 - `hapi pi` - Start Pi mode (remote-only).
 - `hapi opencode` - Start OpenCode mode via ACP. See `src/opencode/runOpencode.ts`.
   Note: OpenCode supports local and remote modes; local mode streams via OpenCode plugins.

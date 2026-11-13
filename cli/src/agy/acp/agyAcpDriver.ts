@@ -1,4 +1,5 @@
 import React from 'react';
+import { randomUUID } from 'node:crypto';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext } from '@/modules/common/remote/RemoteLauncherBase';
 import { RemoteModeDisplay } from '@/ui/ink/RemoteModeDisplay';
@@ -14,7 +15,7 @@ import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
-import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
+import { AgyReactiveContinuationPendingError, AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
 
 /** One handler owns all notifications, including concurrent prompts. A turn is
  * not ready until every steer settles; no automatic retry of ambiguous sends. */
@@ -32,6 +33,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private aborting: Promise<void> | null = null;
     private generation = 0;
     private stopping = false;
+    private backgroundTasksSignature = '[]';
 
     constructor(
         private readonly session: AgySession,
@@ -56,11 +58,24 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         this.session.client.updateAgentState((state) => ({ ...state, steeringActive: active }));
     }
 
+    private publishBackgroundTasks(): void {
+        const tasks = this.reactiveWakeup.getBackgroundTasks().map((task) => ({
+            task_id: task.id, task_type: task.type, description: task.description
+        }));
+        const signature = JSON.stringify(tasks);
+        if (signature === this.backgroundTasksSignature) return;
+        this.backgroundTasksSignature = signature;
+        // Reuse the existing output-envelope snapshot contract understood by
+        // Hub and all clients; agentState has no background-task projection.
+        this.session.client.sendClaudeSessionMessage({ uuid: randomUUID(), type: 'system', subtype: 'background_tasks_changed', tasks });
+    }
+
     private async closeBackend(): Promise<void> {
         const backend = this.backend;
         this.backend = null;
         this.backendModeHash = null;
         this.reactiveWakeup.reset();
+        this.publishBackgroundTasks();
         const elicitation = this.elicitation;
         this.elicitation = null;
         const permission = this.permission;
@@ -259,7 +274,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 if (next.kind === 'idle-wakeup') {
                     if (this.stopping || !this.backend || !session.sessionId) continue;
                     const mode = this.lastMode;
-                    session.onThinkingChange(true);
+                    // Log supplementation never owns the ACP foreground state.
                     this.generation++;
                     this.activeTurn = (async () => {
                         try {
@@ -281,8 +296,9 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         } catch (error) {
                             logger.debug('[agy-acp] idle reactive wakeup failed', error);
                         } finally {
-                            session.onThinkingChange(false);
-                            if (!this.stopping && !this.aborting) session.sendSessionEvent({ type: 'ready' });
+                            this.publishBackgroundTasks();
+                            if (!this.stopping && !this.aborting && session.sessionId
+                                && this.reactiveWakeup.hasCompletedReactiveReply(session.sessionId)) session.sendSessionEvent({ type: 'ready' });
                         }
                     })();
                     await this.activeTurn;
@@ -320,13 +336,18 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
                         acknowledge();
                         await backend.waitForResponseComplete();
+                        if (this.stopping || this.aborting || this.backend !== backend) return;
                         this.steering(false);
+                        session.onThinkingChange(false);
                         await this.reactiveWakeup.afterPrompt({
                             sessionId: session.sessionId!,
                             cwd: session.path,
                             mode: msg.mode,
                             backend,
-                            onUpdate,
+                            onUpdate: (message) => {
+                                const converted = convertAgentMessage(message, msg.mode.model);
+                                if (converted) session.client.sendAgentMessage(converted);
+                            },
                             shouldYield: () => this.stopping || Boolean(this.aborting) || session.queue.size() > 0,
                             isAborted: () => this.stopping || Boolean(this.aborting)
                         });
@@ -341,12 +362,13 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                             acknowledge();
                             session.sendSessionEvent({ type: 'abort-restore', text: msg.message });
                         }
-                        await this.closeBackend();
+                        if (!(error instanceof AgyReactiveContinuationPendingError)) await this.closeBackend();
                     } finally {
                         this.activeModeHash = null;
                         this.steering(false);
                         await Promise.allSettled([...this.pendingSteers]);
                         session.onThinkingChange(false);
+                        this.publishBackgroundTasks();
                         if (!this.stopping && !this.aborting) session.sendSessionEvent({ type: 'ready' });
                     }
                 })();
