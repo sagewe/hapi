@@ -62,10 +62,12 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     }
 }
 
-/// A navigation affordance, never an inline disclosure. Resolve the live group
-/// by ID when tapped rather than capturing members in the summary row.
+/// A lightweight header. Execution groups disclose inline; legacy groups can
+/// still resolve their live data through the shared inspector.
 struct ToolGroupBlockView: View {
     let presentation: ToolGroupPresentation
+    var isExpanded = false
+    var toggleInline: (() -> Void)? = nil
     @Environment(\.openChatToolGroup) private var openGroup
     @Environment(\.hapiTheme) private var theme
     @Environment(\.hapiTypography) private var typography
@@ -80,10 +82,10 @@ struct ToolGroupBlockView: View {
             .font(.caption).foregroundStyle(theme.textSecondary)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         } else if presentation.processRole == "tools" {
-            Button { openGroup?(presentation.id) } label: {
+            Button { if let toggleInline { toggleInline() } else { openGroup?(presentation.id) } } label: {
                 HStack(spacing: 8) {
                     Text(presentation.categorySummary.isEmpty ? presentation.title : presentation.categorySummary)
-                    Image(systemName: "chevron.right")
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 }
                 .font(.caption).foregroundStyle(theme.textSecondary)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -92,7 +94,7 @@ struct ToolGroupBlockView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("tool-group-\(presentation.id)")
         } else if presentation.isExecutionProcess {
-            Button { openGroup?(presentation.id) } label: {
+            Button { if let toggleInline { toggleInline() } else { openGroup?(presentation.id) } } label: {
                 Group {
                     if presentation.processTiming?.running == true {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -113,7 +115,7 @@ struct ToolGroupBlockView: View {
     private func timingContent(now: Date) -> some View {
         HStack(spacing: 8) {
             Text(timingLabel(now: now))
-            Image(systemName: "chevron.right")
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
         }
     }
 
@@ -130,7 +132,7 @@ struct ToolGroupBlockView: View {
     }
 
     private var legacyBody: some View {
-        Button { openGroup?(presentation.id) } label: {
+        Button { if let toggleInline { toggleInline() } else { openGroup?(presentation.id) } } label: {
             let layout = typography.usesStackedToolLayout
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                 : AnyLayout(HStackLayout(spacing: 8))
@@ -181,7 +183,7 @@ struct ToolGroupBlockView: View {
                     .font(typography.toolSubtitleFont).foregroundStyle(.red)
                     .accessibilityLabel(String(format: String(localized: "%lld failed tools"), Int64(presentation.errorCount)))
             }
-            Image(systemName: "chevron.right")
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                 .font(typography.captionFont).foregroundStyle(theme.textSecondary)
         }
     }

@@ -82,6 +82,7 @@ struct ToolSummaryRow: View {
     let presentation: ToolCardPresentation
     let state: ToolCallState
     var showsStatus = true
+    var isExpanded = false
     let action: () -> Void
     @Environment(\.hapiTheme) private var theme
     @Environment(\.hapiTypography) private var typography
@@ -123,7 +124,7 @@ struct ToolSummaryRow: View {
                     if showsStatus && state != .completed {
                         ToolStatusIndicator(state: state)
                     }
-                    Image(systemName: "chevron.right")
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(typography.captionFont)
                         .foregroundStyle(theme.textSecondary)
                 }

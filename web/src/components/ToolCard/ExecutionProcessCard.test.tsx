@@ -60,5 +60,7 @@ it('keeps inspected images accessible only inside expanded details', () => {
     render(tree(block))
     expect(screen.queryByText('inspected.png')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Took/ }))
+    expect(screen.queryByText('inspected.png')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Viewed images' }))
     expect(screen.getByText('inspected.png')).toBeVisible()
 })

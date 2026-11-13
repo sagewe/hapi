@@ -129,7 +129,7 @@ public func buildExecutionProcessBlocks(
             if case .agentText(let text) = block { return text.meta?["assistantPhase"]?.stringValue == "final" }
             return false
         }
-        let readingTimeline = previousGroups.contains { $0.processRoundId == roundID }
+        let readingTimeline = previousGroups.contains { $0.processRoundId == roundID && keepVisibleIds.contains($0.id) } || previousGroups.contains { $0.processRoundId == roundID }
             && round.contains { ($0.kind == "agent-text" || $0.kind == "agent-reasoning") && keepVisibleIds.contains($0.id) }
         if (tail && isRunning && !hasFinal) || readingTimeline {
             func makeGroup(_ members: [ChatBlock], role: String) -> ToolGroupBlock {

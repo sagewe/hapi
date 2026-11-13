@@ -151,7 +151,9 @@ struct ChatTranscriptView: View {
         case .message(let block, let isHighlighted):
             ChatBlockCard(block: block, basePath: basePath, isHighlighted: isHighlighted)
         case .group(let presentation):
-            ToolGroupBlockView(presentation: presentation)
+            if presentation.isExecutionProcess && presentation.processRole != "header" {
+                InlineExecutionGroupView(presentation: presentation, model: model, basePath: basePath)
+            } else { ToolGroupBlockView(presentation: presentation) }
         case .responseFeedback(let state):
             InitialResponseFeedbackView(state: state)
         }

@@ -1,4 +1,5 @@
 export default {
+  'chat.execution.fullDetails': 'View full details',
   'chat.execution.media': 'Viewed images',
   'chat.execution.tools': '{n} tool calls',
   'chat.response.sending': 'Sending…',

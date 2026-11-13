@@ -134,7 +134,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         // Keep consecutive prose/reasoning until a new explanation or answer arrives.
         const explanation = new Set<string>()
         const hasFinal = round.some(block => block.kind === 'agent-text' && isObject(block.meta) && block.meta.assistantPhase === 'final')
-        const readingTimeline = options.previousGroups?.some(group => group.processRoundId === roundId)
+        const readingTimeline = options.previousGroups?.some(group => group.processRoundId === roundId && options.keepVisibleIds?.has(group.id)) || options.previousGroups?.some(group => group.processRoundId === roundId)
             && round.some(block => (block.kind === 'agent-text' || block.kind === 'agent-reasoning') && options.keepVisibleIds?.has(block.id))
         if ((tail && options.isRunning && !hasFinal) || readingTimeline) {
             const makeGroup = (members: ChatBlock[], role: 'header' | 'tools'): ToolGroupBlock => {

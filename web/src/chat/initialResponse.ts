@@ -10,7 +10,6 @@ export function initialResponseState(blocks: readonly VisibleChatBlock[], option
     isActive: boolean
     activeTurnStartedAt?: number | null
     completedRounds?: ReadonlySet<string>
-    awaitingOutput?: boolean
     isHistory?: boolean
     isHydrating?: boolean
 }): InitialResponseState | null {
@@ -28,8 +27,8 @@ export function initialResponseState(blocks: readonly VisibleChatBlock[], option
         if ((block.kind === 'agent-text' || block.kind === 'agent-reasoning') && !block.text.trim()) return false
         return !options.isRunning || start == null || (block.invokedAt ?? block.createdAt) >= start
     })
-    // The Web runtime already separates a newly started turn from old/hydrated output.
-    if (options.isRunning ? !(options.awaitingOutput ?? !hasOutput) : hasOutput) return null
+    // Materialized output is authoritative, including when reopening a live chat.
+    if (hasOutput) return null
     if (options.isRunning) return belongsToRun && user.invokedAt != null ? 'thinking' : 'waiting'
     if (!user || user.invokedAt != null || options.completedRounds?.has(user.id)) return null
     if (user.status === 'sending') return 'sending'

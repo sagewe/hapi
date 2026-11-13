@@ -13,6 +13,7 @@ describe('initial response feedback', () => {
         expect(initialResponseState([user('queued')], { ...idle, isRunning: true })).toBe('waiting')
         expect(initialResponseState([user('sent', 1100)], { ...idle, isRunning: true, activeTurnStartedAt: 1000 })).toBe('thinking')
         expect(initialResponseState([user('sent', 1100), reply], { ...idle, isRunning: true })).toBeNull()
+        expect(initialResponseState([user(), reply], { ...idle, isRunning: true })).toBeNull()
     })
     it('removes feedback on failure, cancellation, disconnection and history navigation', () => {
         expect(initialResponseState([user('failed')], idle)).toBeNull()
@@ -25,7 +26,7 @@ describe('initial response feedback', () => {
     })
     it('does not mistake a previous response for output from the new run', () => {
         expect(initialResponseState([user('sent', 100), { ...reply, createdAt: 500 }], {
-            ...idle, isRunning: true, activeTurnStartedAt: 1000, awaitingOutput: true
+            ...idle, isRunning: true, activeTurnStartedAt: 1000
         })).toBe('waiting')
         expect(initialResponseState([user('sent', 1100), { ...reply, text: '   ' }], { ...idle, isRunning: true })).toBe('thinking')
     })

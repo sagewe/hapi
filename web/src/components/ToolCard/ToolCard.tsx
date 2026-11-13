@@ -387,6 +387,7 @@ type ToolCardProps = {
 }
 
 export function ToolDetailDialogContent(props: {
+    inline?: boolean
     block: ToolCallBlock
     metadata: SessionMetadataSummary | null
 }) {
@@ -402,7 +403,7 @@ export function ToolDetailDialogContent(props: {
         && permission?.answers
         && Object.keys(permission.answers).length > 0
     return (
-        <div className="mt-3 flex max-h-[75vh] flex-col gap-4 overflow-auto">
+        <div className={cn("mt-3 flex flex-col gap-4 overflow-auto", props.inline ? "max-h-80" : "max-h-[75vh]")}>
             <ToolTimingDetails block={props.block} />
             <div>
                 <div className="mb-1 text-xs font-medium text-[var(--app-hint)]">

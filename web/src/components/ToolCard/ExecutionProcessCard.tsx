@@ -1,10 +1,11 @@
-import { Component, createRef, useEffect, useState, type ReactNode } from 'react'
-import type { GeneratedImageBlock } from '@/chat/types'
+import { Component, createRef, useEffect, useState, useMemo, useRef, useLayoutEffect, type ReactNode } from 'react'
+import { executionDetailSections, type ExecutionDetailSection } from '@/chat/executionDetails'
+import type { ChatBlock, GeneratedImageBlock } from '@/chat/types'
 import { stripNotifySummaryFooter } from '@hapi/protocol/messages'
 import { type ToolGroupBlock } from '@/chat/toolGroups'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
-import { ToolCard } from './ToolCard'
+import { InlineExecutionTool } from './InlineExecutionTool'
 import { formatGroupedHeaderSubtitle } from './groupedPresentation'
 import { useTranslation } from '@/lib/use-translation'
 
@@ -14,7 +15,7 @@ class ProcessReadingAnchor extends Component<{ children: ReactNode; revision: un
     private root = createRef<HTMLDivElement>()
     getSnapshotBeforeUpdate(previous: { revision: unknown }) {
         if (previous.revision === this.props.revision) return null
-        const viewport = this.root.current
+        const viewport = this.root.current?.closest<HTMLElement>('.chat-scroll-y') ?? this.root.current
         if (!viewport) return null
         const bounds = viewport.getBoundingClientRect()
         const anchor = Array.from(this.root.current!.querySelectorAll<HTMLElement>('[data-execution-step]')).find(element => {
@@ -25,12 +26,12 @@ class ProcessReadingAnchor extends Component<{ children: ReactNode; revision: un
     }
     componentDidUpdate(_props: unknown, _state: unknown, snapshot: { id: string; top: number } | null) {
         if (!snapshot) return
-        const viewport = this.root.current
+        const viewport = this.root.current?.closest<HTMLElement>('.chat-scroll-y') ?? this.root.current
         const anchor = Array.from(this.root.current?.querySelectorAll<HTMLElement>('[data-execution-step]') ?? [])
             .find(element => element.dataset.executionStep === snapshot.id)
         if (viewport && anchor) viewport.scrollTop += anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top - snapshot.top
     }
-    render() { return <div ref={this.root} data-hapi-nested-scroll="true" className="max-h-[60vh] space-y-3 overflow-y-auto overscroll-contain" tabIndex={0}>{this.props.children}</div> }
+    render() { return <div ref={this.root} className="space-y-3" tabIndex={0}>{this.props.children}</div> }
 }
 
 function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTiming'] }) {
@@ -57,6 +58,17 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
     // Keep each inspected step mounted as its state changes; regrouping completed
     // tools would discard an open detail dialog and move the reading position.
     const members = block.processBlocks ?? []
+    const previousSections = useRef<ExecutionDetailSection[]>([])
+    const sections = useMemo(() => executionDetailSections(members, previousSections.current), [members])
+    useLayoutEffect(() => { previousSections.current = sections }, [sections])
+    const renderStep = (member: ChatBlock) => <div key={member.id} data-execution-step={member.kind === 'tool-call' ? undefined : member.id}>
+        {member.kind === 'tool-call' ? <InlineExecutionTool block={member} />
+            : member.kind === 'generated-image' ? renderMedia(member)
+            : member.kind === 'agent-text' || member.kind === 'agent-reasoning'
+                ? <div className={member.kind === 'agent-reasoning' ? 'text-[var(--app-hint)]' : undefined}>
+                    <MarkdownRenderer content={ctx.showSessionSummaryInChat ? member.text : stripNotifySummaryFooter(member.text)} />
+                </div> : null}
+    </div>
     if (block.processRole === 'header') return <div data-testid="execution-timing" className="flex min-h-11 items-center text-xs text-[var(--app-hint)]">
         <ExecutionTimingLabel timing={block.processTiming} />
     </div>
@@ -64,7 +76,7 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
         <button type="button" aria-expanded={open} className="flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
             onClick={() => {
                 ctx.setExecutionProcessOpen?.(block.id, !open)
-                if (!open) ctx.onNestedScrollFollowChange?.(false)
+                if (!open) { ctx.onNestedScrollFollowChange?.(false); ctx.onExecutionInspect?.(block.id) }
             }}>
             <span>{block.processRole === 'tools'
                 ? (block.tools.length === 0 ? t('chat.execution.media') : formatGroupedHeaderSubtitle(block, t) ?? t('chat.execution.tools', { n: block.tools.length }))
@@ -74,17 +86,20 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
         {open ? <div className="space-y-3 border-l border-[var(--app-border)] pl-3">
             {block.needsOlderHistory ? <p className="text-xs text-[var(--app-hint)]">{t('chat.executionProcess.partial')}</p> : null}
             <ProcessReadingAnchor revision={members}>
-                {members.map(member => <div key={member.id} data-execution-step={member.id}>
-                    {member.kind === 'tool-call'
-                            ? <ToolCard block={member} api={ctx.api} sessionId={ctx.sessionId}
-                                metadata={ctx.metadata} terminalToolDisplayMode={ctx.terminalToolDisplayMode} disabled={ctx.disabled} onDone={ctx.onRefresh} />
-                            : member.kind === 'generated-image' ? renderMedia(member)
-                            : member.kind === 'agent-text' || member.kind === 'agent-reasoning'
-                                ? <div className={member.kind === 'agent-reasoning' ? 'text-[var(--app-hint)]' : undefined}>
-                                    <MarkdownRenderer content={ctx.showSessionSummaryInChat ? member.text : stripNotifySummaryFooter(member.text)} />
-                                </div>
-                                : null}
-                </div>)}
+                {block.processRole === 'tools' ? members.map(renderStep) : sections.map(section => {
+                    if (section.kind === 'text') return renderStep(section.block)
+                    const key = `${block.id}:${section.id}`
+                    const expanded = ctx.openExecutionProcesses?.has(key) ?? false
+                    return <div key={section.id}>
+                        <button type="button" data-execution-step={section.id} data-testid="execution-detail-group" aria-expanded={expanded}
+                            className="flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)]"
+                            onClick={() => { ctx.setExecutionProcessOpen?.(key, !expanded); ctx.onNestedScrollFollowChange?.(false) }}>
+                            <span>{section.tools.length ? t('chat.execution.tools', { n: section.tools.length }) : t('chat.execution.media')}</span>
+                            <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
+                        </button>
+                        {expanded ? <div className="space-y-2 pl-3">{section.blocks.map(renderStep)}</div> : null}
+                    </div>
+                })}
             </ProcessReadingAnchor>
         </div> : null}
     </section>

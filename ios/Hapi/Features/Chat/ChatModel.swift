@@ -249,7 +249,7 @@ final class ChatModel {
     let toolInspection = ToolInspectionState()
     private(set) var visibleSurfaces = Set<String>()
     var isInspectingContent: Bool {
-        toolInspection.owner != nil || visibleSurfaces.contains {
+        toolInspection.owner != nil || presentationState.values.contains { $0.key.field == "inlineExpanded" && ($0.value as? Bool) == true } || visibleSurfaces.contains {
             $0.hasPrefix("process:") || $0.hasPrefix("message:") || $0.hasPrefix("inspector:")
         }
     }
@@ -441,6 +441,13 @@ final class ChatModel {
             guard visibleSurfaces.isEmpty else { return }
             self.stop()
         }
+    }
+
+    func toggleInlineExecutionGroup(_ id: String) {
+        let key = ChatPresentationState.Key(id: id, field: "inlineExpanded")
+        let open = presentationState.values[key] as? Bool ?? false
+        if !open { beginContentInspection() }
+        presentationState.values[key] = !open
     }
 
     func beginContentInspection() {
@@ -970,6 +977,7 @@ final class ChatModel {
 
     func jumpToLatest() {
         guard isActive, !isJumpingToLatest, let controller = chat.windowController else { return }
+        for key in presentationState.values.keys where key.field == "inlineExpanded" { presentationState.values[key] = false }
         cancelHistory()
         viewportNeedsOlder = false
         isJumpingToLatest = true
@@ -1127,7 +1135,7 @@ final class ChatModel {
             blockIndexByID = nav.blockIndexByID
             blockToUserTurnIndex = nav.blockToUserTurnIndex
             blockToRailIndex = nav.blockToRailIndex
-            presentationState.prune(to: prepared.liveIDs)
+            presentationState.prune(to: prepared.liveIDs.union(executionGroups.map(\.id)))
             heldExecutionIDs.formIntersection(prepared.liveIDs)
         }
         if prepared.navigation != nil || processChanged { rebuildMessageRows() }
@@ -1178,7 +1186,7 @@ final class ChatModel {
     private func rebuildMessageRows() {
         if !followsTail { holdVisibleExecutionContent() }
         var keepVisible = heldExecutionIDs
-        for (key, value) in presentationState.values where key.field == "expanded" && (value as? Bool) == true {
+        for (key, value) in presentationState.values where (key.field == "expanded" || key.field == "inlineExpanded") && (value as? Bool) == true {
             keepVisible.insert(key.id)
         }
         let displayed = highlightedBlockID == nil

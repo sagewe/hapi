@@ -92,6 +92,8 @@ final class ToolInspectionState {
         }
     }
 
+    func group(_ id: String) -> ToolGroupBlock? { groups[id] }
+
     func open(_ block: ToolCallBlock, owner: String) {
         groupSelection = nil
         selection = Selection(owner: owner, block: tools[block.id] ?? block)

@@ -1,4 +1,5 @@
 export default {
+  'chat.execution.fullDetails': '查看完整详情',
   'chat.execution.media': '查看的图片',
   'chat.execution.tools': '{n} 次工具调用',
   'chat.response.sending': '发送中…',

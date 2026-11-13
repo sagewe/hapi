@@ -35,6 +35,66 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         }
     }
 
+    func testExecutionOutlineExpandsInlineWithToolGroupsClosedByDefault() async throws {
+        let credentials = InMemoryCredentialStore()
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: "http://127.0.0.1:1/inline-\(UUID().uuidString)",
+            credentialStore: credentials, performer: ToolTranscriptHTTP()))
+        let model = ChatModel(session: hub, sessionId: "inline")
+        defer { model.stop(); hub.shutdown() }
+        model.start()
+        try await eventually { !model.messageRows.isEmpty && !model.isSyncingTail }
+        let groupID = try XCTUnwrap(model.messageRows.compactMap { row -> String? in
+            if case .group(let p) = row.kind, p.isExecutionProcess { return p.id }; return nil
+        }.first)
+        let group = try XCTUnwrap(model.toolInspection.group(groupID))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let host = UIHostingController(rootView: ChatTranscriptView(model: model)
+            .toolPresentations(model: model, session: hub, owner: "chat", openFile: { _ in })
+            .hapiTypography().hapiTheme(.light))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await eventually { self.findCollection(host.view) != nil }
+        let collection = try XCTUnwrap(findCollection(host.view))
+        let index = try XCTUnwrap(model.messageRows.firstIndex { $0.id == groupID }) + 1
+        try await eventually { collection.cellForItem(at: IndexPath(item: index, section: 0)) != nil }
+        let cell = try XCTUnwrap(collection.cellForItem(at: IndexPath(item: index, section: 0)))
+        let originalHeight = cell.frame.height
+        let originalY = cell.frame.minY - collection.contentOffset.y
+        model.toggleInlineExecutionGroup(groupID)
+        try await eventually { cell.frame.height > originalHeight + 100 }
+        XCTAssertNil(host.presentedViewController, "The whole process opens in the transcript, not a sheet")
+        XCTAssertLessThan(cell.frame.height, 700, "47 tools must not fill the overview by default")
+        let overviewHeight = cell.frame.height
+        let section = try XCTUnwrap(executionDetailSections(group.processBlocks ?? []).first { $0.isTools })
+        model.presentationState.values[.init(id: groupID, field: "inlineSections")] = Set(section.blocks.map(\.id))
+        try await eventually { cell.frame.height > overviewHeight + 100 }
+        let tool = try XCTUnwrap(section.blocks.compactMap(\.asToolCall).first)
+        let toolsHeight = cell.frame.height
+        model.presentationState.values[.init(id: groupID, field: "inlineTools")] = Set([tool.id])
+        try await eventually { cell.frame.height > toolsHeight + 40 }
+        XCTAssertLessThan(cell.frame.height - toolsHeight, 420, "Inline output must be height-bounded")
+        XCTAssertNil(host.presentedViewController)
+        let controller = await hub.windows.open(sessionId: "inline")
+        let seq = (await controller.state.newestSeq ?? 0) + 1
+        let update = DecryptedMessage(id: "inline-update", seq: seq,
+            content: ["role": "agent", "content": ["type": "codex", "data": [
+                "type": "tool-call-result", "callId": .string(tool.tool.id), "output": "Updated output", "is_error": false
+            ]]], createdAt: seq * 1000, invokedAt: seq * 1000)
+        await controller.onMessageEvent(.messageReceived(namespace: nil, sessionId: "inline", message: update))
+        try await eventually { model.toolInspection.tools[tool.id]?.tool.result == .string("Updated output") }
+        XCTAssertEqual(model.presentationState.values[.init(id: groupID, field: "inlineExpanded")] as? Bool, true)
+        XCTAssertTrue((model.presentationState.values[.init(id: groupID, field: "inlineTools")] as? Set<String>)?.contains(tool.id) == true)
+        XCTAssertGreaterThan(cell.frame.height, overviewHeight + 100)
+        model.toggleInlineExecutionGroup(groupID)
+        try await eventually { abs(cell.frame.height - originalHeight) < 2 }
+        XCTAssertEqual(cell.frame.minY - collection.contentOffset.y, originalY, accuracy: 2)
+    }
+
     func testConcurrentExecutionProcessPreview() async throws {
         let credentials = InMemoryCredentialStore()
         let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()

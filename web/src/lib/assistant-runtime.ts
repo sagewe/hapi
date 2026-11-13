@@ -1101,7 +1101,7 @@ export function useHappyRuntime(props: {
     const responseState = initialResponseState(props.blocks, {
         isSending: props.isSending, isRunning: props.session.thinking, isActive: props.session.active,
         activeTurnStartedAt, completedRounds: props.completedRounds,
-        awaitingOutput: waitingForAssistantOutput, isHistory: props.viewMode === 'history',
+        isHistory: props.viewMode === 'history',
         isHydrating: props.isSyncingTail
     })
     const extras = useMemo<HappyRuntimeExtras>(() => ({
