@@ -73,10 +73,6 @@ struct ToolGroupBlockView: View {
                     if presentation.runningCount > 0 {
                         Text("\(presentation.runningCount) running tools")
                     }
-                    if presentation.errorCount > 0 {
-                        Text("\(presentation.errorCount) failed tools")
-                            .foregroundStyle(.red)
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(theme.textSecondary)
