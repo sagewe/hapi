@@ -135,7 +135,7 @@ export function extractUserText(content: unknown): string | null {
     return extractChatText(content)
 }
 
-function extractTitleMessage(message: StoredMessage): { role: 'user' | 'assistant'; text: string } | null {
+export function extractTitleMessage(message: StoredMessage): { role: 'user' | 'assistant'; text: string } | null {
     // A queued prompt is not part of the conversation yet and may be edited or
     // cancelled immediately after this request starts.
     if (message.invokedAt === null) return null

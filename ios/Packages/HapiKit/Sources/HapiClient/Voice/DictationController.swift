@@ -17,6 +17,9 @@ public func appendTranscript(_ text: String, transcript: String) -> String {
 /// `DictationApi`); ``APIClient`` conforms in `Endpoints/VoiceEndpoints.swift`,
 /// tests drive a fake.
 public protocol DictationTranscribing: Sendable {
+    func prepareRecognition(context: VoiceRecognitionContext) async throws
+    func transcribe(audio: Data, filename: String, mimeType: String, provider: String,
+                    language: String?, context: VoiceRecognitionContext) async throws -> TranscriptionResponse
     /// `GET /api/voice/transcription/providers`.
     func transcriptionProviders() async throws -> TranscriptionProvidersResponse
 
@@ -103,6 +106,8 @@ public final class DictationController {
     /// One-shot outcomes; set by the owning screen model.
     @ObservationIgnored public var onEvent: (@MainActor (DictationEvent) -> Void)?
 
+    public var context = VoiceRecognitionContext()
+    private var recordingContext = VoiceRecognitionContext()
     private let api: any DictationTranscribing
     private let recorder: any DictationRecorder
     private let now: () -> Int
@@ -154,6 +159,7 @@ public final class DictationController {
 
     private func startRecording() {
         guard !operationRunning else { return }
+        recordingContext = VoiceRecognitionContext(sessionId: context.sessionId, draft: context.draft)
         operationRunning = true
         state = .starting
         Task { [weak self] in
@@ -165,6 +171,7 @@ public final class DictationController {
             }
             self.cachedProviderId = provider
             do {
+                try await self.api.prepareRecognition(context: self.recordingContext)
                 try self.recorder.start()
                 self.state = .recording(startedAtMs: self.now())
             } catch {
@@ -227,7 +234,8 @@ public final class DictationController {
                     filename: self.recorder.filename,
                     mimeType: self.recorder.mimeType,
                     provider: provider,
-                    language: nil
+                    language: nil,
+                    context: self.recordingContext
                 )
                 self.emit(.transcribed(result.text))
             } catch {

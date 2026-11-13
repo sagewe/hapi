@@ -39,7 +39,8 @@ describe('createHomeAsrProxyWebSocketHandler', () => {
                 wsOrigin: 'wss://myhome.robin-larch.ts.net',
                 token: 'secret-mcp-token',
                 sampleRate: 16000,
-                model: 'hybrid-qwen3'
+                model: 'hybrid-qwen3',
+                asrContext: 'context-snapshot'
             },
             send(payload: string | Uint8Array) {
                 clientReceived.push(payload)
@@ -56,6 +57,9 @@ describe('createHomeAsrProxyWebSocketHandler', () => {
         expect((upstream.opts as { headers: Record<string, string> }).headers.Authorization).toBe(
             'Bearer secret-mcp-token'
         )
+
+        expect((upstream.opts as { headers: Record<string, string> }).headers['X-ASR-Context']).toBe('context-snapshot')
+        expect(upstream.url).not.toContain('context-snapshot')
 
         // Send early PCM chunk while upstream is still CONNECTING (readyState === 0)
         const pcmChunk = new Uint8Array([1, 2, 3, 4])

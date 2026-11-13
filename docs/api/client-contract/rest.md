@@ -365,3 +365,14 @@ The Hub sets it once, only while the session has neither `name` nor `summary`;
 agent metadata writes cannot set or clear it. Clients display titles in the
 order `name`, `summary`, `promptTitle`, then the path fallback. Because
 `promptTitle` is separate from `summary`, it never blocks generated or native titles.
+
+### Session-aware dictation
+
+`POST /api/voice/asr-context` accepts `{ sessionId?, draft, recordingId }` and returns `{ ok: true }`.
+Capture these values once at recording start. Send the same values as multipart fields to
+`POST /api/voice/transcription`. For `WS /api/voice/asr-ws`, send `sessionId` and `recordingId`
+as query parameters and the draft as base64 UTF-8 in `X-ASR-Draft` (native clients).
+The Hub checks namespace/session access before reading history or reusing a snapshot.
+Snapshots are process-local, capped at 256 and expire after ten minutes. Missing session IDs
+use only HAPI vocabulary. The home gateway receives bounded vocabulary in `X-ASR-Context`;
+conversation text, tool output and raw drafts are never forwarded to the ASR provider.

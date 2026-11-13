@@ -131,6 +131,7 @@ export type DictationPendingSendOptions = {
 }
 
 export function useDictation(config: {
+    sessionId?: string
     api: ApiClient | null
     provider: TranscriptionProvider | null
     mode: TranscriptionMode
@@ -191,9 +192,13 @@ export function useDictation(config: {
         const mimeType = preferredMimeType()
         operationRef.current += 1
         const operation = operationRef.current
+        const recognitionContext = { sessionId: config.sessionId, draft: config.getCurrentText().slice(0, 2000), recordingId: crypto.randomUUID() }
         setStatus('connecting')
 
         try {
+            if (config.provider === 'openai-compatible' && recognitionContext.sessionId) {
+                await config.api!.prepareVoiceAsrContext(recognitionContext)
+            }
             const stream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             })
@@ -284,6 +289,7 @@ export function useDictation(config: {
                             file: new File([blob], `speech.${recordingExtension(type)}`, { type }),
                             provider: config.provider!,
                             mode: 'standard',
+                            ...recognitionContext,
                             language: savedLanguage
                         })
                         const transcribedText = result.text || ''

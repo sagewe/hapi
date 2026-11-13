@@ -528,6 +528,7 @@ export function HappyComposer(props: {
     const setComposerText = useCallback((text: string) => api.composer().setText(text), [api])
     const voiceInput = useVoiceInputPreferences(props.voiceTranscriptionApi ?? null)
     const dictationConfig = useMemo(() => ({
+        sessionId,
         api: props.voiceTranscriptionApi ?? null,
         provider: voiceInput.provider,
         mode: voiceInput.transcriptionMode,
@@ -539,6 +540,7 @@ export function HappyComposer(props: {
             }
         }
     }), [
+        sessionId,
         props.voiceTranscriptionApi,
         voiceInput.provider,
         voiceInput.transcriptionMode,

@@ -1155,11 +1155,13 @@ describe('Home Model Gateway voice integration', () => {
 
         let capturedUrl = ''
         let capturedAuth = ''
+        let capturedContext = ''
         const originalFetch = global.fetch
         // @ts-expect-error test override
         global.fetch = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
             capturedUrl = String(input)
             capturedAuth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? ''
+            capturedContext = (init?.headers as Record<string, string> | undefined)?.['X-ASR-Context'] ?? ''
             return new Response(JSON.stringify({ text: '把 Happy 接到家庭模型网关', language: 'zh' }), { status: 200 })
         })
 
@@ -1178,6 +1180,7 @@ describe('Home Model Gateway voice integration', () => {
             expect(await txRes.json()).toEqual({ text: '把 Happy 接到家庭模型网关', language: 'zh' })
             expect(capturedUrl).toBe('https://myhome.robin-larch.ts.net/v1/ai/audio/transcriptions?source=hapi-http')
             expect(capturedAuth).toBe('Bearer home-secret-token')
+            expect(JSON.parse(Buffer.from(capturedContext, 'base64').toString())).toEqual({ keywords: [] })
         } finally {
             global.fetch = originalFetch
         }

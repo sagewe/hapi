@@ -1,3 +1,4 @@
+import { resolveAsrContext, encodeAsrContext } from './asrContext'
 import { Hono } from 'hono'
 import { compress } from 'hono/compress'
 import { cors } from 'hono/cors'
@@ -313,7 +314,7 @@ function createWebApp(options: {
     }))
     app.route('/api', createPushRoutes(options.store, options.vapidPublicKey))
     app.route('/api', createDevicesRoutes(options.store))
-    app.route('/api', createVoiceRoutes({ dataDir: configuration.dataDir }))
+    app.route('/api', createVoiceRoutes({ dataDir: configuration.dataDir, getSyncEngine: options.getSyncEngine, store: options.store }))
     // Path is intentionally NOT `/api/events` — that route is the SSE stream.
     app.route('/api', createWorkGraphRoutes(options.store))
 
@@ -515,6 +516,7 @@ export async function startWebServer(options: {
 
             // Voice WebSocket proxies — require JWT auth via Bearer header or query param
             // (browser WebSocket API cannot set custom headers; native iOS clients can)
+            let voiceNamespace = ''
             if (
                 url.pathname === '/api/voice/gemini-ws'
                 || url.pathname === '/api/voice/qwen-ws'
@@ -529,7 +531,9 @@ export async function startWebServer(options: {
                     return new Response('Missing authorization token', { status: 401 })
                 }
                 try {
-                    await jwtVerify(token, options.jwtSecret, { algorithms: ['HS256'] })
+                    const verified = await jwtVerify(token, options.jwtSecret, { algorithms: ['HS256'] })
+                    if (typeof verified.payload.ns !== 'string') return new Response('Invalid namespace', { status: 401 })
+                    voiceNamespace = verified.payload.ns
                 } catch {
                     return new Response('Invalid token', { status: 401 })
                 }
@@ -547,13 +551,27 @@ export async function startWebServer(options: {
                     ? parsedRate
                     : 16000
                 const model = url.searchParams.get('model')?.trim() || undefined
+                let asrContext: string
+                try {
+                    const draft = req.headers.get('x-asr-draft') ?? ''
+                    let decodedDraft = ''
+                    if (draft.length <= 12000) decodedDraft = Buffer.from(draft, 'base64').toString('utf8')
+                    asrContext = encodeAsrContext(resolveAsrContext(
+                        options.getSyncEngine(), options.store, voiceNamespace,
+                        url.searchParams.get('sessionId') ?? undefined,
+                        decodedDraft, url.searchParams.get('recordingId') ?? ''
+                    ))
+                } catch {
+                    return new Response('Session context unavailable or access denied', { status: 403 })
+                }
                 const upgraded = (server as unknown as { upgrade: (req: Request, opts: unknown) => boolean }).upgrade(req, {
                     data: {
                         _homeAsrProxy: true,
                         wsOrigin: homeGw.wsOrigin,
                         token: homeGw.token,
                         sampleRate,
-                        model
+                        model,
+                        asrContext
                     }
                 })
                 if (!upgraded) {

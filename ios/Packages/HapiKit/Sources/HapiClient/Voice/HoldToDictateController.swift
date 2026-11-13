@@ -119,6 +119,8 @@ public protocol HoldAsrStreamSession: Sendable {
 
 /// Factory seam for opening `WS /api/voice/asr-ws` streaming sessions.
 public protocol HoldAsrStreaming: Sendable {
+    func openSession(sampleRate: Int, context: VoiceRecognitionContext,
+                     onPartial: @escaping @Sendable (String) -> Void) async throws -> any HoldAsrStreamSession
     func openSession(
         sampleRate: Int,
         onPartial: @escaping @Sendable (String) -> Void
@@ -173,6 +175,8 @@ public final class HoldToDictateController {
     private let recorder: any HoldAudioCapturing
     private let sampleRate: Int
 
+    public var context = VoiceRecognitionContext()
+    private var recordingContext = VoiceRecognitionContext()
     private var cachedProviderId: String?
     private var sessionGeneration: UInt64 = 0
     private var initialPoint: (x: Double, y: Double) = (0, 0)
@@ -214,8 +218,10 @@ public final class HoldToDictateController {
         containerHeight: Double
     ) {
         guard phase == .idle else { return }
+        recordingContext = VoiceRecognitionContext(sessionId: context.sessionId, draft: context.draft)
         sessionGeneration &+= 1
         let gen = sessionGeneration
+        let recognitionContext = recordingContext
         initialPoint = (fingerX, fingerY)
         preOpenChunks.removeAll(keepingCapacity: true)
         activeSession = nil
@@ -252,7 +258,9 @@ public final class HoldToDictateController {
             activeStreamTask = Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let session = try await streamer.openSession(sampleRate: self.sampleRate) { [weak self] partial in
+                    try await self.api.prepareRecognition(context: recognitionContext)
+                    guard self.sessionGeneration == gen else { return }
+                    let session = try await streamer.openSession(sampleRate: self.sampleRate, context: recognitionContext) { [weak self] partial in
                         Task { @MainActor [weak self] in
                             self?.applyPartial(partial, generation: gen)
                         }
@@ -299,6 +307,7 @@ public final class HoldToDictateController {
 
     /// Finger lifted at the end of the hold gesture.
     public func endHold() {
+        let recognitionContext = recordingContext
         guard case .holding(let zone, let partialText, _) = phase else { return }
         let gen = sessionGeneration
 
@@ -357,7 +366,7 @@ public final class HoldToDictateController {
 
             if (resolvedText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true),
                !pcmData.isEmpty {
-                resolvedText = await self.transcribeFallbackWAV(pcmData: pcmData)
+                resolvedText = await self.transcribeFallbackWAV(pcmData: pcmData, context: recognitionContext)
             }
 
             guard self.sessionGeneration == gen else { return }
@@ -478,7 +487,7 @@ public final class HoldToDictateController {
         }
     }
 
-    private func transcribeFallbackWAV(pcmData: Data) async -> String? {
+    private func transcribeFallbackWAV(pcmData: Data, context: VoiceRecognitionContext) async -> String? {
         var provider = cachedProviderId
         if provider == nil {
             provider = try? await api.transcriptionProviders()
@@ -498,7 +507,8 @@ public final class HoldToDictateController {
                 filename: "speech.wav",
                 mimeType: "audio/wav",
                 provider: provider,
-                language: nil
+                language: nil,
+                context: context
             )
             return res.text
         } catch {

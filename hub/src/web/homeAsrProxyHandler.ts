@@ -18,6 +18,7 @@ export interface HomeAsrProxyData {
     token: string
     sampleRate: number
     model?: string
+    asrContext?: string
 }
 
 export interface HomeAsrProxyHandler {
@@ -59,7 +60,7 @@ export function createHomeAsrProxyWebSocketHandler(
             }
 
             const upstream = new WebSocketImpl(upstreamUrl.toString(), {
-                headers: { Authorization: `Bearer ${data.token}` }
+                headers: { Authorization: `Bearer ${data.token}`, ...(data.asrContext ? { 'X-ASR-Context': data.asrContext } : {}) }
             })
             upstreamMap.set(clientWs, upstream)
             pendingFramesMap.set(clientWs, [])

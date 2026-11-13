@@ -953,6 +953,7 @@ struct ChatComposerView: View {
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            controller.context = VoiceRecognitionContext(sessionId: interactor.sessionId, draft: interactor.composerText)
             controller.beginHold(
                 fingerX: Double(location.x),
                 fingerY: Double(location.y),
@@ -1015,6 +1016,7 @@ struct ChatComposerView: View {
             dictation.toggle()
             return
         }
+        dictation.context = VoiceRecognitionContext(sessionId: interactor.sessionId, draft: interactor.composerText)
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
             dictation.toggle()

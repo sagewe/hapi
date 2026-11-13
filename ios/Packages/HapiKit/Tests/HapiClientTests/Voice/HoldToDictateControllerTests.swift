@@ -22,6 +22,13 @@ private actor FakeHoldDictationApi: DictationTranscribing {
     var responseText = "家庭网关兜底文本"
     private(set) var calls: [Call] = []
 
+    private(set) var lastContext: VoiceRecognitionContext?
+    func transcribe(audio: Data, filename: String, mimeType: String, provider: String,
+                    language: String?, context: VoiceRecognitionContext) async throws -> TranscriptionResponse {
+        lastContext = context
+        return try await transcribe(audio: audio, filename: filename, mimeType: mimeType, provider: provider, language: language)
+    }
+
     func transcriptionProviders() async throws -> TranscriptionProvidersResponse {
         TranscriptionProvidersResponse(providers: providers)
     }
@@ -268,13 +275,18 @@ struct HoldToDictateControllerTests {
         var outcomes: [HoldDictationOutcome] = []
         controller.onOutcome = { outcomes.append($0) }
 
+        controller.context = VoiceRecognitionContext(sessionId: "original-session", draft: "OriginalModule")
         controller.beginHold(fingerX: 196, fingerY: 790, containerWidth: 393, containerHeight: 852)
         try await Task.sleep(nanoseconds: 30_000_000)
+        controller.context = VoiceRecognitionContext(sessionId: "other-session", draft: "ChangedModule")
         controller.endHold()
         try await Task.sleep(nanoseconds: 50_000_000)
 
         #expect(controller.phase == .idle)
         #expect(outcomes == [.sendText("家庭网关兜底文本")])
+        let context = await api.lastContext
+        #expect(context?.sessionId == "original-session")
+        #expect(context?.draft == "OriginalModule")
         let calls = await api.calls
         #expect(calls.count == 1)
         #expect(calls.first?.mimeType == "audio/wav")

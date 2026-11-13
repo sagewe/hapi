@@ -16,12 +16,18 @@ public final class HubStreamingAsrClient: HoldAsrStreaming, Sendable {
         sampleRate: Int,
         onPartial: @escaping @Sendable (String) -> Void
     ) async throws -> any HoldAsrStreamSession {
-        guard let wsURL = api.voiceAsrWebSocketURL(sampleRate: sampleRate, model: model) else {
+        try await openSession(sampleRate: sampleRate, context: VoiceRecognitionContext(), onPartial: onPartial)
+    }
+
+    public func openSession(sampleRate: Int, context: VoiceRecognitionContext,
+                            onPartial: @escaping @Sendable (String) -> Void) async throws -> any HoldAsrStreamSession {
+        guard let wsURL = api.voiceAsrWebSocketURL(sampleRate: sampleRate, model: model, context: context) else {
             throw APIError(status: 400, code: "invalid_asr_ws_url")
         }
         let token = try await api.authManager.validToken()
         var request = URLRequest(url: wsURL)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(Data(context.draft.utf8).base64EncodedString(), forHTTPHeaderField: "X-ASR-Draft")
         request.timeoutInterval = 45
 
         let task = URLSession.shared.webSocketTask(with: request)

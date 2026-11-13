@@ -1457,16 +1457,26 @@ export class ApiClient {
         })
     }
 
+    async prepareVoiceAsrContext(context: { sessionId?: string; draft: string; recordingId: string }): Promise<void> {
+        await this.request('/api/voice/asr-context', { method: 'POST', body: JSON.stringify(context) })
+    }
+
     async transcribeVoice(options: {
         file: File
         provider: TranscriptionProvider
         mode: TranscriptionMode
         language?: string
+        sessionId?: string
+        draft?: string
+        recordingId?: string
     }): Promise<{ text: string; language?: string }> {
         const form = new FormData()
         form.set('file', options.file)
         form.set('provider', options.provider)
         form.set('mode', options.mode)
+        if (options.sessionId) form.set('sessionId', options.sessionId)
+        if (options.draft) form.set('draft', options.draft.slice(0, 2000))
+        if (options.recordingId) form.set('recordingId', options.recordingId)
         if (options.language) form.set('language', options.language)
         return await this.request('/api/voice/transcription', { method: 'POST', body: form })
     }

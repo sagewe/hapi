@@ -1,3 +1,6 @@
+import { resolveAsrContext, encodeAsrContext } from '../asrContext'
+import type { Store } from '../../store'
+import type { SyncEngine } from '../../sync/syncEngine'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
@@ -121,7 +124,8 @@ function getTranscriptionConfig(provider: TranscriptionProvider): {
 async function transcribeStandard(
     provider: TranscriptionProvider,
     file: File,
-    language?: string
+    language?: string,
+    asrContext?: string
 ): Promise<Response> {
     const config = getTranscriptionConfig(provider)
     if (!config) return Response.json({ error: `${provider} transcription is not configured` }, { status: 400 })
@@ -156,6 +160,7 @@ async function transcribeStandard(
         headers = provider === 'elevenlabs'
             ? { 'xi-api-key': config.apiKey ?? '' }
             : (config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {})
+        if (config.querySuffix && asrContext) headers['X-ASR-Context'] = asrContext
         body = form
     }
 
@@ -521,7 +526,7 @@ const transcriptionCredentialsUpdateSchema = z.object({
     elevenLabsMaxDurationSeconds: z.number().int().nullable().optional(),
 }).strict()
 
-export function createVoiceRoutes(options: { dataDir?: string } = {}): Hono<WebAppEnv> {
+export function createVoiceRoutes(options: { dataDir?: string; getSyncEngine?: () => SyncEngine | null; store?: Store } = {}): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
     const resolveDataDir = () => options.dataDir ?? getConfiguration().dataDir
 
@@ -580,6 +585,22 @@ export function createVoiceRoutes(options: { dataDir?: string } = {}): Hono<WebA
         }
     })
 
+    app.post('/voice/asr-context', bodyLimit({
+        maxSize: 12000, onError: (c) => c.json({ error: 'Context too large' }, 413)
+    }), async (c) => {
+        const body = await c.req.json().catch(() => null)
+        const parsed = z.object({ sessionId: z.string().max(200).optional(), draft: z.string().max(8000),
+            recordingId: z.string().min(1).max(80) }).safeParse(body)
+        if (!parsed.success) return c.json({ error: 'Invalid context request' }, 400)
+        try {
+            resolveAsrContext(options.getSyncEngine?.() ?? null, options.store, c.get('namespace'),
+                parsed.data.sessionId, parsed.data.draft, parsed.data.recordingId)
+            return c.json({ ok: true })
+        } catch {
+            return c.json({ error: 'Session context unavailable or access denied' }, 403)
+        }
+    })
+
     app.post('/voice/transcription', bodyLimit({
         maxSize: MAX_TRANSCRIPTION_BODY_BYTES,
         onError: (c) => c.json({ error: 'Audio file too large' }, 413)
@@ -606,7 +627,17 @@ export function createVoiceRoutes(options: { dataDir?: string } = {}): Hono<WebA
             return c.json({ error: 'Unsupported audio file type' }, 400)
         }
 
-        return transcribeStandard(provider.data, file, language.data)
+        let context: string
+        try {
+            context = encodeAsrContext(resolveAsrContext(
+                options.getSyncEngine?.() ?? null, options.store, c.get('namespace'),
+                typeof form.get('sessionId') === 'string' ? String(form.get('sessionId')) : undefined,
+                String(form.get('draft') ?? '').slice(0, 2000), String(form.get('recordingId') ?? '')
+            ))
+        } catch {
+            return c.json({ error: 'Session context unavailable or access denied' }, 403)
+        }
+        return transcribeStandard(provider.data, file, language.data, context)
     })
 
     app.post('/voice/transcription/realtime-token', bodyLimit({
