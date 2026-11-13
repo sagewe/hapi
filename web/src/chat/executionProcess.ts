@@ -94,6 +94,19 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
                 if (prior.kind === 'agent-text') decisionContext.add(prior.id)
             }
         })
+        // Tool events advance activity, not the explanation the user is reading.
+        // Keep consecutive prose/reasoning until a new explanation or answer arrives.
+        const explanation = new Set<string>()
+        const hasFinal = round.some(block => block.kind === 'agent-text' && isObject(block.meta) && block.meta.assistantPhase === 'final')
+        if (!completed && !hasFinal) {
+            let cursor = round.findLastIndex(block => block.kind === 'agent-text' || block.kind === 'agent-reasoning')
+            for (; cursor >= 0; cursor -= 1) {
+                const block = round[cursor]
+                if (block.kind === 'agent-event') continue
+                if (block.kind !== 'agent-text' && block.kind !== 'agent-reasoning') break
+                explanation.add(block.id)
+            }
+        }
         const latest = round.findLast(block => block.kind !== 'agent-event')?.id
         let members: ChatBlock[] = []
         const emit = () => {
@@ -124,7 +137,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         }
         let insertionIndex: number | null = null
         for (const block of round) {
-            if (!foldable(block) || replies.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
+            if (!foldable(block) || replies.has(block.id) || explanation.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
                 || ((!completed || replies.size === 0) && block.id === latest)) {
                 output.push(activityPresentation(block, Boolean(options.keepVisibleIds?.has(block.id) && options.previousActivityIds?.has(block.id))))
             } else {

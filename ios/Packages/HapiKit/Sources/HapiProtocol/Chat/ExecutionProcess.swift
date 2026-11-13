@@ -88,6 +88,25 @@ public func buildExecutionProcessBlocks(
                 cursor -= 1
             }
         }
+        // Match Web: tool activity must not evict the latest explanation.
+        var explanation = Set<String>()
+        let hasFinal = round.contains { block in
+            if case .agentText(let text) = block { return text.meta?["assistantPhase"]?.stringValue == "final" }
+            return false
+        }
+        if !completed && !hasFinal, let lastExplanation = round.lastIndex(where: { block in
+            switch block { case .agentText, .agentReasoning: return true; default: return false }
+        }) {
+            var cursor = lastExplanation
+            scan: while cursor >= 0 {
+                switch round[cursor] {
+                case .agentText, .agentReasoning: explanation.insert(round[cursor].id)
+                case .agentEvent: break
+                default: break scan
+                }
+                cursor -= 1
+            }
+        }
         let latest = round.last { if case .agentEvent = $0 { return false }; return true }?.id
         var members: [ChatBlock] = []
         func emit() {
@@ -116,7 +135,7 @@ public func buildExecutionProcessBlocks(
         }
         var insertionIndex: Int?
         for block in round {
-            if !canFoldExecutionBlock(block) || replies.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
+            if !canFoldExecutionBlock(block) || replies.contains(block.id) || explanation.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
                 || ((!completed || replies.isEmpty) && block.id == latest) {
                 output.append(.block(block))
             } else {

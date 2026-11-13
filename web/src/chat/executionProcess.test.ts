@@ -32,15 +32,28 @@ describe('execution process projection', () => {
         expect(process(output)[0].processBlocks?.map(b => b.id)).toEqual(input.slice(1, -1).map(b => b.id))
     })
     it('keeps current activity visible, then folds it under the same identity on completion', () => {
-        const input = [user(), text('progress', 'progress'), tool('tool')]
+        const input = [user(), tool('earlier'), text('progress', 'progress'), tool('tool')]
         const first = buildExecutionProcessBlocks(input, { ...options, isRunning: true, completedRounds: new Set() })
         expect(first.at(-1)?.id).toBe('tool')
         expect(first.at(-1)).toMatchObject({ executionActivity: true })
         expect(input.at(-1)).not.toHaveProperty('executionActivity')
         const next = buildExecutionProcessBlocks([...input, text('answer', 'final')], { ...options, previousGroups: process(first) })
         expect(process(next)[0].id).toBe(process(first)[0].id)
-        expect(process(next)[0].processBlocks?.map(b => b.id)).toEqual(['progress', 'tool'])
+        expect(process(next)[0].processBlocks?.map(b => b.id)).toEqual(['earlier', 'progress', 'tool'])
         expect(next.at(-1)?.id).toBe('answer')
+    })
+    it.each(['progress', undefined])('retains the latest explanation through tool activity (%s)', phase => {
+        const input = [user(), text('intro', phase), text('detail', phase)]
+        for (const state of ['running', 'completed', 'error'] as const) {
+            const steps = [...input, tool('first', 'Bash', state), tool('second', 'Bash', 'running')]
+            const live = buildExecutionProcessBlocks(steps, { ...options, isRunning: true })
+            expect(live.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['intro', 'detail'])
+            const updated = buildExecutionProcessBlocks([...steps, text('update', phase), tool('third')], { ...options, isRunning: true })
+            expect(updated.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['update'])
+            const final = buildExecutionProcessBlocks([...steps, text('answer', 'final')], { ...options, isRunning: true })
+            expect(final.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['answer'])
+            expect(process(final)).toHaveLength(1)
+        }
     })
     it('keeps pending requests, questions, plans and user shell commands outside', () => {
         const permission = tool('permission'); permission.tool.permission = { id: 'p', status: 'pending' }

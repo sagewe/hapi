@@ -41,12 +41,30 @@ struct ExecutionProcessTests {
         #expect(groups(result).first?.processBlocks?.map(\.id) == Array(input.dropFirst().dropLast()).map(\.id))
     }
     @Test func currentActivityMovesIntoStableProcessAfterFinalAnswer() {
-        let input = [user, text("progress", phase: "progress"), tool("tool")]
+        let input = [user, tool("earlier"), text("progress", phase: "progress"), tool("tool")]
         let before = project(input, running: true)
         #expect(before.last?.testID == "tool")
         let after = project(input + [text("answer", phase: "final")], previous: groups(before))
         #expect(groups(before).first?.id == groups(after).first?.id)
-        #expect(groups(after).first?.processBlocks?.map(\.id) == ["progress", "tool"])
+        #expect(groups(after).first?.processBlocks?.map(\.id) == ["earlier", "progress", "tool"])
+    }
+    @Test func explanationSurvivesToolsUntilNewExplanationOrAnswer() {
+        for phase: String? in ["progress", nil] {
+            for state: ToolCallState in [.running, .completed, .error] {
+                let steps = [user, text("intro", phase: phase), text("detail", phase: phase),
+                    tool("first", state: state), tool("second", state: .running)]
+                let live = project(steps, running: true)
+                #expect(live.contains { $0.testID == "intro" })
+                #expect(live.contains { $0.testID == "detail" })
+                let updated = project(steps + [text("update", phase: phase), tool("third")], running: true)
+                #expect(!updated.contains { $0.testID == "intro" || $0.testID == "detail" })
+                #expect(updated.contains { $0.testID == "update" })
+                let final = project(steps + [text("answer", phase: "final")], running: true)
+                #expect(!final.contains { $0.testID == "intro" || $0.testID == "detail" })
+                #expect(final.last?.testID == "answer")
+                #expect(groups(final).count == 1)
+            }
+        }
     }
     @Test func exceptionsAndUserReadingRemainVisible() {
         let error = tool("error", state: .error)
