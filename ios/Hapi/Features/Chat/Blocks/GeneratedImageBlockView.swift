@@ -24,7 +24,7 @@ private struct GeneratedMediaCard: View {
     @State private var imageOpen = false
     @State private var previewOpen = false
     @State private var shareOpen = false
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openGeneratedMediaPlayback) private var openPlayback
 
     init(block: GeneratedImageBlock, loader: GeneratedMediaLoader?) {
         self.loader = loader
@@ -73,10 +73,6 @@ private struct GeneratedMediaCard: View {
             guard let loader, content.kind == .image || loadAttempt > 0 else { return }
             await content.load(using: loader)
         }
-        .onDisappear { content.pause() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active { content.pause() }
-        }
         .fullScreenCover(isPresented: $imageOpen) {
             ImageViewer(image: content.image, title: content.block.fileName,
                         imageId: content.block.imageId, loader: loader)
@@ -116,13 +112,12 @@ private struct GeneratedMediaCard: View {
 
     @ViewBuilder
     private func loadedFile(_ file: GeneratedMediaFile) -> some View {
-        if let player = content.player, let item = player.currentItem {
-            VideoPlayer(player: player)
-                .frame(height: content.kind == .audio ? 100 : 220)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .onReceive(item.publisher(for: \.status)) { status in
-                    if status == .failed { content.playbackFailed() }
-                }
+        if let player = content.player {
+            GeneratedMediaPlaybackButton(poster: content.poster, isAudio: content.kind == .audio) {
+                openPlayback?(GeneratedMediaPlayback(file: file, player: player, title: content.block.fileName,
+                    onFailure: { content.playbackFailed() }))
+            }
+            .disabled(openPlayback == nil)
         }
         if content.playbackUnavailable {
             Text("This media cannot be played on this device.")

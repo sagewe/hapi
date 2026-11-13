@@ -13,6 +13,7 @@ final class LongMessageLayoutTests: XCTestCase {
     final class Driver {
         var showBubble = true
         @ObservationIgnored var open: ((UserTextBlock) -> Void)?
+        @ObservationIgnored var select: ((String, String) -> Void)?
     }
 
     private struct ActionProbe: UIViewRepresentable {
@@ -20,6 +21,7 @@ final class LongMessageLayoutTests: XCTestCase {
         func makeUIView(context: Context) -> UIView { UIView() }
         func updateUIView(_ view: UIView, context: Context) {
             driver.open = context.environment.openChatMessage
+            driver.select = context.environment.openTextSelection
         }
     }
 
@@ -71,6 +73,14 @@ final class LongMessageLayoutTests: XCTestCase {
     }
 
     func testFullMessageSheetSurvivesItsBubbleBeingRemoved() async throws {
+        try await checkSheetSurvivesRemoval(selectingText: false)
+    }
+
+    func testSelectionSheetSurvivesItsBubbleBeingRemoved() async throws {
+        try await checkSheetSurvivesRemoval(selectingText: true)
+    }
+
+    private func checkSheetSurvivesRemoval(selectingText: Bool) async throws {
         let credentials = InMemoryCredentialStore()
         let hubURL = "http://127.0.0.1:1/long-message-\(UUID().uuidString)"
         let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
@@ -88,7 +98,11 @@ final class LongMessageLayoutTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(100))
-        try XCTUnwrap(driver.open)(source)
+        if selectingText {
+            try XCTUnwrap(driver.select)(source.id, source.text)
+        } else {
+            try XCTUnwrap(driver.open)(source)
+        }
         try await Task.sleep(for: .milliseconds(600))
         let sheet = try XCTUnwrap(host.presentedViewController)
         XCTAssertTrue(sheet.presentationController is UISheetPresentationController)
@@ -107,6 +121,38 @@ final class LongMessageLayoutTests: XCTestCase {
         XCTAssertNil(host.presentedViewController)
         XCTAssertFalse(model.isInspectingContent)
         XCTAssertFalse(model.followsTail)
+    }
+
+    func testNativeSelectionPreservesCrossParagraphRangeAcrossUpdates() async throws {
+        let source = "第一句，只复制其中一部分。\n\nSecond paragraph with emoji 👨‍👩‍👧‍👦 and `code`.\n" + log
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: MessageSelectionTextView(text: source)
+            .hapiTypography().accessibilityLabel(Text("Revision 0")))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.view.layoutIfNeeded()
+        func findTextView(_ view: UIView) -> UITextView? {
+            if let text = view as? UITextView { return text }
+            return view.subviews.lazy.compactMap { findTextView($0) }.first
+        }
+        let native = try XCTUnwrap(findTextView(host.view))
+        XCTAssertFalse(native.isEditable)
+        XCTAssertTrue(native.isSelectable)
+        XCTAssertTrue(native.isScrollEnabled)
+        XCTAssertEqual(native.text, source)
+        let excerpt = "其中一部分。\n\nSecond paragraph with emoji 👨‍👩‍👧‍👦"
+        let range = (source as NSString).range(of: excerpt)
+        native.selectedRange = range
+        host.rootView = MessageSelectionTextView(text: source).hapiTypography()
+            .accessibilityLabel(Text("Revision 1"))
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(native.selectedRange, range)
+        let selected = try XCTUnwrap(native.selectedTextRange)
+        XCTAssertEqual(native.text(in: selected), excerpt)
     }
 
     /// Optional local diagnostic, not a CI timing gate. The legacy path is

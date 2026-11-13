@@ -111,6 +111,15 @@ decode (including unsupported WebM codecs) still offers save/share. Downloads us
 the authenticated hub API, then private temporary files with a bounded per-chat
 cache; the generated-media endpoint must still be available when first loading.
 
+Video/audio cards display a poster/play button after loading. Playback opens in
+a screen-owned sheet with `AVPlayerViewController`, whose native controls have
+proper UIKit containment. Do not embed SwiftUI `VideoPlayer` in transcript
+`UIHostingConfiguration` cells: it uses a controller representable unsupported
+by that cell host and renders a yellow/red prohibition placeholder. Closing or
+backgrounding pauses playback; row recycling does not dismiss the player or
+delete its staged file. `GeneratedMediaTests` covers the actual cell-to-modal
+route and real decoding/time advancement, not just AVPlayer construction.
+
 Model, permission and Codex collaboration controls follow the session's agent/capabilities;
 usage/storage require the owner namespace. See the [native app guide](../docs/guide/native-apps.md)
 for platform differences, web-only features and everyday use.
@@ -132,6 +141,47 @@ in Scratchlist mode; `/` suggestions retain their existing behavior.
 Regression coverage: package `SessionMentionsTests` and app-hosted
 `MentionTextInputTests` (`ios/scripts/test-transcript.sh
 -only-testing:HapiTests/MentionTextInputTests`).
+
+### Voice draft and final recognition
+
+On iPhone, releasing Hold-to-Dictate immediately closes the recording overlay
+and stages the streaming draft in a local message bubble with Recognizing….
+Full-audio recognition replaces that same bubble and only the final text enters
+the existing queue/send/retry path. Existing composer text and ready attachments
+are captured together; subsequent typing stays in the composer. A missing final
+falls back to the partial, and a completely empty take is discarded.
+
+Changed text uses the MyDots particle regrouping effect (0.72 seconds), with
+HAPI typography and theme colors. Unchanged text, Reduce Motion and oversized
+text skip the effect. Agent requests never wait for the animation. Voice row keys
+remain stable through Hub echoes; queued sends retain the normal short display
+grace before moving to the queue bar. Leaving the session or sending another
+message rejects stale recognition callbacks. Right-slide edit, left-slide cancel,
+continuous dictation and calls retain their existing behavior. Scheduled sends,
+Scratchlist and unsettled uploads keep their existing final-result composer path.
+
+Focused checks: package `ChatInteractorTests` / `HoldToDictateControllerTests`,
+and app-hosted `VoiceParticlePresentationTests` / `TranscriptRefreshTests`.
+The optional `TEST_RUNNER_HAPI_VOICE_PARTICLE_CAPTURE` directory contains only
+synthetic visual fixtures; real-device microphone and gesture acceptance remains
+separate from Simulator checks.
+
+### Message text selection
+
+Long-press a user message or assistant reply and choose Select Text to open a
+read-only snapshot with native selection handles. The selection page shows the
+complete original text (including Markdown source) in one scrolling `UITextView`,
+so selections can cross paragraphs and code fences. Copy full content remains
+available in the toolbar and Copy Message remains in the transcript menu.
+Opening the page pauses tail-following; closing it leaves the reading position
+in place. The snapshot survives transcript row recycling and does not change
+while the reply continues streaming. The existing paged full-message reader is
+unchanged.
+
+App-hosted checks: `ios/scripts/test-transcript.sh
+-only-testing:HapiTests/LongMessageLayoutTests` covers long-message retention,
+cross-paragraph Unicode selection, update stability and sheet lifecycle.
+Touch handle ergonomics require device acceptance.
 
 ### Mermaid diagrams
 

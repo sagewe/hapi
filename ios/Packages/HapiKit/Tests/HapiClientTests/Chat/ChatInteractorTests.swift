@@ -355,6 +355,107 @@ private func eventually(
 @MainActor
 struct ChatInteractorTests {
 
+    @Test func voiceDraftIsLocalAndOnlyFinalIsPostedOnceWithStableIdentity() async throws {
+        let h = try await ChatInteractionHarness()
+        h.interactor.setComposerText("已有草稿")
+        #expect(h.interactor.beginVoiceSend(id: "take-1", partialText: "明天久点去会州"))
+        let preview = try #require(h.interactor.voicePreview)
+        #expect(preview.localId == "local-1")
+        #expect(h.interactor.recognizingVoiceLocalId == "local-1")
+        #expect(h.interactor.composerText.isEmpty)
+        #expect(await h.row(localId: "local-1") == nil, "Unrecognized drafts must not be persisted")
+        #expect(await h.performer.count("POST", pathSuffix: "/sess-1/messages") == 0)
+        h.interactor.setComposerText("下一条手写草稿")
+        h.interactor.finishVoiceSend(id: "take-1", finalText: "明天九点去惠州")
+        h.interactor.finishVoiceSend(id: "take-1", finalText: "重复回调")
+        #expect(await eventually { await h.row(localId: "local-1")?.status == .sent })
+        let sends = await h.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends.count == 1)
+        #expect(sends.first?.contains("已有草稿 明天九点去惠州") == true)
+        #expect(sends.first?.contains("久点") == false)
+        #expect(h.interactor.composerText == "下一条手写草稿")
+        #expect(h.interactor.recognizingVoiceLocalId == nil)
+        let echo = WindowMessage(id: "server-1", localId: "local-1", content: .null, createdAt: 1000)
+        let pinned = h.interactor.messagesIncludingVoicePreview([echo])
+        #expect(pinned.count == 1)
+        #expect(pinned[0].id == preview.id)
+        #expect(echo.id == "server-1", "Do not mutate authoritative window rows")
+        h.interactor.deactivate()
+    }
+
+    @Test func voiceSendKeepsAttachmentsAndFailedSendRetriesTheFinalOnly() async throws {
+        let h = try await ChatInteractionHarness()
+        h.interactor.attachments.add(preparedShot())
+        #expect(await eventually { h.interactor.attachments.allReady })
+        await h.performer.script("POST", "/api/sessions/sess-1/messages", status: 500)
+        #expect(h.interactor.beginVoiceSend(id: "with-image", partialText: "初稿"))
+        #expect(h.interactor.attachments.items.isEmpty)
+        let preview = try #require(h.interactor.voicePreview)
+        let normalized = try #require(normalizeDecryptedMessage(preview.asDecryptedMessage))
+        guard case .user(_, let stagedAttachments) = normalized.content else { Issue.record("Missing user preview"); return }
+        #expect(stagedAttachments?.count == 1)
+        h.interactor.finishVoiceSend(id: "with-image", finalText: "定稿")
+        #expect(await eventually { await h.row(localId: "local-1")?.status == .failed })
+        h.interactor.retryFailedMessage(localId: "local-1")
+        #expect(await eventually { await h.row(localId: "local-1")?.status == .sent })
+        let sends = await h.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends == [attachmentSendBody(text: "定稿"), attachmentSendBody(text: "定稿")])
+        h.interactor.deactivate()
+    }
+
+    @Test func cancelledVoiceTakeDeletesOnlyItsConsumedUploads() async throws {
+        let h = try await ChatInteractionHarness()
+        h.interactor.attachments.add(preparedShot())
+        #expect(await eventually { h.interactor.attachments.allReady })
+        #expect(h.interactor.beginVoiceSend(id: "cancel", partialText: "取消"))
+        h.interactor.cancelVoiceSend(id: "cancel")
+        h.interactor.finishVoiceSend(id: "cancel", finalText: "迟到")
+        #expect(await eventually { await h.performer.count("POST", pathSuffix: "/upload/delete") == 1 })
+        #expect(await h.performer.count("POST", pathSuffix: "/sess-1/messages") == 0)
+        h.interactor.deactivate()
+    }
+
+    @Test func busyAgentStillReceivesOnlyQueuedFinalAfterBubbleTransition() async throws {
+        let h = try await ChatInteractionHarness(detail: chatDetail(thinking: true), directSendGrace: .milliseconds(100))
+        #expect(h.interactor.beginVoiceSend(id: "busy", partialText: "初稿"))
+        h.interactor.finishVoiceSend(id: "busy", finalText: "定稿")
+        #expect(await eventually { await h.row(localId: "local-1")?.status == .queued })
+        #expect(h.interactor.directSendLocalIds.contains("local-1"))
+        #expect(h.interactor.queuedRows.isEmpty)
+        let sends = await h.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends == [#"{"deliveryMode":"queue","localId":"local-1","text":"定稿"}"#])
+        #expect(await eventually { !h.interactor.queuedRows.isEmpty })
+        h.interactor.deactivate()
+    }
+
+    @Test func emptyVoiceFinalFallsBackAndEmptyTakeNeverPosts() async throws {
+        let h = try await ChatInteractionHarness()
+        #expect(h.interactor.beginVoiceSend(id: "take", partialText: "保留初稿"))
+        h.interactor.finishVoiceSend(id: "take", finalText: " ")
+        #expect(await eventually { await h.row(localId: "local-1")?.status == .sent })
+        #expect(h.interactor.beginVoiceSend(id: "empty", partialText: ""))
+        h.interactor.finishVoiceSend(id: "empty", finalText: "")
+        #expect(h.interactor.voicePreview == nil)
+        #expect(await h.performer.count("POST", pathSuffix: "/sess-1/messages") == 1)
+        h.interactor.deactivate()
+    }
+
+    @Test func manualSendAndLeavingSessionRejectLateVoiceFinal() async throws {
+        let h = try await ChatInteractionHarness()
+        #expect(h.interactor.beginVoiceSend(id: "old", partialText: "旧语音"))
+        h.interactor.setComposerText("改发文字")
+        h.interactor.sendMessage()
+        h.interactor.finishVoiceSend(id: "old", finalText: "不得发送")
+        #expect(await eventually { await h.row(localId: "local-2")?.status == .sent })
+        #expect(h.interactor.beginVoiceSend(id: "leaving", partialText: "待识别"))
+        h.interactor.deactivate()
+        h.interactor.finishVoiceSend(id: "leaving", finalText: "不得串会话")
+        #expect(h.interactor.voicePreview == nil)
+        let sends = await h.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends.count == 1)
+        #expect(sends.first?.contains("改发文字") == true)
+    }
+
     // MARK: Send
 
     @Test func optimisticSendHappyPathPostsQueueDeliveryAndSettlesToSent() async throws {

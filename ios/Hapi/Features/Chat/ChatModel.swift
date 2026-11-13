@@ -171,6 +171,7 @@ final class ChatModel {
     @ObservationIgnored private var heldExecutionIDs = Set<String>()
     @ObservationIgnored private var executionGroups: [ToolGroupBlock] = []
 
+    private var fallbackVoiceSendID: String?
     private var responseFeedbackBase: InitialResponseState?
     var responseFeedback: InitialResponseState? {
         guard !hasTrimmedTail else { return nil }
@@ -535,10 +536,20 @@ final class ChatModel {
         holdDictation.onOutcome = { [weak self] outcome in
             guard let self else { return }
             switch outcome {
-            case .sendText(let text):
-                self.interactor.clearVoiceInlineEditTracking()
-                self.interactor.appendDictatedText(text)
-                self.interactor.sendMessage()
+            case .beginSend(let id, let partialText):
+                self.fallbackVoiceSendID = self.interactor.beginVoiceSend(id: id, partialText: partialText) ? nil : id
+            case .finishSend(let id, let text):
+                if self.fallbackVoiceSendID == id {
+                    self.fallbackVoiceSendID = nil
+                    self.interactor.clearVoiceInlineEditTracking()
+                    self.interactor.appendDictatedText(text)
+                    self.interactor.sendMessage()
+                } else {
+                    self.interactor.finishVoiceSend(id: id, finalText: text)
+                }
+            case .cancelSend(let id):
+                if self.fallbackVoiceSendID == id { self.fallbackVoiceSendID = nil }
+                self.interactor.cancelVoiceSend(id: id)
             case .beginInlineEdit(let partialText):
                 self.interactor.beginVoiceInlineEdit(partialText: partialText)
             case .refineInlineEdit(let finalText):
@@ -555,6 +566,10 @@ final class ChatModel {
         hub.scratchlist.open(sessionId)
         let chat = chat
         chat.onSessionRemoved = { [weak self] in
+            self?.interactor.cancelVoiceSend()
+            #if !targetEnvironment(macCatalyst)
+            self?.holdDictation.dismissOverlay()
+            #endif
             self?.responseFeedbackBase = nil
             self?.toolInspection.invalidate()
             self?.blocks = []
@@ -614,7 +629,8 @@ final class ChatModel {
         // deallocates with this model.
         dictation.cancel()
         #if !targetEnvironment(macCatalyst)
-        holdDictation.cancelIfHolding()
+        holdDictation.dismissOverlay()
+        fallbackVoiceSendID = nil
         #endif
         interactor.deactivate()
         mediaLoader.clearCachedImages()
@@ -1084,10 +1100,10 @@ final class ChatModel {
                 }
                 let machines = hub.machineStore.machines
                 let visible = await pipeline.run(
-                    messages: window.messages,
+                    messages: interactor.messagesIncludingVoicePreview(window.messages),
                     agentState: detail?.agentState,
                     hasMoreMessages: window.hasMore,
-                    directSendLocalIds: interactor.directSendLocalIds
+                    directSendLocalIds: interactor.directSendLocalIds.union(interactor.voicePreview?.localId.map { [$0] } ?? [])
                 )
                 let completionEvidence = await pipeline.executionCompletionEvidence()
                 let timingEvidence = await pipeline.executionTimingEvidence()

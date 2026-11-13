@@ -7,7 +7,16 @@ private struct OpenMessageKey: EnvironmentKey {
     static let defaultValue: ((UserTextBlock) -> Void)? = nil
 }
 
+private struct OpenTextSelectionKey: EnvironmentKey {
+    static let defaultValue: ((String, String) -> Void)? = nil
+}
+
 extension EnvironmentValues {
+    var openTextSelection: ((String, String) -> Void)? {
+        get { self[OpenTextSelectionKey.self] }
+        set { self[OpenTextSelectionKey.self] = newValue }
+    }
+
     var openChatMessage: ((UserTextBlock) -> Void)? {
         get { self[OpenMessageKey.self] }
         set { self[OpenMessageKey.self] = newValue }
@@ -17,6 +26,7 @@ extension EnvironmentValues {
 private struct MessageSelection: Identifiable {
     let id: String
     let text: String
+    var selectingText = false
 }
 
 /// A screen owns the sheet, never a recycled bubble. Retain the original
@@ -34,10 +44,20 @@ struct MessagePresentationHost: ViewModifier {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 selection = MessageSelection(id: block.id, text: block.text)
             })
+            .environment(\.openTextSelection, { id, text in
+                model.beginContentInspection()
+                model.retainSurface("message:\(owner)")
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                selection = MessageSelection(id: id, text: text, selectingText: true)
+            })
             .sheet(item: $selection, onDismiss: {
                 model.releaseSurface("message:\(owner)")
             }) { message in
-                MessageDetailView(text: message.text).id(message.id)
+                if message.selectingText {
+                    MessageTextSelectionView(text: message.text).id(message.id)
+                } else {
+                    MessageDetailView(text: message.text).id(message.id)
+                }
             }
             .onChange(of: model.toolInspection.invalidation) {
                 selection = nil

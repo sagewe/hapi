@@ -50,8 +50,11 @@ private actor FakeHoldStreamSession: HoldAsrStreamSession {
     private(set) var finishCalled = false
     private(set) var cancelCalled = false
     var finalText: String?
+    var gateFinish: Bool
+    private var finishWaiter: CheckedContinuation<Void, Never>?
 
-    init(finalText: String?) {
+    init(finalText: String?, gateFinish: Bool = false) {
+        self.gateFinish = gateFinish
         self.finalText = finalText
     }
 
@@ -61,15 +64,25 @@ private actor FakeHoldStreamSession: HoldAsrStreamSession {
 
     func finish() async -> String? {
         finishCalled = true
+        if gateFinish { await withCheckedContinuation { finishWaiter = $0 } }
         return finalText
     }
 
+    func releaseFinish() {
+        gateFinish = false
+        finishWaiter?.resume()
+        finishWaiter = nil
+    }
+
     func cancel() async {
+        releaseFinish()
         cancelCalled = true
     }
 }
 
 private actor FakeHoldStreamer: HoldAsrStreaming {
+    var gateFinish = false
+    func setGateFinish() { gateFinish = true }
     var shouldFailOpen = false
     var finalText: String? = "这是一个测试"
     private(set) var lastSession: FakeHoldStreamSession?
@@ -91,7 +104,7 @@ private actor FakeHoldStreamer: HoldAsrStreaming {
             throw HoldTestError(message: "WebSocket unavailable")
         }
         partialHandler = onPartial
-        let session = FakeHoldStreamSession(finalText: finalText)
+        let session = FakeHoldStreamSession(finalText: finalText, gateFinish: gateFinish)
         lastSession = session
         return session
     }
@@ -173,7 +186,7 @@ struct HoldToDictateControllerTests {
         ) == .send)
     }
 
-    @Test("Center release streams partials and emits sendText with refined final transcript")
+    @Test("Center release immediately stages the partial and later finishes the same take")
     @MainActor
     func holdAndReleaseSend() async throws {
         let api = FakeHoldDictationApi()
@@ -199,10 +212,36 @@ struct HoldToDictateControllerTests {
         #expect(controller.phase == .holding(zone: .send, partialText: "这是一", audioLevel: 0.6))
 
         controller.endHold()
-        try await Task.sleep(nanoseconds: 50_000_000)
-
         #expect(controller.phase == .idle)
-        #expect(outcomes == [.sendText("这是一个测试")])
+        #expect(controller.isRefiningSend)
+        guard case .beginSend(let id, let partial) = outcomes.first else {
+            Issue.record("Must stage synchronously before final recognition"); return
+        }
+        #expect(partial == "这是一")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(!controller.isRefiningSend)
+        #expect(outcomes == [.beginSend(id: id, partialText: "这是一"), .finishSend(id: id, finalText: "这是一个测试")])
+    }
+
+    @Test("Cancellation while full-audio recognition waits suppresses its late result")
+    @MainActor
+    func cancelPendingSendRejectsLateFinal() async throws {
+        let streamer = FakeHoldStreamer()
+        await streamer.setGateFinish()
+        let controller = HoldToDictateController(api: FakeHoldDictationApi(), streamer: streamer, recorder: FakeHoldRecorder())
+        var outcomes: [HoldDictationOutcome] = []
+        controller.onOutcome = { outcomes.append($0) }
+        controller.beginHold(fingerX: 196, fingerY: 790, containerWidth: 393, containerHeight: 852)
+        try await Task.sleep(for: .milliseconds(30))
+        controller.endHold()
+        guard case .beginSend(let id, _) = outcomes.first else { Issue.record("Missing draft"); return }
+        try await Task.sleep(for: .milliseconds(30))
+        controller.clearInlineEditSession()
+        let session = await streamer.lastSession
+        await session?.releaseFinish()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(outcomes == [.beginSend(id: id, partialText: ""), .cancelSend(id: id)])
+        #expect(!controller.isRefiningSend)
     }
 
     @Test("Sliding right to edit immediately hands off draft to main composer and emits background refinement")
@@ -283,7 +322,8 @@ struct HoldToDictateControllerTests {
         try await Task.sleep(nanoseconds: 50_000_000)
 
         #expect(controller.phase == .idle)
-        #expect(outcomes == [.sendText("家庭网关兜底文本")])
+        guard case .beginSend(let id, _) = outcomes.first else { Issue.record("Missing voice draft"); return }
+        #expect(outcomes == [.beginSend(id: id, partialText: ""), .finishSend(id: id, finalText: "家庭网关兜底文本")])
         let context = await api.lastContext
         #expect(context?.sessionId == "original-session")
         #expect(context?.draft == "OriginalModule")

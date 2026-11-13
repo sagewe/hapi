@@ -89,6 +89,7 @@ extension View {
                            openFile: @escaping (String) -> Void) -> some View {
         modifier(ToolPresentationHost(model: model, session: session, owner: owner, openFile: openFile))
             .modifier(MessagePresentationHost(model: model, owner: owner))
+            .modifier(GeneratedMediaPlaybackHost(model: model, owner: owner))
     }
 }
 

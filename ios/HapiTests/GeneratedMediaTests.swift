@@ -1,5 +1,7 @@
+import AVKit
 import AVFoundation
 import HapiClient
+import Observation
 import SwiftUI
 import UIKit
 import XCTest
@@ -168,6 +170,99 @@ final class GeneratedMediaTests: XCTestCase {
         }
     }
 
+    @Observable final class PlaybackDriver {
+        @ObservationIgnored var open: ((GeneratedMediaPlayback) -> Void)?
+    }
+
+    private struct PlaybackActionProbe: UIViewRepresentable {
+        let driver: PlaybackDriver
+        func makeUIView(context: Context) -> UIView { UIView() }
+        func updateUIView(_ view: UIView, context: Context) {
+            driver.open = context.environment.openGeneratedMediaPlayback
+        }
+    }
+
+    func testTranscriptCellOpensScreenOwnedNativePlayerAndSurvivesRowRemoval() async throws {
+        let source = Source(data: try await videoBytes(duration: 2), mime: "video/mp4")
+        let content = GeneratedMediaPresentation(block: block("video/mp4", name: "clip.mp4"))
+        await content.load(using: GeneratedMediaLoader(fetch: source.fetch))
+        let player = try XCTUnwrap(content.player)
+        let file = try XCTUnwrap(content.file)
+        let credentials = InMemoryCredentialStore()
+        let url = "http://127.0.0.1:1/media-\(UUID().uuidString)"
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: url, credentialStore: credentials, performer: MediaPlaybackHTTP()))
+        let model = ChatModel(session: hub, sessionId: "media")
+        defer { model.stop(); hub.shutdown() }
+        let driver = PlaybackDriver()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: Color.clear
+            .background(PlaybackActionProbe(driver: driver))
+            .modifier(GeneratedMediaPlaybackHost(model: model, owner: "chat")))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let request = GeneratedMediaPlayback(file: file, player: player, title: "clip.mp4", onFailure: { content.playbackFailed() })
+        let cell = UICollectionViewCell(frame: CGRect(x: 10, y: 100, width: 360, height: 220))
+        cell.contentConfiguration = UIHostingConfiguration {
+            GeneratedMediaPlaybackButton(poster: content.poster, isAudio: false) { driver.open?(request) }
+        }.margins(.all, 0)
+        host.view.addSubview(cell)
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        // This is the same screen-owned action used by the cell's Play button.
+        try XCTUnwrap(driver.open)(request)
+        try await Task.sleep(for: .milliseconds(650))
+        let sheet = try XCTUnwrap(host.presentedViewController)
+        func nativePlayer(_ controller: UIViewController) -> AVPlayerViewController? {
+            if let player = controller as? AVPlayerViewController { return player }
+            return controller.children.lazy.compactMap { nativePlayer($0) }.first
+        }
+        let native = try XCTUnwrap(nativePlayer(sheet), "AVKit must live in the modal controller hierarchy, not UIHostingConfiguration")
+        XCTAssertNotNil(native.parent)
+        XCTAssertTrue(native.player === player)
+        XCTAssertNotNil(content.poster)
+        XCTAssertGreaterThan(player.currentTime().seconds, 0.05)
+        cell.removeFromSuperview()
+        let previousTime = player.currentTime().seconds
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(host.presentedViewController === sheet)
+        XCTAssertGreaterThan(player.currentTime().seconds, previousTime)
+        model.toolInspection.invalidate()
+        for _ in 0..<100 {
+            if host.presentedViewController == nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(host.presentedViewController)
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertFalse(model.isInspectingContent)
+    }
+
+    func testDisplayedMP4ActuallyDecodesAndAdvancesAfterStaging() async throws {
+        let path = ProcessInfo.processInfo.environment["HAPI_MEDIA_VIDEO_FIXTURE"]
+        let bytes: Data
+        if let path { bytes = try Data(contentsOf: URL(fileURLWithPath: path)) }
+        else { bytes = try await videoBytes() }
+        let source = Source(data: bytes, mime: "video/mp4")
+        let loader = GeneratedMediaLoader(fetch: source.fetch)
+        let content = GeneratedMediaPresentation(block: block("video/mp4", name: "HAPI 语音初稿 → 颗粒定稿.mp4"))
+        await content.load(using: loader)
+        XCTAssertFalse(content.playbackUnavailable)
+        XCTAssertFalse(content.loadFailed)
+        let player = try XCTUnwrap(content.player)
+        let item = try XCTUnwrap(player.currentItem)
+        player.play()
+        defer { content.pause() }
+        for _ in 0..<200 {
+            if item.status == .failed || player.currentTime().seconds > 0.05 { break }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(item.status, .readyToPlay, "\(String(describing: item.error))")
+        XCTAssertGreaterThan(player.currentTime().seconds, 0.05, "\(String(describing: item.error))")
+    }
+
     func testCancelledLoadDoesNotPublishAndCanLoadAgainFromCache() async throws {
         let source = Source()
         let loader = GeneratedMediaLoader(fetch: source.fetch)
@@ -266,7 +361,7 @@ final class GeneratedMediaTests: XCTestCase {
         return data
     }
 
-    private func videoBytes() async throws -> Data {
+    private func videoBytes(duration: Double = 0.2) async throws -> Data {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: url) }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -290,10 +385,17 @@ final class GeneratedMediaTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertTrue(adaptor.append(pixel, withPresentationTime: .zero))
-        writer.endSession(atSourceTime: CMTime(value: 1, timescale: 5))
+        writer.endSession(atSourceTime: CMTime(seconds: duration, preferredTimescale: 600))
         input.markAsFinished()
         await writer.finishWriting()
         XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
         return try Data(contentsOf: url)
+    }
+}
+
+private actor MediaPlaybackHTTP: HTTPPerforming {
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        (Data(#"{"error":"unused test endpoint"}"#.utf8),
+         HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: nil)!)
     }
 }

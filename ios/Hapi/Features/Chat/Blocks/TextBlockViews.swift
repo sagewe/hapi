@@ -20,6 +20,7 @@ struct UserTextBlockView: View {
     @Environment(\.chatInteractions) private var interactions
     @Environment(\.hapiTypography) private var typography
     @Environment(\.hapiTheme) private var theme
+    @Environment(\.openTextSelection) private var openTextSelection
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.openChatMessage) private var openMessage
 
@@ -67,12 +68,19 @@ struct UserTextBlockView: View {
                                 .textSelection(.enabled)
                         }
                         #else
-                        Text(verbatim: preview.text)
-                            .font(typography.bodyFont)
-                            .lineSpacing(typography.bodyLineSpacing)
-                            .lineLimit(preview.end < block.text.endIndex ? MessageTextPage.previewLines : nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+                        if let localId = block.localId, interactions?.voiceMessageLocalIds.contains(localId) == true {
+                            VoiceParticleText(text: preview.text)
+                                .lineLimit(preview.end < block.text.endIndex ? MessageTextPage.previewLines : nil)
+                                .foregroundStyle(theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text(verbatim: preview.text)
+                                .font(typography.bodyFont)
+                                .lineSpacing(typography.bodyLineSpacing)
+                                .lineLimit(preview.end < block.text.endIndex ? MessageTextPage.previewLines : nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                         #endif
                         if preview.end < block.text.endIndex {
                             Button { openMessage?(block) } label: {
@@ -83,6 +91,12 @@ struct UserTextBlockView: View {
                             }
                             .accessibilityIdentifier("message-full-\(block.id)")
                         }
+                    }
+                    if let localId = block.localId, interactions?.recognizingVoiceLocalId == localId {
+                        Text("Recognizing…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("voice-message-recognizing")
                     }
                     if let attachments = block.attachments, !attachments.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
@@ -112,6 +126,9 @@ struct UserTextBlockView: View {
                 .animation(.easeInOut(duration: 0.25), value: isHighlighted)
                 .contextMenu {
                     if !block.text.isEmpty {
+                        Button("Select Text", systemImage: "text.cursor") {
+                            openTextSelection?(block.id, block.text)
+                        }
                         Button("Copy Message", systemImage: "doc.on.doc") {
                             pasteboard.copy(block.text)
                         }
@@ -146,6 +163,7 @@ struct UserTextBlockView: View {
 struct AgentTextBlockView: View {
     let block: AgentTextBlock
     var isHighlighted: Bool = false
+    @Environment(\.openTextSelection) private var openTextSelection
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.hapiTheme) private var theme
     @State private var copied = false
@@ -199,6 +217,9 @@ struct AgentTextBlockView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: isHighlighted)
         .contextMenu {
+            Button("Select Text", systemImage: "text.cursor") {
+                openTextSelection?(block.id, block.text)
+            }
             Button("Copy Message", systemImage: "doc.on.doc") {
                 pasteboard.copy(block.text)
             }

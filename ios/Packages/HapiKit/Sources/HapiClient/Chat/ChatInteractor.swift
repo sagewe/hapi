@@ -142,6 +142,102 @@ public final class ChatInteractor {
     @ObservationIgnored public var onAttachmentSessionRecovery: (@MainActor (Bool) -> Void)?
     @ObservationIgnored public var onAttachmentSessionSuperseded: (@MainActor (String, ChatInteractor) -> Void)?
 
+    /// Local-only voice preview. It never enters the persisted message window
+    /// or the agent queue before full-audio recognition has completed.
+    public private(set) var voicePreview: WindowMessage?
+    public private(set) var recognizingVoiceLocalId: String?
+    public private(set) var voiceMessageLocalIds: Set<String> = []
+    private struct VoiceSend {
+        let id: String
+        let localId: String
+        let base: String
+        let partial: String
+        let createdAt: Int
+        let attachments: [AttachmentMetadata]?
+    }
+    private var voiceSend: VoiceSend?
+
+    @discardableResult
+    public func beginVoiceSend(id: String, partialText: String) -> Bool {
+        // Preserve the existing scheduled/Scratchlist and upload recovery paths.
+        guard !isSending, !scratchlistBusy, composerDestination == .chat,
+              pendingSchedule == nil, !attachments.hasUnsettled,
+              !attachments.hasScratchlistAttachments else { return false }
+        cancelVoiceSend()
+        let localId = makeLocalId()
+        let take = VoiceSend(id: id, localId: localId, base: composerText,
+            partial: partialText, createdAt: now(), attachments: attachments.consume())
+        voiceSend = take
+        voiceMessageLocalIds.insert(localId)
+        recognizingVoiceLocalId = localId
+        voicePreview = buildOptimisticMessage(localId: localId,
+            text: appendTranscript(take.base, transcript: partialText), createdAt: take.createdAt,
+            attachments: take.attachments)
+        clearVoiceInlineEditTracking()
+        setComposerText("")
+        drafts?.clear(sessionId: sessionId)
+        onDirectSendsChanged?()
+        return true
+    }
+
+    public func finishVoiceSend(id: String, finalText: String) {
+        guard let take = voiceSend, take.id == id else { return }
+        let transcript = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = appendTranscript(take.base, transcript: transcript.isEmpty ? take.partial : transcript)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || take.attachments != nil else { cancelVoiceSend(); return }
+        voiceSend = nil // Claim once, before any asynchronous send or duplicate callback.
+        recognizingVoiceLocalId = nil
+        voicePreview = buildOptimisticMessage(localId: take.localId, text: text,
+            createdAt: take.createdAt, attachments: take.attachments)
+        isSending = true
+        onDirectSendsChanged?()
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.performSend(text: text, localId: take.localId, createdAt: take.createdAt,
+                deliveryMode: .queue, attachments: take.attachments, scheduledAt: nil, isRetry: false)
+            self.pruneVoicePreview()
+        }
+    }
+
+    public func cancelVoiceSend(id: String? = nil) {
+        guard let take = voiceSend, id == nil || take.id == id else { return }
+        voiceSend = nil
+        recognizingVoiceLocalId = nil
+        voicePreview = nil
+        voiceMessageLocalIds.remove(take.localId)
+        onDirectSendsChanged?()
+        // These consumed uploads were never handed to a message on the Hub.
+        let api = api, sessionId = sessionId
+        Task {
+            for attachment in take.attachments ?? [] {
+                _ = try? await api.deleteUpload(sessionId: sessionId, path: attachment.path)
+            }
+        }
+    }
+
+    private func pruneVoicePreview() {
+        guard recognizingVoiceLocalId == nil, let localId = voicePreview?.localId,
+              windowState?.messages.contains(where: { $0.localId == localId }) == true else { return }
+        voicePreview = nil
+        onDirectSendsChanged?()
+    }
+
+    /// Pin the row key across local preview → optimistic send → Hub echo so
+    /// the particle canvas and selection state stay on the same bubble.
+    public func messagesIncludingVoicePreview(_ messages: [WindowMessage]) -> [WindowMessage] {
+        var result = messages
+        if let preview = voicePreview, !result.contains(where: { $0.localId == preview.localId }) {
+            result.append(preview)
+        }
+        return result.map { row in
+            guard let localId = row.localId, voiceMessageLocalIds.contains(localId), row.id != localId else { return row }
+            return WindowMessage(contentRevision: row.contentRevision, id: localId, seq: row.seq,
+                localId: localId, content: row.content, createdAt: row.createdAt, invokedAt: row.invokedAt,
+                scheduledAt: row.scheduledAt, status: row.status)
+        }
+    }
+
     // MARK: Wiring
 
     private let api: APIClient
@@ -245,6 +341,7 @@ public final class ChatInteractor {
             for await state in states {
                 guard !Task.isCancelled else { return }
                 self.windowState = state
+                self.pruneVoicePreview()
             }
         }
     }
@@ -253,6 +350,7 @@ public final class ChatInteractor {
     /// (the web analogue is the beforeunload persist). In-flight sends and
     /// queued/config operations run to completion. Idempotent.
     public func deactivate() {
+        cancelVoiceSend()
         guard isActive else { return }
         isActive = false
         statesTask?.cancel()
@@ -432,6 +530,7 @@ public final class ChatInteractor {
     /// an unsettled chip (uploading/failed) blocks the send with a notice.
     /// Text may be empty when attachments exist (wire: text OR attachments).
     public func sendMessage(steer: Bool = false) {
+        cancelVoiceSend()
         guard !isSending, !scratchlistBusy else { return }
         if composerDestination == .scratchlist {
             parkComposerDraft()
@@ -634,7 +733,9 @@ public final class ChatInteractor {
         let target = targetSessionId ?? scratchlistSendTarget ?? sessionId
         // Decide before the POST: the hub flips `thinking` on as soon as it
         // queues the message, so the state afterwards says nothing.
-        let direct = scheduledAt == nil && !currentSessionState().thinking
+        // Keep a finalized voice bubble in place through its short visual
+        // transition, even when delivery is queued behind a running turn.
+        let direct = scheduledAt == nil && (!currentSessionState().thinking || voiceMessageLocalIds.contains(localId))
         if direct { setDirectSend(localId, true) }
         defer { if direct { expireDirectSend(localId) } }
         let store = target == sessionId ? await windowController() : await windows.open(sessionId: target)

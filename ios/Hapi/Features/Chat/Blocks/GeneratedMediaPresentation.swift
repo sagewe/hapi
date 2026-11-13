@@ -33,6 +33,7 @@ final class GeneratedMediaPresentation {
     private(set) var image: UIImage?
     private(set) var file: GeneratedMediaFile?
     private(set) var player: AVPlayer?
+    private(set) var poster: UIImage?
     private(set) var isLoading = false
     private(set) var loadFailed = false
     private(set) var playbackUnavailable = false
@@ -69,7 +70,20 @@ final class GeneratedMediaPresentation {
                     try Task.checkCancellation()
                     guard loadGeneration == generation else { return }
                     if playable {
-                        // No autoplay. Native controls start playback explicitly.
+                        var poster: UIImage?
+                        if kind == .video {
+                            let generator = AVAssetImageGenerator(asset: asset)
+                            generator.appliesPreferredTrackTransform = true
+                            generator.maximumSize = CGSize(width: 1280, height: 720)
+                            if let frame = try? await generator.image(at: .zero) {
+                                poster = UIImage(cgImage: frame.image)
+                            }
+                        }
+                        try Task.checkCancellation()
+                        guard loadGeneration == generation else { return }
+                        self.poster = poster
+                        // The transcript shows a poster; playback belongs to a
+                        // screen-owned native controller after an explicit tap.
                         player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
                     } else {
                         playbackUnavailable = true

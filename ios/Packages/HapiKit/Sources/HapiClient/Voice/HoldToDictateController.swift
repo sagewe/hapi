@@ -64,8 +64,10 @@ public enum HoldDictationPhase: Equatable, Sendable {
 
 /// One-shot outcomes emitted by ``HoldToDictateController``.
 public enum HoldDictationOutcome: Equatable, Sendable {
-    /// Recognized text should be submitted immediately (`松手 发送`).
-    case sendText(String)
+    /// Stage a local bubble on release, then submit only the full-audio result.
+    case beginSend(id: String, partialText: String)
+    case finishSend(id: String, finalText: String)
+    case cancelSend(id: String)
     /// Right-slide release (`松开 编辑文字`): immediately expand & focus the main
     /// composer with the live streaming draft (`0ms`).
     case beginInlineEdit(partialText: String)
@@ -166,6 +168,8 @@ public final class HoldToDictateController {
     public private(set) var phase: HoldDictationPhase = .idle
     public private(set) var audioLevels: [Float] = HoldToDictateController.defaultAudioLevels
     public private(set) var isRefiningEdit = false
+    public private(set) var isRefiningSend = false
+    private var pendingSendID: String?
     public private(set) var isAvailable = false
 
     @ObservationIgnored public var onOutcome: (@MainActor (HoldDictationOutcome) -> Void)?
@@ -217,7 +221,7 @@ public final class HoldToDictateController {
         containerWidth: Double,
         containerHeight: Double
     ) {
-        guard phase == .idle else { return }
+        guard phase == .idle, !isRefiningSend else { return }
         recordingContext = VoiceRecognitionContext(sessionId: context.sessionId, draft: context.draft)
         sessionGeneration &+= 1
         let gen = sessionGeneration
@@ -326,6 +330,7 @@ public final class HoldToDictateController {
         }
 
         let baselinePartial = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sendID = UUID().uuidString
         if zone == .edit {
             // Dismiss voice overlay immediately (0ms) and hand off to the main
             // morphing composer box, refining seamlessly in the background.
@@ -333,7 +338,10 @@ public final class HoldToDictateController {
             phase = .idle
             onOutcome?(.beginInlineEdit(partialText: baselinePartial))
         } else {
-            phase = .finalizing(zone: zone, partialText: partialText)
+            phase = .idle
+            pendingSendID = sendID
+            isRefiningSend = true
+            onOutcome?(.beginSend(id: sendID, partialText: baselinePartial))
         }
 
         Task { [weak self] in
@@ -379,13 +387,10 @@ public final class HoldToDictateController {
 
             switch zone {
             case .send:
-                guard !cleaned.isEmpty else {
-                    self.phase = .idle
-                    self.onOutcome?(.error("未识别到语音内容"))
-                    return
-                }
+                self.pendingSendID = nil
+                self.isRefiningSend = false
                 self.phase = .idle
-                self.onOutcome?(.sendText(cleaned))
+                self.onOutcome?(.finishSend(id: sendID, finalText: cleaned))
             case .edit:
                 guard !cleaned.isEmpty else {
                     if baselinePartial.isEmpty {
@@ -408,6 +413,7 @@ public final class HoldToDictateController {
 
     /// Cancels everything (including finalizing or background inline refinement).
     public func dismissOverlay() {
+        cancelPendingSend()
         if case .holding = phase {
             cancelActiveTake()
             return
@@ -420,10 +426,20 @@ public final class HoldToDictateController {
 
     /// Cancels any pending background refinement when the user sends or undoes the inline voice draft.
     public func clearInlineEditSession() {
+        cancelPendingSend()
         guard phase == .idle else { return }
         sessionGeneration &+= 1
         isRefiningEdit = false
         teardownStream()
+    }
+
+    private func cancelPendingSend() {
+        if let id = pendingSendID {
+            pendingSendID = nil
+            isRefiningSend = false
+            sessionGeneration &+= 1
+            onOutcome?(.cancelSend(id: id))
+        }
     }
 
     // MARK: - Private
