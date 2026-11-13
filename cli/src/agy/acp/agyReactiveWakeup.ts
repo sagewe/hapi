@@ -244,6 +244,120 @@ function computeTerminalStepSignature(step: AgyRawTranscriptStep): string | null
     return `${step.source}\0${step.type}\0${step.created_at ?? ''}\0${step.status}\0${normalizedToolCalls}\0${step.content ?? ''}`;
 }
 
+export interface NormalizedTranscriptGeneration {
+    steps: AgyRawTranscriptStep[];
+    generationIndex: number;
+    generationGenesisKeys: Array<string | null>;
+}
+
+function isTrajectoryRollbackAtExistingStep(
+    existing: AgyRawTranscriptStep,
+    incoming: AgyRawTranscriptStep,
+    maxStepIndexSoFar: number
+): boolean {
+    // A new step_index=0 appearing after the trajectory already advanced past 0
+    // (e.g. Antigravity appending a compacted/reset 0..N trajectory without
+    // truncating transcript_full.jsonl) starts a new trajectory generation.
+    if (incoming.step_index === 0 && maxStepIndexSoFar > 0) {
+        return true;
+    }
+    if (existing.source !== incoming.source || existing.type !== incoming.type) {
+        return true;
+    }
+    const existingCreatedAt = existing.created_at ?? '';
+    const incomingCreatedAt = incoming.created_at ?? '';
+    if (incoming.step_index === 0 && existingCreatedAt && incomingCreatedAt && existingCreatedAt !== incomingCreatedAt) {
+        return true;
+    }
+    if (isTerminalStepStatus(existing.status)) {
+        if (existingCreatedAt && incomingCreatedAt && existingCreatedAt !== incomingCreatedAt) {
+            return true;
+        }
+        if (isTerminalStepStatus(incoming.status)) {
+            return computeTerminalStepSignature(existing) !== computeTerminalStepSignature(incoming);
+        }
+        return true;
+    }
+    // `existing` was non-terminal (`RUNNING` / etc.) with the same `source` and `type`:
+    // fold `incoming` in-place without truncating higher `step_index` sibling steps.
+    return false;
+}
+
+/**
+ * Normalizes raw JSONL lines from `transcript_full.jsonl` into the single active
+ * trajectory generation with unique, strictly ascending `step_index` entries:
+ * - Appended full resets (`step_index === 0` after `0..K`) advance `generationIndex`
+ *   and discard superseded prior-generation lines.
+ * - Appended mid-trajectory rollbacks (`step_index === M` replacing an incompatible
+ *   or terminal `M..K` tail) supersede `>= M` while preserving `0..M-1`.
+ * - Appended in-place updates / duplicate flushes of the same step replace only `M`.
+ */
+export function normalizeRawTranscriptSteps(rawSteps: AgyRawTranscriptStep[]): NormalizedTranscriptGeneration {
+    if (rawSteps.length === 0) {
+        return { steps: [], generationIndex: 0, generationGenesisKeys: [] };
+    }
+
+    const byIndex = new Map<number, AgyRawTranscriptStep>();
+    let maxStepIndexSoFar = -1;
+    let generationIndex = 0;
+    const priorGenerationGenesisKeys: Array<string | null> = [];
+
+    const snapshotCurrentGenesisKey = (): string | null => {
+        if (byIndex.size === 0) return null;
+        let minIdx = Infinity;
+        for (const k of byIndex.keys()) {
+            if (k < minIdx) minIdx = k;
+        }
+        const first = byIndex.get(minIdx);
+        return first ? buildGenesisKey([first]) : null;
+    };
+
+    for (const step of rawSteps) {
+        const existing = byIndex.get(step.step_index);
+        if (existing !== undefined) {
+            if (isTrajectoryRollbackAtExistingStep(existing, step, maxStepIndexSoFar)) {
+                if (step.step_index === 0) {
+                    priorGenerationGenesisKeys.push(snapshotCurrentGenesisKey());
+                    generationIndex += 1;
+                    byIndex.clear();
+                    maxStepIndexSoFar = -1;
+                } else {
+                    for (const k of [...byIndex.keys()]) {
+                        if (k >= step.step_index) {
+                            byIndex.delete(k);
+                        }
+                    }
+                    let nextMax = -1;
+                    for (const k of byIndex.keys()) {
+                        if (k > nextMax) nextMax = k;
+                    }
+                    maxStepIndexSoFar = nextMax;
+                }
+            }
+        } else if (step.step_index === 0 && byIndex.size > 0 && maxStepIndexSoFar > 0) {
+            priorGenerationGenesisKeys.push(snapshotCurrentGenesisKey());
+            generationIndex += 1;
+            byIndex.clear();
+            maxStepIndexSoFar = -1;
+        }
+
+        byIndex.set(step.step_index, step);
+        if (step.step_index > maxStepIndexSoFar) {
+            maxStepIndexSoFar = step.step_index;
+        }
+    }
+
+    const steps = [...byIndex.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, s]) => s);
+    const currentGenesisKey = buildGenesisKey(steps);
+    return {
+        steps,
+        generationIndex,
+        generationGenesisKeys: [...priorGenerationGenesisKeys, currentGenesisKey]
+    };
+}
+
 function doesStepDivergeFromRecorded(step: AgyRawTranscriptStep, recorded: RecordedStepSignature): boolean {
     if (recorded.source !== step.source || recorded.type !== step.type) {
         return true;
@@ -274,6 +388,8 @@ export class AgyReactiveWakeupTracker {
 
     private trackedSessionId: string | null = null;
     private trackedGenesisKey: string | null = null;
+    private trackedGenerationIndex = 0;
+    private trackedGenerationGenesisKeys: Array<string | null> = [];
     private baselineInitialized = false;
     private syncedStepIndex = -1;
     private prePromptMaxStepIndex = -1;
@@ -301,6 +417,8 @@ export class AgyReactiveWakeupTracker {
     reset(): void {
         this.trackedSessionId = null;
         this.trackedGenesisKey = null;
+        this.trackedGenerationIndex = 0;
+        this.trackedGenerationGenesisKeys = [];
         this.baselineInitialized = false;
         this.syncedStepIndex = -1;
         this.prePromptMaxStepIndex = -1;
@@ -319,9 +437,16 @@ export class AgyReactiveWakeupTracker {
         this.pendingReactiveToolResults.clear();
     }
 
-    private resetForNewTranscriptGeneration(sessionId: string, genesisKey: string | null): void {
+    private resetForNewTranscriptGeneration(
+        sessionId: string,
+        genesisKey: string | null,
+        generationIndex = 0,
+        generationGenesisKeys: Array<string | null> = genesisKey !== null ? [genesisKey] : []
+    ): void {
         this.trackedSessionId = sessionId;
         this.trackedGenesisKey = genesisKey;
+        this.trackedGenerationIndex = generationIndex;
+        this.trackedGenerationGenesisKeys = [...generationGenesisKeys];
         this.syncedStepIndex = -1;
         this.prePromptMaxStepIndex = -1;
         this.promptEndStepIndex = -1;
@@ -336,11 +461,38 @@ export class AgyReactiveWakeupTracker {
         this.pendingReactiveToolResults.clear();
     }
 
-    private reconcileDivergentBranchFrom(sessionId: string, genesisKey: string | null, divergentStepIndex: number): void {
+    private isTornEarlierGenerationPrefix(
+        generationIndex: number,
+        generationGenesisKeys: ReadonlyArray<string | null>
+    ): boolean {
+        if (this.trackedGenerationIndex <= 0 || generationIndex >= this.trackedGenerationIndex) {
+            return false;
+        }
+        if (generationGenesisKeys.length === 0 || generationGenesisKeys.length > this.trackedGenerationGenesisKeys.length) {
+            return false;
+        }
+        for (let i = 0; i < generationGenesisKeys.length; i++) {
+            if (generationGenesisKeys[i] !== this.trackedGenerationGenesisKeys[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private reconcileDivergentBranchFrom(
+        sessionId: string,
+        genesisKey: string | null,
+        generationIndex: number,
+        generationGenesisKeys: Array<string | null>,
+        divergentStepIndex: number
+    ): void {
         if (divergentStepIndex <= 0) {
-            this.resetForNewTranscriptGeneration(sessionId, genesisKey);
+            this.resetForNewTranscriptGeneration(sessionId, genesisKey, generationIndex, generationGenesisKeys);
             return;
         }
+        this.trackedGenesisKey = genesisKey;
+        this.trackedGenerationIndex = generationIndex;
+        this.trackedGenerationGenesisKeys = [...generationGenesisKeys];
         this.trailingPlannerHandoff = null;
         const clampedFloor = divergentStepIndex - 1;
         if (this.promptEndStepIndex >= divergentStepIndex) {
@@ -483,7 +635,7 @@ export class AgyReactiveWakeupTracker {
             return cached?.sessionId === sessionId ? cached.steps : [];
         }
 
-        const steps: AgyRawTranscriptStep[] = [];
+        const rawSteps: AgyRawTranscriptStep[] = [];
         let sawMalformedLine = false;
         for (const line of raw.split('\n')) {
             const trimmed = line.trim();
@@ -491,7 +643,7 @@ export class AgyReactiveWakeupTracker {
             try {
                 const parsed = JSON.parse(trimmed);
                 if (isObject(parsed) && typeof parsed.step_index === 'number') {
-                    steps.push(parsed as unknown as AgyRawTranscriptStep);
+                    rawSteps.push(parsed as unknown as AgyRawTranscriptStep);
                 }
             } catch {
                 // Partially-flushed JSONL line during concurrent write/rewrite.
@@ -499,16 +651,21 @@ export class AgyReactiveWakeupTracker {
             }
         }
 
+        const { steps, generationIndex, generationGenesisKeys } = normalizeRawTranscriptSteps(rawSteps);
         const genesisKey = buildGenesisKey(steps);
 
         if (sawMalformedLine) {
             // Never roll back deduplication state or cache a torn snapshot.
+            if (this.isTornEarlierGenerationPrefix(generationIndex, generationGenesisKeys)) {
+                return cached && cached.sessionId === sessionId ? cached.steps : steps;
+            }
             // If this partial read caught a rewrite mid-flight with fewer steps than
             // the last complete snapshot and no divergence, keep the last complete
             // snapshot until the writer finishes flushing.
             if (
                 cached
                 && cached.sessionId === sessionId
+                && generationIndex === this.trackedGenerationIndex
                 && steps.length < cached.steps.length
                 && this.findDivergentStepIndex(steps) === null
             ) {
@@ -524,24 +681,43 @@ export class AgyReactiveWakeupTracker {
                 return cached.steps;
             }
         } else {
-            const maxIdx = steps[steps.length - 1].step_index;
-            if (this.trackedGenesisKey === null) {
-                this.trackedGenesisKey = genesisKey;
-            }
-            const divergentStepIndex = this.findDivergentStepIndex(steps);
-            if (divergentStepIndex !== null) {
-                this.reconcileDivergentBranchFrom(sessionId, genesisKey, divergentStepIndex);
-                this.trackedGenesisKey = genesisKey;
-            } else if (this.trackedGenesisKey !== genesisKey) {
-                this.resetForNewTranscriptGeneration(sessionId, genesisKey);
-            } else if (maxIdx < this.maxRecordedStepIndex) {
-                // Pure prefix of the recorded trajectory caught momentarily shorter
-                // during a non-atomic rewrite: preserve processedReactiveStepStatus
-                // and skip caching so the next poll reads the completed rewrite.
-                return cached && cached.sessionId === sessionId && cached.steps.length > steps.length
+            if (this.isTornEarlierGenerationPrefix(generationIndex, generationGenesisKeys)) {
+                // Non-atomic multi-generation rewrite caught after flushing only an
+                // already-retired earlier generation: preserve active-generation state.
+                return cached && cached.sessionId === sessionId && cached.steps.length > 0
                     ? cached.steps
                     : steps;
             }
+            const maxIdx = steps[steps.length - 1].step_index;
+            if (this.trackedGenesisKey === null) {
+                this.trackedGenesisKey = genesisKey;
+                this.trackedGenerationIndex = generationIndex;
+                this.trackedGenerationGenesisKeys = [...generationGenesisKeys];
+            } else if (generationIndex > this.trackedGenerationIndex) {
+                this.resetForNewTranscriptGeneration(sessionId, genesisKey, generationIndex, generationGenesisKeys);
+            } else {
+                const divergentStepIndex = this.findDivergentStepIndex(steps);
+                if (divergentStepIndex !== null) {
+                    this.reconcileDivergentBranchFrom(
+                        sessionId,
+                        genesisKey,
+                        generationIndex,
+                        generationGenesisKeys,
+                        divergentStepIndex
+                    );
+                } else if (this.trackedGenesisKey !== genesisKey || generationIndex !== this.trackedGenerationIndex) {
+                    this.resetForNewTranscriptGeneration(sessionId, genesisKey, generationIndex, generationGenesisKeys);
+                } else if (maxIdx < this.maxRecordedStepIndex) {
+                    // Pure prefix of the recorded trajectory caught momentarily shorter
+                    // during a non-atomic rewrite: preserve processedReactiveStepStatus
+                    // and skip caching so the next poll reads the completed rewrite.
+                    return cached && cached.sessionId === sessionId && cached.steps.length > steps.length
+                        ? cached.steps
+                        : steps;
+                }
+            }
+            this.trackedGenerationIndex = generationIndex;
+            this.trackedGenerationGenesisKeys = [...generationGenesisKeys];
             this.recordStepSignatures(steps);
         }
 

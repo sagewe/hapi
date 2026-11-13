@@ -4,7 +4,12 @@ import { join } from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import { AgyAcpDriver } from './agyAcpDriver';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
-import { AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions, type AgyRawTranscriptStep } from './agyReactiveWakeup';
+import {
+    AgyReactiveWakeupTracker,
+    normalizeRawTranscriptSteps,
+    type AgyReactiveWakeupOptions,
+    type AgyRawTranscriptStep
+} from './agyReactiveWakeup';
 import { canonicalizeQuestionToolInput } from '@/agent/utils';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -1535,5 +1540,264 @@ describe('Antigravity ACP delivery', () => {
         } finally {
             rmSync(brainDir, { recursive: true, force: true });
         }
+    });
+
+    it('isolates appended step_index=0 trajectory generations without replay storms or cross-generation pendingTasks hang, and ignores mid-rewrite retired generation prefixes', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-appended-gen-reset-'));
+        try {
+            const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
+            mkdirSync(logsDir, { recursive: true });
+            const transcriptPath = join(logsDir, 'transcript_full.jsonl');
+            const appendSteps = (steps: AgyRawTranscriptStep[]) => {
+                appendFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+            const writeSteps = (steps: AgyRawTranscriptStep[]) => {
+                writeFileSync(transcriptPath, `${steps.map((s) => JSON.stringify(s)).join('\n')}\n`, 'utf8');
+            };
+            writeFileSync(transcriptPath, '', 'utf8');
+
+            const h = harness({ brainDir, pollIntervalMs: 10, quietPeriodMs: 20 });
+            const turn2 = deferred<void>();
+            void turn2.promise.catch(() => {});
+            const { running } = await h.start();
+
+            const gen0Steps: AgyRawTranscriptStep[] = [
+                {
+                    step_index: 0,
+                    source: 'USER_EXPLICIT',
+                    type: 'USER_INPUT',
+                    status: 'DONE',
+                    created_at: '2026-11-12T17:01:21Z',
+                    content: 'initial design request'
+                },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T17:01:30Z',
+                    thinking: 'Gen0 initial thinking',
+                    content: '两张 @2x 高清效果图已经出好'
+                },
+                {
+                    step_index: 2,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T17:02:00Z',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T17:02:00Z sender=agy-native/task-99 priority=MESSAGE_PRIORITY_LOW content=done\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 3,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T17:02:05Z',
+                    thinking: 'Gen0 reactive thinking',
+                    content: 'Gen0 reactive reply'
+                },
+                {
+                    step_index: 4,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T17:02:10Z',
+                    content: 'Gen0 step 4 done'
+                }
+            ];
+            appendSteps(gen0Steps);
+            h.turn.resolve();
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+
+            h.session.sendSessionEvent.mockClear();
+            h.client.sendAgentMessage.mockClear();
+
+            // Turn 2 ('继续'): Antigravity appends a brand-new generation starting at step_index=0
+            // WITHOUT truncating gen0Steps (exact production 3150dbdb layout).
+            const gen1SyncSteps: AgyRawTranscriptStep[] = [
+                {
+                    step_index: 0,
+                    source: 'USER_EXPLICIT',
+                    type: 'USER_INPUT',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:10Z',
+                    content: '继续'
+                },
+                {
+                    step_index: 1,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:12Z',
+                    thinking: 'Gen1 sync thinking',
+                    tool_calls: [{ name: 'schedule', args: { DurationSeconds: 10, Prompt: 'check peer' } }]
+                },
+                {
+                    step_index: 2,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'RUNNING',
+                    created_at: '2026-11-12T18:28:13Z',
+                    content: 'Tool is running as a background task with task id: agy-native/task-gen1-2\n'
+                },
+                {
+                    step_index: 3,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:15Z',
+                    content: 'Gen1 sync waiting for timer'
+                }
+            ];
+
+            h.backend.prompt.mockImplementationOnce(async (_id, _content, sink) => {
+                sink({
+                    type: 'tool_call',
+                    id: 'call_gen1_timer_2',
+                    name: 'Run schedule',
+                    title: 'Run schedule',
+                    kind: 'other',
+                    input: { DurationSeconds: 10, Prompt: 'check peer' },
+                    status: 'in_progress'
+                });
+                sink({ type: 'text', text: 'Gen1 sync waiting for timer' });
+                appendSteps(gen1SyncSteps);
+                await turn2.promise;
+            });
+
+            h.queue.push('继续', mode, 'continue-id');
+            await vi.waitFor(() => {
+                expect(h.backend.prompt).toHaveBeenCalledTimes(2);
+            });
+            turn2.resolve();
+            await new Promise((r) => setTimeout(r, 30));
+
+            // Timer agy-native/task-gen1-2 is still pending so turn must stay active
+            expect(h.session.sendSessionEvent).not.toHaveBeenCalledWith({ type: 'ready' });
+
+            // Append Gen1 reactive step 4 (colliding with gen0 step_index=4 DONE!) + step 5..6
+            const gen1ReactiveBatch1: AgyRawTranscriptStep[] = [
+                {
+                    step_index: 4,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:25Z',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T18:28:25Z sender=agy-native/task-gen1-2 priority=MESSAGE_PRIORITY_HIGH content=check peer\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 5,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:28Z',
+                    thinking: 'Gen1 reactive step 5 thinking',
+                    tool_calls: [{ name: 'read_file', args: { Path: '/tmp/notes.md' } }]
+                },
+                {
+                    step_index: 6,
+                    source: 'MODEL',
+                    type: 'GENERIC',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:29Z',
+                    content: '1: notes'
+                },
+                {
+                    step_index: 7,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:28:32Z',
+                    thinking: 'Gen1 final thinking',
+                    content: 'Gen1 final answer'
+                }
+            ];
+            appendSteps(gen1ReactiveBatch1);
+
+            await vi.waitFor(() => {
+                expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+
+            const tracker = (h.driver as unknown as { reactiveWakeup: AgyReactiveWakeupTracker }).reactiveWakeup;
+            expect(tracker.hasPendingTasks()).toBe(false);
+
+            // Simulate a mid-rewrite torn snapshot that momentarily flushed ONLY gen0Steps
+            writeSteps(gen0Steps);
+            expect(tracker.hasUnreadReactiveSteps('agy-native')).toBe(false);
+
+            // Restore full multi-generation file and append one more idle reactive wakeup (step 8..9)
+            writeSteps([
+                ...gen0Steps,
+                ...gen1SyncSteps,
+                ...gen1ReactiveBatch1,
+                {
+                    step_index: 8,
+                    source: 'SYSTEM',
+                    type: 'SYSTEM_MESSAGE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:29:00Z',
+                    content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-12T18:29:00Z sender=peer priority=MESSAGE_PRIORITY_HIGH content=ping\n</SYSTEM_MESSAGE>'
+                },
+                {
+                    step_index: 9,
+                    source: 'MODEL',
+                    type: 'PLANNER_RESPONSE',
+                    status: 'DONE',
+                    created_at: '2026-11-12T18:29:02Z',
+                    content: 'Gen1 idle followup'
+                }
+            ]);
+
+            await vi.waitFor(() => {
+                expect(h.client.sendAgentMessage).toHaveBeenCalledWith({
+                    type: 'message',
+                    message: 'Gen1 idle followup'
+                });
+            });
+
+            const allMessages = h.client.sendAgentMessage.mock.calls.map((c) => c[0]);
+            // Gen0 text/reasoning must NEVER be replayed during Gen1
+            expect(allMessages.filter((m) => m.type === 'message' && m.message === '两张 @2x 高清效果图已经出好')).toHaveLength(0);
+            expect(allMessages.filter((m) => m.type === 'message' && m.message === 'Gen0 reactive reply')).toHaveLength(0);
+            // Gen1 reactive messages and reasoning must each be emitted ONCE (no replay storm)
+            expect(allMessages.filter((m) => m.type === 'message' && m.message === 'Gen1 final answer')).toHaveLength(1);
+            expect(allMessages.filter((m) => m.type === 'reasoning' && m.message === 'Gen1 reactive step 5 thinking')).toHaveLength(1);
+            expect(allMessages.filter((m) => m.type === 'reasoning' && m.message === 'Gen1 final thinking')).toHaveLength(1);
+
+            await h.driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
+
+    it('normalizes mid-trajectory appended rollbacks and in-place parallel step updates without duplicating or truncating sibling steps', () => {
+        const normalized = normalizeRawTranscriptSteps([
+            { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: '2026-11-04T10:00:00Z', content: 'start' },
+            { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-11-04T10:00:01Z', content: '' },
+            // Parallel tools 2 & 3 where 2 starts RUNNING, 3 completes DONE, then 2 is re-appended as DONE
+            { step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'RUNNING', created_at: '2026-11-04T10:00:02Z', content: 'running' },
+            { step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'RUNNING', created_at: '2026-11-04T10:00:02Z', content: 'running' },
+            { step_index: 3, source: 'MODEL', type: 'GENERIC', status: 'DONE', created_at: '2026-11-04T10:00:03Z', content: 'tool 3 ok' },
+            { step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'DONE', created_at: '2026-11-04T10:00:02Z', content: 'tool 2 ok' },
+            // Failed tail 4..5 later rolled back and superseded by appended 4 USER_INPUT + 5 PLANNER_RESPONSE
+            { step_index: 4, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-11-04T10:31:27Z', content: 'old 4' },
+            { step_index: 5, source: 'MODEL', type: 'GENERIC', status: 'ERROR', created_at: '2026-11-04T10:31:34Z', content: 'err' },
+            { step_index: 4, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: '2026-11-04T11:33:31Z', content: 'retry' },
+            { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-11-04T11:33:35Z', content: 'new 5' }
+        ]);
+
+        expect(normalized.generationIndex).toBe(0);
+        expect(normalized.steps.map((s) => [s.step_index, s.type, s.status, s.content])).toEqual([
+            [0, 'USER_INPUT', 'DONE', 'start'],
+            [1, 'PLANNER_RESPONSE', 'DONE', ''],
+            [2, 'GENERIC', 'DONE', 'tool 2 ok'],
+            [3, 'GENERIC', 'DONE', 'tool 3 ok'],
+            [4, 'USER_INPUT', 'DONE', 'retry'],
+            [5, 'PLANNER_RESPONSE', 'DONE', 'new 5']
+        ]);
     });
 });
