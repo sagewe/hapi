@@ -1,4 +1,4 @@
-import { buildExecutionProcessBlocks, completedExecutionRounds } from '@/chat/executionProcess'
+import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings } from '@/chat/executionProcess'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from '@tanstack/react-router'
@@ -1680,6 +1680,7 @@ function SessionChatInner(props: SessionChatProps) {
             })
             : buildExecutionProcessBlocks(threadBlocks, {
                 completedRounds: completedExecutionRounds(normalizedMessages),
+                roundTimings: executionRoundTimings(normalizedMessages),
                 isRunning: props.session.thinking || hasRunningChildAgent,
                 hasMoreMessages: props.hasMoreMessages, previousGroups: executionGroupsRef.current,
                 previousActivityIds: new Set(executionVisibleRef.current.filter(block => block.kind === 'tool-call' && block.executionActivity).map(block => block.id)),

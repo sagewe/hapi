@@ -1,4 +1,11 @@
 export default {
+  'chat.execution.running': '已运行 {duration}',
+  'chat.execution.elapsed': '用时 {duration}',
+  'chat.execution.unknown': '用时未知',
+  'chat.execution.runningUnknown': '运行中',
+  'chat.execution.seconds': '{n} 秒',
+  'chat.execution.minutes': '{m} 分 {s} 秒',
+
   'chat.executionProcess': '执行过程',
   'chat.executionProcess.partial': '更早的执行过程尚未加载。',
   'sessions.timeFilter.label': '按最后活动时间筛选会话',

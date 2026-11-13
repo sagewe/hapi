@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionProcessBlocks, completedExecutionRounds } from './executionProcess'
+import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings } from './executionProcess'
 import { buildSourceMessageIdsByBlock } from '@/lib/assistant-runtime'
 import type { ChatBlock, ToolCallBlock, NormalizedMessage } from './types'
 import type { ToolGroupBlock } from './toolGroups'
@@ -34,8 +34,9 @@ describe('execution process projection', () => {
     it('keeps current activity visible, then folds it under the same identity on completion', () => {
         const input = [user(), tool('earlier'), text('progress', 'progress'), tool('tool')]
         const first = buildExecutionProcessBlocks(input, { ...options, isRunning: true, completedRounds: new Set() })
-        expect(first.at(-1)?.id).toBe('tool')
-        expect(first.at(-1)).toMatchObject({ executionActivity: true })
+        expect(first.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
+        expect(first.at(-1)?.id).toBe('progress')
+        expect(process(first)[0].tools.map(b => b.id)).toEqual(['earlier', 'tool'])
         expect(input.at(-1)).not.toHaveProperty('executionActivity')
         const next = buildExecutionProcessBlocks([...input, text('answer', 'final')], { ...options, previousGroups: process(first) })
         expect(process(next)[0].id).toBe(process(first)[0].id)
@@ -54,6 +55,28 @@ describe('execution process projection', () => {
             expect(final.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['answer'])
             expect(process(final)).toHaveLength(1)
         }
+    })
+    it('uses the full round span and freezes on completion, independent of parallel tools', () => {
+        const input = [user(), { ...text('progress', 'progress'), createdAt: 1000 }, tool('a', 'Bash', 'running'), tool('b', 'Bash', 'running')]
+        const roundTimings = new Map([['u', { startedAt: 1000, endedAt: 41000 }]])
+        const live = buildExecutionProcessBlocks(input, { ...options, isRunning: true, roundTimings })
+        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
+        expect(process(live)[0].processTiming).toEqual({ startedAt: 1000, endedAt: 41000, running: true })
+        const settled = buildExecutionProcessBlocks([...input, text('answer', 'final')], { ...options, roundTimings, previousGroups: process(live) })
+        expect(process(settled)[0].processTiming?.running).toBe(false)
+        expect(process(settled)[0]).not.toBe(process(live)[0])
+        const partial = buildExecutionProcessBlocks(input.slice(1), { ...options, hasMoreMessages: true })
+        expect(process(partial)[0].processTiming?.startedAt).toBeNull()
+    })
+    it('times invocation through root ready, ignoring sidechains and child completion', () => {
+        const base = { localId: null, isSidechain: false, createdAt: 5000 }
+        const messages: NormalizedMessage[] = [
+            { ...base, id: 'u', role: 'user', invokedAt: 1000, content: { type: 'text', text: 'request' } },
+            { ...base, id: 'text', role: 'agent', content: [{ type: 'text', text: 'work', uuid: 'text', parentUUID: null }] },
+            { ...base, id: 'ready', createdAt: 12000, role: 'event', content: { type: 'ready' } },
+            { ...base, id: 'child', createdAt: 99000, role: 'event', content: { type: 'ready', agentId: 'child' } }
+        ]
+        expect(executionRoundTimings(messages).get('u')).toEqual({ startedAt: 1000, endedAt: 12000 })
     })
     it('keeps pending requests, questions, plans and user shell commands outside', () => {
         const permission = tool('permission'); permission.tool.permission = { id: 'p', status: 'pending' }

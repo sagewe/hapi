@@ -1,4 +1,11 @@
 export default {
+  'chat.execution.running': 'Running for {duration}',
+  'chat.execution.elapsed': 'Took {duration}',
+  'chat.execution.unknown': 'Time unavailable',
+  'chat.execution.runningUnknown': 'Running',
+  'chat.execution.seconds': '{n}s',
+  'chat.execution.minutes': '{m}m {s}s',
+
   'chat.executionProcess': 'Execution process',
   'chat.executionProcess.partial': 'Earlier process details are not loaded.',
   'sessions.timeFilter.label': 'Filter sessions by last activity',

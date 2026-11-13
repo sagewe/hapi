@@ -31,6 +31,7 @@ export type ToolGroupBlock = {
     tools: ToolCallBlock[]
     /** Provider-neutral execution history; absent on legacy tool-only groups. */
     processBlocks?: ChatBlock[]
+    processTiming?: { startedAt: number | null; endedAt: number; running: boolean }
     defaultOpen: boolean
     historyState: 'complete' | 'needs-older-history'
     needsOlderHistory: boolean

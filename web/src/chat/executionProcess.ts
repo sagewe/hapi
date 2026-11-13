@@ -3,6 +3,29 @@ import { isObject } from '@hapi/protocol'
 import type { ChatBlock, NormalizedMessage, ToolCallBlock } from './types'
 import { isInteractiveToolBlock, summarizeToolGroup, type ToolGroupBlock, type VisibleChatBlock } from './toolGroups'
 
+/** Receive timestamps span the root round; parallel tool durations are never summed. */
+export function executionRoundTimings(messages: readonly NormalizedMessage[]): Map<string, { startedAt: number; endedAt: number }> {
+    const result = new Map<string, { startedAt: number; endedAt: number }>()
+    let round = 'initial'
+    for (const message of messages) {
+        if (message.isSidechain) continue
+        if (message.role === 'user') {
+            round = message.id
+            if (message.invokedAt != null) result.set(round, { startedAt: message.invokedAt, endedAt: message.invokedAt })
+            continue
+        }
+        const agent = message.role === 'agent' && message.content.length > 0
+        const ready = message.role === 'event' && message.content.type === 'ready'
+            && (!('agentId' in message.content) || !message.content.agentId)
+        const prior = result.get(round)
+        if (agent || (ready && prior)) result.set(round, {
+            startedAt: prior?.startedAt ?? message.createdAt,
+            endedAt: Math.max(prior?.endedAt ?? message.createdAt, message.createdAt)
+        })
+    }
+    return result
+}
+
 export const INITIAL_EXECUTION_ROUND = 'initial'
 
 /** Ready is a lifecycle signal, not a phrase guessed from the agent's prose. */
@@ -55,6 +78,7 @@ function foldable(block: ChatBlock): boolean {
 }
 
 export type ExecutionProcessOptions = {
+    roundTimings?: ReadonlyMap<string, { startedAt: number; endedAt: number }>
     completedRounds: ReadonlySet<string>
     isRunning: boolean
     hasMoreMessages: boolean
@@ -79,6 +103,15 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
     const flush = (tail: boolean) => {
         if (!round.length) return
         const completed = options.completedRounds.has(roundId) && !(tail && options.isRunning)
+        const roundStartIndex = output.length
+        const observed = options.roundTimings?.get(roundId)
+        const timestamps = round.flatMap(block => block.kind === 'tool-call'
+            ? [block.createdAt, block.tool.completedAt ?? block.createdAt] : [block.createdAt])
+        const processTiming = {
+            startedAt: options.hasMoreMessages && roundId === INITIAL_EXECUTION_ROUND ? null : observed?.startedAt ?? Math.min(...timestamps),
+            endedAt: observed?.endedAt ?? Math.max(...timestamps),
+            running: tail && options.isRunning
+        }
         let lastWork = -1
         round.forEach((block, index) => { if (block.kind === 'tool-call' || block.kind === 'agent-reasoning') lastWork = index })
         // Preserve all trailing answer paragraphs for older providers without phase metadata.
@@ -121,7 +154,9 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
             }
             used.add(id)
             const partial = options.hasMoreMessages && roundId === INITIAL_EXECUTION_ROUND
-            if (previous?.processBlocks?.length === members.length && previous.needsOlderHistory === partial
+            if (previous?.processTiming?.startedAt === processTiming.startedAt && previous.processTiming.endedAt === processTiming.endedAt
+                && previous.processTiming.running === processTiming.running
+                && previous?.processBlocks?.length === members.length && previous.needsOlderHistory === partial
                 && previous.processBlocks.every((block, index) => block === members[index])) {
                 output.push(previous)
                 members = []
@@ -130,7 +165,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
             const tools = members.filter((block): block is ToolCallBlock => block.kind === 'tool-call')
             output.push({ kind: 'tool-group', id, createdAt: members[0].createdAt, invokedAt: members[0].invokedAt,
                 firstToolId: members[0].id, lastToolId: members[members.length - 1].id, tools,
-                processBlocks: members, defaultOpen: false, needsOlderHistory: partial,
+                processBlocks: members, processTiming, defaultOpen: false, needsOlderHistory: partial,
                 historyState: partial ? 'needs-older-history' : 'complete', summary: summarizeToolGroup(tools),
                 roundSummary: members.flatMap(block => 'roundSummary' in block && block.roundSummary ? [block.roundSummary] : [])[0] })
             members = []
@@ -138,7 +173,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         let insertionIndex: number | null = null
         for (const block of round) {
             if (!foldable(block) || replies.has(block.id) || explanation.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
-                || ((!completed || replies.size === 0) && block.id === latest)) {
+                || ((!completed || replies.size === 0) && block.id === latest && block.kind !== 'tool-call')) {
                 output.push(activityPresentation(block, Boolean(options.keepVisibleIds?.has(block.id) && options.previousActivityIds?.has(block.id))))
             } else {
                 insertionIndex ??= output.length
@@ -148,7 +183,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         emit()
         if (insertionIndex !== null) {
             const group = output.pop()!
-            output.splice(insertionIndex, 0, group)
+            output.splice(roundStartIndex, 0, group)
         }
         round = []
     }

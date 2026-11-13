@@ -166,6 +166,7 @@ final class ChatModel {
     private(set) var blocks: [VisibleChatBlock] = []
     private(set) var messageRows: [TranscriptRow] = []
     @ObservationIgnored private var executionCompletedRounds = Set<String>()
+    @ObservationIgnored private var executionTimings: [String: ExecutionProcessTiming] = [:]
     @ObservationIgnored private var executionIsRunning = false
     @ObservationIgnored private var heldExecutionIDs = Set<String>()
     @ObservationIgnored private var executionGroups: [ToolGroupBlock] = []
@@ -1052,12 +1053,14 @@ final class ChatModel {
                     directSendLocalIds: interactor.directSendLocalIds
                 )
                 let completionEvidence = await pipeline.executionCompletionEvidence()
+                let timingEvidence = await pipeline.executionTimingEvidence()
                 let prepared = await renderPreparation.prepare(visible, previous: blocks, markdownCache: markdownCache)
                 guard !Task.isCancelled else { return }
                 apply(
                     visible,
                     prepared: prepared,
                     completionEvidence: completionEvidence,
+                    timingEvidence: timingEvidence,
                     window: window,
                     detail: detail,
                     summary: summary,
@@ -1080,6 +1083,7 @@ final class ChatModel {
         _ visible: [VisibleChatBlock],
         prepared: PreparedChatRender,
         completionEvidence: Set<String>,
+        timingEvidence: [String: ExecutionProcessTiming],
         window: MessageWindowState,
         detail: Session?,
         summary: SessionSummary?,
@@ -1089,8 +1093,9 @@ final class ChatModel {
     ) {
         guard !chat.isRemoved else { return }
         let running = detail?.thinking ?? summary?.thinking ?? false
-        let processChanged = executionCompletedRounds != completionEvidence || executionIsRunning != running || hasMore != window.hasMore
+        let processChanged = executionTimings != timingEvidence || executionCompletedRounds != completionEvidence || executionIsRunning != running || hasMore != window.hasMore
         executionCompletedRounds = completionEvidence
+        executionTimings = timingEvidence
         executionIsRunning = running
         hasMore = window.hasMore
         if let previousEpoch = lastEpoch, let epoch = window.epoch, previousEpoch != epoch {
@@ -1168,7 +1173,7 @@ final class ChatModel {
         }
         let displayed = highlightedBlockID == nil
             ? buildExecutionProcessBlocks(blocks, completedRounds: executionCompletedRounds,
-                isRunning: executionIsRunning, hasMoreMessages: hasMore,
+                isRunning: executionIsRunning, hasMoreMessages: hasMore, roundTimings: executionTimings,
                 keepVisibleIds: keepVisible, previousGroups: executionGroups)
             : blocks
         for group in executionGroups {

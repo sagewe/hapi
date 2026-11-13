@@ -48,6 +48,8 @@ public actor ChatPipeline {
 
     private var completedRounds = Set<String>()
 
+    private var roundTimings: [String: ExecutionProcessTiming] = [:]
+    public func executionTimingEvidence() -> [String: ExecutionProcessTiming] { roundTimings }
     public func executionCompletionEvidence() -> Set<String> { completedRounds }
 
     public init() {}
@@ -104,6 +106,7 @@ public actor ChatPipeline {
         }
 
         completedRounds = completedExecutionRounds(normalized)
+        roundTimings = executionRoundTimings(normalized)
         let reduced = reduceChatBlocks(normalized, agentState: agentState)
         let visible = buildVisibleChatBlocks(
             Self.filterEmptyReasoning(reduced.blocks),
@@ -141,6 +144,7 @@ public actor ChatPipeline {
     /// Forget all memo state (session switch / tests).
     public func reset() {
         completedRounds = []
+        roundTimings = [:]
         lastMessages = nil
         lastAgentState = nil
         lastOutput = []

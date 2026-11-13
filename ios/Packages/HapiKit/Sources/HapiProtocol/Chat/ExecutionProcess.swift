@@ -1,5 +1,25 @@
 import Foundation
 
+public func executionRoundTimings(_ messages: [NormalizedMessage]) -> [String: ExecutionProcessTiming] {
+    var result: [String: ExecutionProcessTiming] = [:]
+    var round = "initial"
+    for message in messages where !message.isSidechain {
+        switch message.content {
+        case .user:
+            round = message.id
+            if let start = message.invokedAt { result[round] = .init(startedAt: start, endedAt: start) }
+        case .agent(let content) where !content.isEmpty:
+            let prior = result[round]
+            result[round] = .init(startedAt: prior?.startedAt ?? message.createdAt,
+                endedAt: max(prior?.endedAt ?? message.createdAt, message.createdAt))
+        case .event(let event) where event.type == "ready" && (event.object["agentId"] == nil || event.object["agentId"] == .null || event.object["agentId"] == .string("")):
+            if var prior = result[round] { prior.endedAt = max(prior.endedAt, message.createdAt); result[round] = prior }
+        default: break
+        }
+    }
+    return result
+}
+
 /// Provider-neutral outer presentation; canonical messages remain untouched.
 public func completedExecutionRounds(_ messages: [NormalizedMessage]) -> Set<String> {
     var completed = Set<String>()
@@ -46,7 +66,7 @@ private func canFoldExecutionBlock(_ block: ChatBlock) -> Bool {
 
 public func buildExecutionProcessBlocks(
     _ visible: [VisibleChatBlock], completedRounds: Set<String>, isRunning: Bool,
-    hasMoreMessages: Bool, keepVisibleIds: Set<String> = [], previousGroups: [ToolGroupBlock] = []
+    hasMoreMessages: Bool, roundTimings: [String: ExecutionProcessTiming] = [:], keepVisibleIds: Set<String> = [], previousGroups: [ToolGroupBlock] = []
 ) -> [VisibleChatBlock] {
     let blocks: [ChatBlock] = visible.flatMap { block in
         switch block {
@@ -67,6 +87,15 @@ public func buildExecutionProcessBlocks(
     func flush(tail: Bool) {
         guard !round.isEmpty else { return }
         let completed = completedRounds.contains(roundID) && !(tail && isRunning)
+        let roundStartIndex = output.count
+        let timestamps = round.flatMap { block -> [Int] in
+            if case .toolCall(let tool) = block { return [block.createdAt, tool.tool.completedAt ?? block.createdAt] }
+            return [block.createdAt]
+        }
+        let observed = roundTimings[roundID]
+        let timing = ExecutionProcessTiming(
+            startedAt: hasMoreMessages && roundID == "initial" ? nil : observed?.startedAt ?? timestamps.min(),
+            endedAt: observed?.endedAt ?? timestamps.max() ?? 0, running: tail && isRunning)
         let lastWork = round.lastIndex { block in
             switch block { case .toolCall, .agentReasoning: return true; default: return false }
         } ?? -1
@@ -130,13 +159,14 @@ public func buildExecutionProcessBlocks(
                 historyState: partial ? .needsOlderHistory : .complete, needsOlderHistory: partial,
                 activityTitle: nil, presentationMode: .default, summary: summarizeToolGroup(tools))
             group.processBlocks = members
+            group.processTiming = timing
             output.append(.toolGroup(group))
             members = []
         }
         var insertionIndex: Int?
         for block in round {
             if !canFoldExecutionBlock(block) || replies.contains(block.id) || explanation.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
-                || ((!completed || replies.isEmpty) && block.id == latest) {
+                || ((!completed || replies.isEmpty) && block.id == latest && block.asToolCall == nil) {
                 output.append(.block(block))
             } else {
                 if insertionIndex == nil { insertionIndex = output.count }
@@ -144,9 +174,9 @@ public func buildExecutionProcessBlocks(
             }
         }
         emit()
-        if let insertionIndex {
+        if insertionIndex != nil {
             let group = output.removeLast()
-            output.insert(group, at: insertionIndex)
+            output.insert(group, at: roundStartIndex)
         }
         round = []
     }

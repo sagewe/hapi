@@ -43,7 +43,9 @@ struct ExecutionProcessTests {
     @Test func currentActivityMovesIntoStableProcessAfterFinalAnswer() {
         let input = [user, tool("earlier"), text("progress", phase: "progress"), tool("tool")]
         let before = project(input, running: true)
-        #expect(before.last?.testID == "tool")
+        #expect(before.last?.testID == "progress")
+        #expect(before.count == 3)
+        #expect(groups(before).first?.tools.map(\.id) == ["earlier", "tool"])
         let after = project(input + [text("answer", phase: "final")], previous: groups(before))
         #expect(groups(before).first?.id == groups(after).first?.id)
         #expect(groups(after).first?.processBlocks?.map(\.id) == ["earlier", "progress", "tool"])
@@ -65,6 +67,19 @@ struct ExecutionProcessTests {
                 #expect(groups(final).count == 1)
             }
         }
+    }
+    @Test func timingUsesRoundSpanAndPartialHistoryHasNoInventedStart() {
+        let input = [user, text("progress", phase: "progress"), tool("a", state: .running), tool("b", state: .running)]
+        let timed = buildExecutionProcessBlocks(input.map { .block($0) }, completedRounds: [], isRunning: true,
+            hasMoreMessages: false, roundTimings: ["u": .init(startedAt: 1000, endedAt: 41000)])
+        #expect(timed.count == 3)
+        #expect(timed[1].testID == groups(timed).first?.id)
+        #expect(groups(timed).first?.processTiming == .init(startedAt: 1000, endedAt: 41000, running: true))
+        let partial = project(Array(input.dropFirst()), more: true)
+        #expect(groups(partial).first?.processTiming?.startedAt == nil)
+        let prompt = NormalizedMessage(id: "u", createdAt: 0, content: .user(text: "request", attachments: nil), invokedAt: 1000)
+        let ready = NormalizedMessage(id: "r", createdAt: 41000, content: .event(.init(object: ["type": .string("ready")])))
+        #expect(executionRoundTimings([prompt, ready])["u"] == .init(startedAt: 1000, endedAt: 41000))
     }
     @Test func exceptionsAndUserReadingRemainVisible() {
         let error = tool("error", state: .error)

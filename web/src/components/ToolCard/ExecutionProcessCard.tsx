@@ -1,4 +1,4 @@
-import { Component, createRef, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Component, createRef, useEffect, useState, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import { stripNotifySummaryFooter } from '@hapi/protocol/messages'
 import { buildVisibleChatBlocks, type ToolGroupBlock } from '@/chat/toolGroups'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
@@ -34,6 +34,22 @@ class ProcessReadingAnchor extends Component<{ children: ReactNode; revision: un
     render() { return <div ref={this.root} data-hapi-nested-scroll="true" className="max-h-[60vh] space-y-3 overflow-y-auto overscroll-contain" tabIndex={0}>{this.props.children}</div> }
 }
 
+function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTiming'] }) {
+    const { t } = useTranslation()
+    const [now, setNow] = useState(Date.now)
+    useEffect(() => {
+        if (!timing?.running) return
+        setNow(Date.now())
+        const timer = window.setInterval(() => setNow(Date.now()), 1000)
+        return () => window.clearInterval(timer)
+    }, [timing?.running, timing?.startedAt])
+    if (timing?.startedAt == null) return <>{t(timing?.running ? 'chat.execution.runningUnknown' : 'chat.execution.unknown')}</>
+    const seconds = Math.max(0, Math.floor(((timing.running ? now : timing.endedAt) - timing.startedAt) / 1000))
+    const duration = seconds < 60 ? t('chat.execution.seconds', { n: seconds })
+        : t('chat.execution.minutes', { m: Math.floor(seconds / 60), s: seconds % 60 })
+    return <>{t(timing.running ? 'chat.execution.running' : 'chat.execution.elapsed', { duration })}</>
+}
+
 /** All providers share this outer disclosure; inner views retain tool semantics. */
 export function ExecutionProcessCard({ block }: { block: ToolGroupBlock }) {
     const ctx = useHappyChatContext()
@@ -55,9 +71,8 @@ export function ExecutionProcessCard({ block }: { block: ToolGroupBlock }) {
                 ctx.setExecutionProcessOpen?.(block.id, !open)
                 if (!open) ctx.onNestedScrollFollowChange?.(false)
             }}>
+            <span><ExecutionTimingLabel timing={block.processTiming} /></span>
             <span aria-hidden="true">{open ? '⌄' : '›'}</span>
-            <span>{t('chat.executionProcess')}</span>
-            {block.summary.runningCount > 0 ? <span>{t('toolGroup.badge.running', { n: block.summary.runningCount })}</span> : null}
         </button>
         {open ? <div className="space-y-3 border-l border-[var(--app-border)] pl-3">
             {block.needsOlderHistory ? <p className="text-xs text-[var(--app-hint)]">{t('chat.executionProcess.partial')}</p> : null}

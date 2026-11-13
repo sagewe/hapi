@@ -12,9 +12,11 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     let runningCount: Int
     let errorCount: Int
     let isExecutionProcess: Bool
+    let processTiming: ExecutionProcessTiming?
 
     init(_ block: ToolGroupBlock) {
         id = block.id
+        processTiming = block.processTiming
         isExecutionProcess = block.processBlocks != nil
         activityTitle = block.activityTitle
         totalTools = block.summary.totalTools
@@ -24,7 +26,7 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     }
 
     var title: String {
-        if isExecutionProcess { return String(localized: "Execution process") }
+        if isExecutionProcess { return String(localized: "Elapsed time") }
         let title = totalTools == 1 ? String(localized: "1 tool call")
             : String(format: String(localized: "%lld tool calls"), Int64(totalTools))
         return activityTitle.map { "\($0) · \(title)" } ?? title
@@ -68,11 +70,12 @@ struct ToolGroupBlockView: View {
     var body: some View {
         if presentation.isExecutionProcess {
             Button { openGroup?(presentation.id) } label: {
-                HStack(spacing: 8) {
-                    Label("Execution process", systemImage: "chevron.right")
-                    if presentation.runningCount > 0 {
-                        Text("\(presentation.runningCount) running tools")
-                    }
+                Group {
+                    if presentation.processTiming?.running == true {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            timingContent(now: context.date)
+                        }
+                    } else { timingContent(now: .now) }
                 }
                 .font(.caption)
                 .foregroundStyle(theme.textSecondary)
@@ -82,6 +85,25 @@ struct ToolGroupBlockView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("tool-group-\(presentation.id)")
         } else { legacyBody }
+    }
+
+    private func timingContent(now: Date) -> some View {
+        HStack(spacing: 8) {
+            Text(timingLabel(now: now))
+            Image(systemName: "chevron.right")
+        }
+    }
+
+    private func timingLabel(now: Date) -> String {
+        guard let timing = presentation.processTiming, let start = timing.startedAt else {
+            return presentation.processTiming?.running == true ? String(localized: "Running") : String(localized: "Time unavailable")
+        }
+        let end = timing.running ? Int(now.timeIntervalSince1970 * 1000) : timing.endedAt
+        let seconds = max(0, (end - start) / 1000)
+        let duration = seconds < 60
+            ? String(format: String(localized: "%llds"), Int64(seconds))
+            : String(format: String(localized: "%lldm %llds"), Int64(seconds / 60), Int64(seconds % 60))
+        return String(format: String(localized: timing.running ? "Running for %@" : "Took %@"), duration)
     }
 
     private var legacyBody: some View {

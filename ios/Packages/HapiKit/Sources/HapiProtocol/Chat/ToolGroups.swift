@@ -48,6 +48,15 @@ public struct ToolGroupSummary: Equatable, Sendable {
     public var pendingCount: Int
 }
 
+public struct ExecutionProcessTiming: Equatable, Sendable {
+    public var startedAt: Int?
+    public var endedAt: Int
+    public var running: Bool
+    public init(startedAt: Int?, endedAt: Int, running: Bool = false) {
+        self.startedAt = startedAt; self.endedAt = endedAt; self.running = running
+    }
+}
+
 /// Port of `ToolGroupBlock`.
 public struct ToolGroupBlock: Equatable, Sendable {
     public var id: String
@@ -57,6 +66,7 @@ public struct ToolGroupBlock: Equatable, Sendable {
     public var lastToolId: String
     public var tools: [ToolCallBlock]
     public var processBlocks: [ChatBlock]? = nil
+    public var processTiming: ExecutionProcessTiming? = nil
     public var defaultOpen: Bool
     public var historyState: HistoryState
     public var needsOlderHistory: Bool
