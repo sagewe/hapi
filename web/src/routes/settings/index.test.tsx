@@ -337,7 +337,7 @@ describe('responsive settings pages', () => {
         fireEvent.click(screen.getByRole('radio', { name: 'Insert newline' }))
         expect(setComposerEnterBehavior).toHaveBeenCalledWith('newline')
 
-        expect(screen.getByRole('radiogroup', { name: 'Display Style' })).toBeInTheDocument()
+        expect(screen.getByRole('radiogroup', { name: 'Tool detail style' })).toBeInTheDocument()
         expect(screen.getByRole('radio', { name: 'Combined' })).toBeInTheDocument()
         expect(screen.getByRole('radio', { name: 'Combined' })).toBeChecked()
         expect(screen.getByRole('radio', { name: 'Compact' })).toBeInTheDocument()
@@ -376,7 +376,7 @@ describe('responsive settings pages', () => {
         const toggle = screen.getByRole('checkbox', { name: 'Collapse explored tool groups' })
         expect(toggle).toBeChecked()
         expect(toggle).toBeDisabled()
-        expect(screen.getByText('Collapse Codex read and search activity; click to view details.')).toBeInTheDocument()
+        expect(screen.getByText('Within execution details, group Codex read and search activity.')).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole('radio', { name: 'Compact' }))
         expect(toggle).toBeEnabled()
