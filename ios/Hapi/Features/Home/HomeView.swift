@@ -273,14 +273,26 @@ struct HomeView: View {
     }
 
     private func chat(_ sessionId: String) -> some View {
-        ChatView(session: session, model: session.chatModel(for: sessionId)) { superseding in
-            if usesSplitNavigation {
-                tabletNavigation.supersede(sessionId, with: superseding)
-            } else if let last = path.indices.last, path[last] == sessionId {
-                path[last] = superseding
+        ChatView(
+            session: session,
+            model: session.chatModel(for: sessionId),
+            onNavigateToSession: { superseding in
+                if usesSplitNavigation {
+                    tabletNavigation.supersede(sessionId, with: superseding)
+                } else if let last = path.indices.last, path[last] == sessionId {
+                    path[last] = superseding
+                }
+                // A late response from a chat already left must not steal focus.
+            },
+            onOpenParentSession: { parentId in
+                if !usesSplitNavigation, let idx = path.firstIndex(of: parentId) {
+                    path.removeSubrange((idx + 1)...)
+                    listModel.selectedSessionId = parentId
+                } else {
+                    openSession(parentId)
+                }
             }
-            // A late response from a chat already left must not steal focus.
-        }
+        )
         .id(sessionId)
     }
 

@@ -151,6 +151,7 @@ public enum SummaryPatching {
     /// `toSessionSummaryMetadata` — list-sized projection of full metadata.
     public static func toSessionSummaryMetadata(_ metadata: SessionMetadata?) -> SessionSummaryMetadata? {
         guard let metadata else { return nil }
+        let trimmedParent = metadata.parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
         return SessionSummaryMetadata(
             titleLocked: metadata.titleLocked,
             tags: metadata.tags,
@@ -163,6 +164,7 @@ public enum SummaryPatching {
             worktree: metadata.worktree,
             agentSessionId: summaryAgentSessionId(metadata),
             lifecycleState: metadata.lifecycleState,
+            parentSessionId: (trimmedParent?.isEmpty == false) ? trimmedParent : nil,
             hapiMcpUrl: metadata.hapiMcpUrl
         )
     }
@@ -285,6 +287,7 @@ public enum SummaryPatching {
         if current.flavor != next.flavor { return false }
         if current.agentSessionId != next.agentSessionId { return false }
         if current.lifecycleState != next.lifecycleState { return false }
+        if current.parentSessionId != next.parentSessionId { return false }
         if current.worktree?.basePath != next.worktree?.basePath { return false }
         if current.worktree?.branch != next.worktree?.branch { return false }
         if current.worktree?.name != next.worktree?.name { return false }

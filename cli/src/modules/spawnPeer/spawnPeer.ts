@@ -623,6 +623,10 @@ export async function spawnPeer(options: SpawnPeerOptions): Promise<SpawnPeerRes
             spawnBody.effort = resolved.effort
         }
     }
+    const parentSessionId = (parent?.sessionId ?? '').trim()
+    if (parentSessionId) {
+        spawnBody.parentSessionId = parentSessionId
+    }
 
     onProgress?.(`spawning agent=${resolved.agent} permission=${resolved.permissionMode} type=${sessionType} dir=${directory}`)
     const spawnResponse = await http.post(

@@ -95,6 +95,14 @@ import {
     compareSessionsByOrderKeyDesc
 } from '@hapi/protocol'
 import { createSessionComparator, filterSessionsByStatus, getSessionSortKey } from '@/lib/sessionListOrder'
+import {
+    buildFlatHierarchyMetadata,
+    buildSessionTitleMap,
+    buildWebDefaultBrowseHierarchy,
+    getVisibleHierarchyUnitsPreview,
+    shouldShowHierarchyPinnedDivider,
+    type SessionTreeConnector
+} from '@/lib/sessionHierarchy'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
 import {
     getSessionLastSeenAt,
@@ -996,6 +1004,54 @@ function CollapsiblePanel(props: { open: boolean; children: ReactNode }) {
     )
 }
 
+function SessionTreeConnectorGutter(props: { connector: SessionTreeConnector }) {
+    const { visualDepth, continuesAtLevel1, isLastChild, isDepthCapped } = props.connector
+    const gutterWidth = visualDepth * 12
+    const activeSlotLeft = visualDepth === 1 ? 5 : 17
+    const railToneClass = 'bg-[var(--app-hint)]/30'
+    const cornerToneClass = 'border-[var(--app-hint)]/30'
+
+    return (
+        <div
+            data-testid="session-tree-connector"
+            data-visual-depth={visualDepth}
+            data-depth-capped={isDepthCapped ? 'true' : undefined}
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-0.5 -bottom-0.5 left-0"
+            style={{ width: `${gutterWidth}px` }}
+        >
+            {visualDepth === 2 && continuesAtLevel1 ? (
+                <span
+                    className={`absolute top-0 bottom-0 w-px ${railToneClass}`}
+                    style={{ left: '5px' }}
+                />
+            ) : null}
+            {isDepthCapped ? (
+                <span
+                    className={`absolute w-[6px] h-[7px] rounded-bl-[3.5px] border-l border-b ${cornerToneClass}`}
+                    style={{ left: `${activeSlotLeft}px`, top: 'calc(50% - 4px)' }}
+                />
+            ) : isLastChild ? (
+                <span
+                    className={`absolute top-0 w-[6px] rounded-bl-[5px] border-l border-b ${cornerToneClass}`}
+                    style={{ left: `${activeSlotLeft}px`, height: 'calc(50% + 1px)' }}
+                />
+            ) : (
+                <>
+                    <span
+                        className={`absolute top-0 bottom-0 w-px ${railToneClass}`}
+                        style={{ left: `${activeSlotLeft}px` }}
+                    />
+                    <span
+                        className={`absolute h-px w-[6px] ${railToneClass}`}
+                        style={{ left: `${activeSlotLeft}px`, top: '50%' }}
+                    />
+                </>
+            )}
+        </div>
+    )
+}
+
 const SessionItem = memo(function SessionItem(props: {
     session: SessionSummary
     onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string) => void
@@ -1007,6 +1063,8 @@ const SessionItem = memo(function SessionItem(props: {
     inRunningSection?: boolean
     projectLabel?: string
     machineLabel?: string
+    hierarchyConnector?: SessionTreeConnector | null
+    parentHint?: string | null
     contentSnippet?: string
     contentSearchTruncated?: boolean
     targetMessageId?: string
@@ -1026,6 +1084,8 @@ const SessionItem = memo(function SessionItem(props: {
         inRunningSection = false,
         projectLabel,
         machineLabel,
+        hierarchyConnector = null,
+        parentHint = null,
         contentSnippet,
         contentSearchTruncated,
         targetMessageId,
@@ -1212,18 +1272,25 @@ const SessionItem = memo(function SessionItem(props: {
                 : isBackgroundRow
                     ? 'bg-sky-500/[0.04] hover:bg-sky-500/[0.08]'
                     : ''
+    const indentPx = hierarchyConnector ? hierarchyConnector.visualDepth * 12 : 0
     return (
         <>
             <div
                 className="session-list-row relative"
                 data-quick-action-pending={quickArchivePending ? '' : undefined}
             >
+                {hierarchyConnector ? (
+                    <SessionTreeConnectorGutter connector={hierarchyConnector} />
+                ) : null}
                 <button
                     type="button"
                     {...longPressHandlers}
                     data-session-scroll-anchor
-                    className={`session-list-item group/session-row relative flex w-full flex-col gap-1 py-2 ${stripeClass ? 'pl-3.5' : 'pl-2.5'} pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${rowSurfaceClass}`}
-                    style={{ WebkitTouchCallout: 'none' }}
+                    className={`session-list-item group/session-row relative flex flex-col gap-1 py-2 ${stripeClass ? 'pl-3.5' : 'pl-2.5'} pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
+                    style={{
+                        WebkitTouchCallout: 'none',
+                        ...(indentPx > 0 ? { marginLeft: `${indentPx}px`, width: `calc(100% - ${indentPx}px)` } : {}),
+                    }}
                     aria-current={selected ? 'page' : undefined}
                     aria-describedby={describedBy}
                 >
@@ -1246,6 +1313,7 @@ const SessionItem = memo(function SessionItem(props: {
                         inRunningSection={inRunningSection}
                         projectLabel={projectLabel}
                         machineLabel={machineLabel}
+                        parentHint={parentHint}
                         contentSnippet={contentSnippet}
                         contentSearchTruncated={contentSearchTruncated}
                         trailingClassName={showQuickArchive ? 'session-row-trailing' : undefined}
@@ -1774,14 +1842,42 @@ export function SessionList(props: {
             ),
         [baseMachineFilteredSessions, quickStatusLens]
     )
+    const isRelationshipBrowseMode = !isFiltering
+        && quickStatusLens === null
+        && activeMachineFilter === null
+        && listView.status === 'all'
+        && !listView.unreadOnly
+    const defaultBrowseHierarchy = useMemo(
+        () => isRelationshipBrowseMode
+            ? buildWebDefaultBrowseHierarchy({
+                sessions: machineFilteredSessions,
+                allKnownSessions: props.sessions,
+                pinInProgressSessions,
+                order: listView
+            })
+            : null,
+        [isRelationshipBrowseMode, machineFilteredSessions, props.sessions, pinInProgressSessions, listView]
+    )
+    const hierarchyMetaBySessionId = useMemo(
+        () => defaultBrowseHierarchy
+            ? defaultBrowseHierarchy.metaBySessionId
+            : buildFlatHierarchyMetadata(machineFilteredSessions, buildSessionTitleMap(props.sessions)),
+        [defaultBrowseHierarchy, machineFilteredSessions, props.sessions]
+    )
     const globalPinnedSessions = useMemo(() => {
+        if (defaultBrowseHierarchy) {
+            return defaultBrowseHierarchy.globalPinnedSessions
+        }
         const pinned = machineFilteredSessions.filter((session) => Boolean(session.globalPinned))
         if (searchScoreIndex && hasTextQuery) {
             return sortSessionsBySearchRelevance(pinned, searchScoreIndex)
         }
         return [...pinned].sort(listComparator)
-    }, [machineFilteredSessions, searchScoreIndex, hasTextQuery, listComparator])
+    }, [defaultBrowseHierarchy, machineFilteredSessions, searchScoreIndex, hasTextQuery, listComparator])
     const runningSessions = useMemo(() => {
+        if (defaultBrowseHierarchy) {
+            return defaultBrowseHierarchy.runningSessions
+        }
         const byRelevanceOrRecent = (a: SessionSummary, b: SessionSummary) => {
             if (searchScoreIndex && hasTextQuery) {
                 return compareSessionsBySearchRelevance(a, b, searchScoreIndex)
@@ -1789,12 +1885,15 @@ export function SessionList(props: {
             return listComparator(a, b)
         }
         return bucketRunningSessions(machineFilteredSessions, pinInProgressSessions, byRelevanceOrRecent)
-    }, [machineFilteredSessions, pinInProgressSessions, searchScoreIndex, hasTextQuery, listComparator])
+    }, [defaultBrowseHierarchy, machineFilteredSessions, pinInProgressSessions, searchScoreIndex, hasTextQuery, listComparator])
     const runningSessionTotal = runningSessions.working.length
         + runningSessions.pending.length
     const activeSessionTotal = runningSessions.active.length + runningSessions.idle.length
     const groups = useMemo(
         () => {
+            if (defaultBrowseHierarchy) {
+                return defaultBrowseHierarchy.groups
+            }
             const grouped = groupSessionsByDirectory(
                 machineFilteredSessions.filter((session) => {
                     if (session.globalPinned) return false
@@ -1810,13 +1909,11 @@ export function SessionList(props: {
             }
             return grouped
         },
-        [machineFilteredSessions, pinInProgressSessions, searchScoreIndex, hasTextQuery, listView]
+        [defaultBrowseHierarchy, machineFilteredSessions, pinInProgressSessions, searchScoreIndex, hasTextQuery, listView]
     )
-    // Directory groups whose rows all floated to the pinned sections still
-    // render an action-only header so copy-path / new-session-in-directory
-    // stay available (no rows to group, but the project itself is live).
-    // Based on the same machineFilteredSessions set as `groups` so the machine
-    // filter stays consistent.
+    // Directory groups whose rows all floated to the pinned sections (or nested
+    // under a cross-directory parent tree) still render an action-only header so
+    // copy-path / new-session-in-directory stay available.
     const allDirectoryGroups = useMemo(
         () => groupSessionsByDirectory(
             machineFilteredSessions.filter((session) => !session.globalPinned),
@@ -1825,12 +1922,12 @@ export function SessionList(props: {
         [machineFilteredSessions, listView]
     )
     const actionOnlyGroups = useMemo(() => {
-        if (!pinInProgressSessions) {
+        if (!pinInProgressSessions && !isRelationshipBrowseMode) {
             return []
         }
         const visibleKeys = new Set(groups.map((group) => group.key))
         return allDirectoryGroups.filter((group) => !visibleKeys.has(group.key))
-    }, [groups, allDirectoryGroups, pinInProgressSessions])
+    }, [groups, allDirectoryGroups, pinInProgressSessions, isRelationshipBrowseMode])
     const [collapseOverrides, setCollapseOverrides] = useState<Map<string, boolean>>(
         () => new Map()
     )
@@ -1884,6 +1981,22 @@ export function SessionList(props: {
         return sessionVisibleCounts.get(group.key) ?? sessionPreviewLimit
     }
 
+    const getGroupPreviewForLimit = (group: SessionGroup, limit: number): SessionSummary[] => {
+        const hierarchyUnits = defaultBrowseHierarchy?.unitsByGroupKey.get(group.key)
+        if (hierarchyUnits) {
+            return getVisibleHierarchyUnitsPreview(hierarchyUnits, group.sessions.length, {
+                selectedSessionId,
+                limit,
+                isUnread: previewIsUnread
+            })
+        }
+        return getVisibleSessionPreview(group.sessions, {
+            selectedSessionId,
+            limit,
+            isUnread: previewIsUnread
+        })
+    }
+
     const showMoreSessions = (group: SessionGroup) => {
         setSessionVisibleCounts(prev => {
             const next = new Map(prev)
@@ -1891,11 +2004,7 @@ export function SessionList(props: {
                 prev.get(group.key) ?? sessionPreviewLimit,
                 group.sessions.length
             )
-            const currentVisibleCount = getVisibleSessionPreview(group.sessions, {
-                selectedSessionId,
-                limit: currentLimit,
-                isUnread: previewIsUnread
-            }).length
+            const currentVisibleCount = getGroupPreviewForLimit(group, currentLimit).length
             next.set(group.key, getNextSessionVisibleCount(
                 Math.max(currentLimit, currentVisibleCount),
                 sessionPreviewLimit,
@@ -1923,14 +2032,7 @@ export function SessionList(props: {
     }
 
     const getVisibleGroupSessions = (group: SessionGroup): SessionSummary[] => {
-        return getVisibleSessionPreview(
-            group.sessions,
-            {
-                selectedSessionId,
-                limit: getGroupVisibleCount(group),
-                isUnread: previewIsUnread
-            }
-        )
+        return getGroupPreviewForLimit(group, getGroupVisibleCount(group))
     }
 
     const renderPinnedSection = ({
@@ -1994,26 +2096,31 @@ export function SessionList(props: {
                                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full bg-current ${bucket.pulse ? 'animate-pulse' : ''}`} aria-hidden="true" />
                                         {t(bucket.labelKey)} ({sessions.length})
                                     </div>
-                                    {sessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={props.onSelect}
-                                            showPath={false}
-                                            api={api}
-                                            titleSuggestionAvailable={titleSuggestionAvailable}
-                                            selected={s.id === selectedSessionId}
-                                            showDetailedStatus={showDetailedStatus}
-                                            inRunningSection
-                                            projectLabel={getSessionProjectLabel(getSessionProjectPath(s.metadata) ?? 'Other')}
-                                            machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
-                                            contentSnippet={contentSnippetBySessionId.get(s.id)}
-                                            contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
-                                            targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
-                                            targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
-                                            lastSeenVersion={lastSeenVersion}
-                                        />
-                                    ))}
+                                    {sessions.map((s) => {
+                                        const rowMeta = hierarchyMetaBySessionId.get(s.id)
+                                        return (
+                                            <SessionItem
+                                                key={s.id}
+                                                session={s}
+                                                onSelect={props.onSelect}
+                                                showPath={false}
+                                                api={api}
+                                                titleSuggestionAvailable={titleSuggestionAvailable}
+                                                selected={s.id === selectedSessionId}
+                                                showDetailedStatus={showDetailedStatus}
+                                                inRunningSection
+                                                projectLabel={getSessionProjectLabel(getSessionProjectPath(s.metadata) ?? 'Other')}
+                                                machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
+                                                hierarchyConnector={rowMeta?.connector ?? null}
+                                                parentHint={rowMeta?.parentHint ?? null}
+                                                contentSnippet={contentSnippetBySessionId.get(s.id)}
+                                                contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
+                                                targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
+                                                targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
+                                                lastSeenVersion={lastSeenVersion}
+                                            />
+                                        )
+                                    })}
                                 </div>
                             )
                         })}
@@ -2061,22 +2168,34 @@ export function SessionList(props: {
         )
     }
 
-    const renderGroupSessionItem = (s: SessionSummary) => (
-        <SessionItem
-            session={s}
-            onSelect={props.onSelect}
-            showPath={false}
-            api={api}
-            titleSuggestionAvailable={titleSuggestionAvailable}
-            selected={s.id === selectedSessionId}
-            showDetailedStatus={showDetailedStatus}
-            contentSnippet={contentSnippetBySessionId.get(s.id)}
-            contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
-            targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
-            targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
-            lastSeenVersion={lastSeenVersion}
-        />
-    )
+    const renderGroupSessionItem = (s: SessionSummary, group: SessionGroup, omitHierarchyConnector = false) => {
+        const rowMeta = hierarchyMetaBySessionId.get(s.id)
+        const sessionDir = getSessionProjectPath(s.metadata) ?? 'Other'
+        const sessionMachineId = s.metadata?.machineId ?? null
+        const differsFromGroup = sessionDir !== group.directory || sessionMachineId !== group.machineId
+        return (
+            <SessionItem
+                session={s}
+                onSelect={props.onSelect}
+                showPath={false}
+                api={api}
+                titleSuggestionAvailable={titleSuggestionAvailable}
+                selected={s.id === selectedSessionId}
+                showDetailedStatus={showDetailedStatus}
+                projectLabel={differsFromGroup ? getSessionProjectLabel(sessionDir) : undefined}
+                machineLabel={sessionMachineId !== group.machineId ? resolveMachineLabel(sessionMachineId) : undefined}
+                hierarchyConnector={omitHierarchyConnector ? null : (rowMeta?.connector ?? null)}
+                parentHint={omitHierarchyConnector && s.metadata?.parentSessionId
+                    ? (rowMeta?.parentHint ?? buildSessionTitleMap(props.sessions).get(s.metadata.parentSessionId.trim()) ?? s.metadata.parentSessionId.trim().slice(0, 8))
+                    : (rowMeta?.parentHint ?? null)}
+                contentSnippet={contentSnippetBySessionId.get(s.id)}
+                contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
+                targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
+                targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
+                lastSeenVersion={lastSeenVersion}
+            />
+        )
+    }
 
     const renderDirectoryGroup = (group: SessionGroup) => {
         const isCollapsed = isGroupCollapsed(group)
@@ -2090,11 +2209,7 @@ export function SessionList(props: {
             group.sessions.length
         )
         const previousLimit = getPreviousSessionVisibleCount(currentLimit, sessionPreviewLimit)
-        const previousGroupSessions = getVisibleSessionPreview(group.sessions, {
-            selectedSessionId,
-            limit: previousLimit,
-            isUnread: previewIsUnread
-        })
+        const previousGroupSessions = getGroupPreviewForLimit(group, previousLimit)
         const collapseCount = visibleGroupSessions.length - previousGroupSessions.length
         const canShowFewerSessions = previousLimit < currentLimit && collapseCount > 0
         const expandCount = Math.min(sessionPreviewLimit, hiddenSessionCount)
@@ -2142,7 +2257,7 @@ export function SessionList(props: {
                     <div data-testid="session-group-unread-peek" className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
                         {collapsedUnreadSessions.map((s) => (
                             <div key={s.id} className="contents">
-                                {renderGroupSessionItem(s)}
+                                {renderGroupSessionItem(s, group, true)}
                             </div>
                         ))}
                     </div>
@@ -2153,14 +2268,16 @@ export function SessionList(props: {
                     <div className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
                         {visibleGroupSessions.map((s, index) => (
                             <div key={s.id} className="contents">
-                                {shouldShowPinnedDivider(visibleGroupSessions, index) ? (
+                                {(defaultBrowseHierarchy
+                                    ? shouldShowHierarchyPinnedDivider(visibleGroupSessions, index, hierarchyMetaBySessionId)
+                                    : shouldShowPinnedDivider(visibleGroupSessions, index)) ? (
                                     <div
                                         data-testid="session-pin-divider"
                                         className="ml-2.5 mr-2 my-1 border-t border-[var(--app-border)]"
                                         aria-hidden="true"
                                     />
                                 ) : null}
-                                {renderGroupSessionItem(s)}
+                                {renderGroupSessionItem(s, group)}
                             </div>
                         ))}
                         {group.sessions.length > sessionPreviewLimit && (hiddenSessionCount > 0 || canShowFewerSessions) ? (
@@ -2795,26 +2912,31 @@ export function SessionList(props: {
                         </div>
                         <CollapsiblePanel open={!pinnedSectionCollapsed || isFiltering}>
                                 <div className="flex flex-col gap-0.5 ml-3 pl-1 py-1">
-                                    {globalPinnedSessions.map((s) => (
-                                        <SessionItem
-                                            key={s.id}
-                                            session={s}
-                                            onSelect={props.onSelect}
-                                            showPath={false}
-                                            api={api}
-                                            titleSuggestionAvailable={titleSuggestionAvailable}
-                                            selected={s.id === selectedSessionId}
-                                            showDetailedStatus={showDetailedStatus}
-                                            inRunningSection
-                                            projectLabel={getSessionProjectLabel(getSessionProjectPath(s.metadata) ?? 'Other')}
-                                            machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
-                                            contentSnippet={contentSnippetBySessionId.get(s.id)}
-                                            contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
-                                            targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
-                                            targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
-                                            lastSeenVersion={lastSeenVersion}
-                                        />
-                                    ))}
+                                    {globalPinnedSessions.map((s) => {
+                                        const rowMeta = hierarchyMetaBySessionId.get(s.id)
+                                        return (
+                                            <SessionItem
+                                                key={s.id}
+                                                session={s}
+                                                onSelect={props.onSelect}
+                                                showPath={false}
+                                                api={api}
+                                                titleSuggestionAvailable={titleSuggestionAvailable}
+                                                selected={s.id === selectedSessionId}
+                                                showDetailedStatus={showDetailedStatus}
+                                                inRunningSection
+                                                projectLabel={getSessionProjectLabel(getSessionProjectPath(s.metadata) ?? 'Other')}
+                                                machineLabel={resolveMachineLabel(s.metadata?.machineId ?? null)}
+                                                hierarchyConnector={rowMeta?.connector ?? null}
+                                                parentHint={rowMeta?.parentHint ?? null}
+                                                contentSnippet={contentSnippetBySessionId.get(s.id)}
+                                                contentSearchTruncated={contentSearchTruncatedBySessionId.has(s.id)}
+                                                targetMessageId={contentTargetMessageIdBySessionId.get(s.id)}
+                                                targetMessageQuery={contentSearchActive ? normalizedQuery : undefined}
+                                                lastSeenVersion={lastSeenVersion}
+                                            />
+                                        )
+                                    })}
                                 </div>
                         </CollapsiblePanel>
                     </div>

@@ -524,4 +524,94 @@ describe('SessionHeader', () => {
         )
         expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'archived')
     })
+
+    it('renders clickable parent session chip and navigates to parent session on click', () => {
+        const onOpenParentSession = vi.fn()
+        const queryClient = new QueryClient()
+        queryClient.setQueryData(['sessions'], {
+            sessions: [
+                {
+                    id: 'parent-uuid-12345678',
+                    active: true,
+                    thinking: false,
+                    activeAt: 0,
+                    updatedAt: 0,
+                    metadata: { path: '/repo', name: 'Main Orchestrator' },
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    todosUpdatedAt: 0,
+                    pendingRequestsCount: 0,
+                    pendingRequestKinds: [],
+                    pendingRequests: [],
+                    backgroundTaskCount: 0,
+                    futureScheduledMessageCount: 0,
+                    nextScheduledAt: null
+                }
+            ]
+        })
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession({
+                                metadata: {
+                                    flavor: 'codex',
+                                    path: '/repo',
+                                    host: 'machine',
+                                    parentSessionId: 'parent-uuid-12345678'
+                                }
+                            })}
+                            onBack={vi.fn()}
+                            onOpenParentSession={onOpenParentSession}
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+
+        const parentBtn = screen.getByTestId('session-header-parent')
+        expect(parentBtn.tagName).toBe('BUTTON')
+        expect(parentBtn).toHaveTextContent('Main Orchestrator')
+        fireEvent.click(parentBtn)
+        expect(onOpenParentSession).toHaveBeenCalledWith('parent-uuid-12345678')
+    })
+
+    it('renders read-only non-clickable parent badge when parent session was deleted', () => {
+        const onOpenParentSession = vi.fn()
+        const queryClient = new QueryClient()
+        queryClient.setQueryData(['sessions'], {
+            sessions: []
+        })
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ToastProvider>
+                    <I18nProvider>
+                        <SessionHeader
+                            session={baseSession({
+                                metadata: {
+                                    flavor: 'codex',
+                                    path: '/repo',
+                                    host: 'machine',
+                                    parentSessionId: 'deadbeef-1234-5678-90ab-cdef12345678'
+                                }
+                            })}
+                            onBack={vi.fn()}
+                            onOpenParentSession={onOpenParentSession}
+                            api={null}
+                        />
+                    </I18nProvider>
+                </ToastProvider>
+            </QueryClientProvider>
+        )
+
+        const parentBadge = screen.getByTestId('session-header-parent')
+        expect(parentBadge.tagName).toBe('SPAN')
+        expect(parentBadge).toHaveTextContent('deadbeef')
+        fireEvent.click(parentBadge)
+        expect(onOpenParentSession).not.toHaveBeenCalled()
+    })
 })

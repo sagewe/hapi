@@ -253,6 +253,18 @@ export function createMachinesRoutes(
         }
         const startingMode = parsed.data.startingMode
         const namespace = c.get('namespace')
+        const parentSessionId = parsed.data.parentSessionId?.trim() || undefined
+        if (parentSessionId) {
+            const parentSession = typeof engine.getSessionByNamespace === 'function'
+                ? engine.getSessionByNamespace(parentSessionId, namespace)
+                : undefined
+            if (!parentSession) {
+                return c.json({
+                    error: 'Parent session not found in namespace',
+                    code: 'invalid_parent_session' as const
+                }, 400)
+            }
+        }
 
         // Apply hub peerSpawnDefaults when agent / permissionMode / model are omitted
         // so scavenger/raw machine spawn matches Settings → General → Agents (and stock yolo).
@@ -335,7 +347,8 @@ export function createMachinesRoutes(
             parsed.data.collaborationMode,
             parsed.data.copilotAgentMode,
             startingMode,
-            namespace
+            namespace,
+            ...(parentSessionId !== undefined ? [parentSessionId] : [])
         )
         return c.json(result)
     })

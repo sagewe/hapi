@@ -254,6 +254,8 @@ export default {
   'session.badge.archived': 'Archived',
   'session.header.status.online': 'Online',
   'session.header.status.offline': 'Offline',
+  'session.header.parentSession': 'Open parent session: {title}',
+  'session.item.parentSession': 'Parent session: {title}',
   'session.quickFilter.needsAction': 'Needs action',
   'session.item.scheduledMessage': 'Scheduled message pending',
   'session.item.scheduledMessages': '{count} scheduled messages pending',

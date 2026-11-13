@@ -324,6 +324,202 @@ final class SessionListFilterTests: XCTestCase {
             XCTAssertNotNil(SessionConnectionNotice(state: state, showsCachedSessions: false).message)
         }
     }
+
+    func testDefaultBrowseGroupsSubsessionsUnderParentAndSortsBySubtreeActivity() {
+        var parentA = HomeFilterTestData.summary("a", machine: "mac")
+        parentA.lastUserMessageAt = 1_000
+        var standalone = HomeFilterTestData.summary("s", machine: "mac")
+        standalone.lastUserMessageAt = 3_000
+        var childB = HomeFilterTestData.summary("b", machine: "debian")
+        childB.lastUserMessageAt = 5_000
+        childB.metadata?.parentSessionId = "a"
+
+        let model = HomeFilterTestData.model(sessions: HomeFilterTestSessions([standalone, parentA, childB]))
+        XCTAssertEqual(model.rows.map(\.id), ["a", "b", "s"])
+        XCTAssertNil(model.rows[0].hierarchy)
+        XCTAssertEqual(
+            model.rows[1].hierarchy,
+            SessionTreeConnector(visualDepth: 1, continuesAtLevel1: false, isLastChild: true, isDepthCapped: false)
+        )
+        XCTAssertNil(model.rows[1].parentHint)
+    }
+
+    func testPinDetachmentKeepsPinnedParentUnitAndDetachesExplicitlyPinnedChild() {
+        var gpParent = HomeFilterTestData.summary("gp-p", machine: "mac")
+        gpParent.globalPinned = true
+        gpParent.lastUserMessageAt = 2_000
+
+        var gpChild = HomeFilterTestData.summary("gp-c", machine: "mac")
+        gpChild.lastUserMessageAt = 2_500
+        gpChild.metadata?.parentSessionId = "gp-p"
+
+        var unpinnedRoot = HomeFilterTestData.summary("u", machine: "mac")
+        unpinnedRoot.lastUserMessageAt = 1_000
+
+        var pinnedChild = HomeFilterTestData.summary("u-c", machine: "mac")
+        pinnedChild.pinned = true
+        pinnedChild.lastUserMessageAt = 4_000
+        pinnedChild.metadata?.parentSessionId = "u"
+
+        var unpinnedGrandchild = HomeFilterTestData.summary("u-gc", machine: "mac")
+        unpinnedGrandchild.lastUserMessageAt = 4_500
+        unpinnedGrandchild.metadata?.parentSessionId = "u-c"
+
+        var pinnedRoot2 = HomeFilterTestData.summary("p2", machine: "mac")
+        pinnedRoot2.pinned = true
+        pinnedRoot2.lastUserMessageAt = 3_000
+
+        let model = HomeFilterTestData.model(
+            sessions: HomeFilterTestSessions([gpParent, gpChild, unpinnedRoot, pinnedChild, unpinnedGrandchild, pinnedRoot2])
+        )
+        let rows = model.rows
+        XCTAssertEqual(rows.map(\.id), ["gp-p", "gp-c", "u-c", "u-gc", "p2", "u"])
+        XCTAssertEqual(SessionListModel.pinnedCount(of: rows), 5)
+        XCTAssertEqual(rows[2].parentHint, "Review u")
+        XCTAssertEqual(rows[3].hierarchy?.visualDepth, 1)
+    }
+
+    func testDepthCapArchivedParentCycleGuardAndExplicitFilterFallback() {
+        var d0 = HomeFilterTestData.summary("d0", machine: "mac")
+        d0.lastUserMessageAt = 4_000
+        var d1 = HomeFilterTestData.summary("d1", machine: "mac")
+        d1.metadata?.parentSessionId = "d0"
+        d1.lastUserMessageAt = 4_100
+        var d2 = HomeFilterTestData.summary("d2", machine: "mac")
+        d2.metadata?.parentSessionId = "d1"
+        d2.lastUserMessageAt = 4_200
+        var d3 = HomeFilterTestData.summary("d3", machine: "mac")
+        d3.metadata?.parentSessionId = "d2"
+        d3.lastUserMessageAt = 4_300
+
+        var archivedParent = HomeFilterTestData.summary("arch", machine: "mac")
+        archivedParent.metadata?.lifecycleState = "archived"
+        var orphanChild = HomeFilterTestData.summary("orph", machine: "debian")
+        orphanChild.metadata?.parentSessionId = "arch"
+        orphanChild.lastUserMessageAt = 2_000
+
+        var cyc1 = HomeFilterTestData.summary("c1", machine: "mac")
+        cyc1.metadata?.parentSessionId = "c2"
+        cyc1.lastUserMessageAt = 1_000
+        var cyc2 = HomeFilterTestData.summary("c2", machine: "mac")
+        cyc2.metadata?.parentSessionId = "c1"
+        cyc2.lastUserMessageAt = 900
+
+        let model = HomeFilterTestData.model(
+            sessions: HomeFilterTestSessions([d0, d1, d2, d3, archivedParent, orphanChild, cyc1, cyc2])
+        )
+        let defaultRows = model.rows
+        XCTAssertEqual(defaultRows.prefix(4).map(\.id), ["d0", "d1", "d2", "d3"])
+        XCTAssertEqual(defaultRows[1].hierarchy?.visualDepth, 1)
+        XCTAssertEqual(defaultRows[2].hierarchy?.visualDepth, 2)
+        XCTAssertNil(defaultRows[2].parentHint)
+        XCTAssertEqual(defaultRows[3].hierarchy?.visualDepth, 2)
+        XCTAssertEqual(defaultRows[3].hierarchy?.isDepthCapped, true)
+        XCTAssertEqual(defaultRows[3].parentHint, "Review d2")
+
+        let orphRow = defaultRows.first { $0.id == "orph" }
+        XCTAssertNil(orphRow?.hierarchy)
+        XCTAssertEqual(orphRow?.parentHint, "Review arch")
+        XCTAssertTrue(defaultRows.contains { $0.id == "c1" })
+        XCTAssertTrue(defaultRows.contains { $0.id == "c2" })
+
+        // Explicit filter falls back to flat list with parentHint
+        model.selectMachine("debian")
+        XCTAssertEqual(model.rows.map(\.id), ["orph"])
+        XCTAssertNil(model.rows[0].hierarchy)
+        XCTAssertEqual(model.rows[0].parentHint, "Review arch")
+    }
+
+    func testChatHeaderResolvesParentTitleAndIgnoresSelfParent() {
+        let parentSummary = HomeFilterTestData.summary("parent-uuid-12345678", machine: "mac")
+        var childSummary = HomeFilterTestData.summary("child-uuid-87654321", machine: "mac")
+        childSummary.metadata?.parentSessionId = "parent-uuid-12345678"
+
+        let header = ChatModel.buildHeader(
+            sessionId: childSummary.id,
+            detail: nil,
+            summary: childSummary,
+            allSessions: [parentSummary, childSummary],
+            machines: []
+        )
+        XCTAssertEqual(header.parentSessionId, "parent-uuid-12345678")
+        XCTAssertEqual(header.parentTitle, "Review parent-uuid-12345678")
+        XCTAssertTrue(header.isParentNavigable)
+
+        var unknownParentChild = childSummary
+        unknownParentChild.metadata?.parentSessionId = "deadbeef-9999-0000"
+        let fallbackHeader = ChatModel.buildHeader(
+            sessionId: unknownParentChild.id,
+            detail: nil,
+            summary: unknownParentChild,
+            allSessions: [unknownParentChild],
+            machines: []
+        )
+        XCTAssertEqual(fallbackHeader.parentSessionId, "deadbeef-9999-0000")
+        XCTAssertEqual(fallbackHeader.parentTitle, "deadbeef")
+        XCTAssertFalse(fallbackHeader.isParentNavigable)
+
+        var selfParent = childSummary
+        selfParent.metadata?.parentSessionId = childSummary.id
+        let selfHeader = ChatModel.buildHeader(
+            sessionId: selfParent.id,
+            detail: nil,
+            summary: selfParent,
+            allSessions: [selfParent],
+            machines: []
+        )
+        XCTAssertNil(selfHeader.parentSessionId)
+        XCTAssertNil(selfHeader.parentTitle)
+        XCTAssertFalse(selfHeader.isParentNavigable)
+    }
+
+    func testExplicitChildPinAlwaysDetachesAndDeep5000ChainRunsIteratively() {
+        var gpParent = HomeFilterTestData.summary("gp-p", machine: "mac")
+        gpParent.globalPinned = true
+        gpParent.lastUserMessageAt = 5_000
+
+        var projPinnedChild = HomeFilterTestData.summary("proj-c", machine: "mac")
+        projPinnedChild.pinned = true
+        projPinnedChild.lastUserMessageAt = 4_000
+        projPinnedChild.metadata?.parentSessionId = "gp-p"
+
+        var pinnedParent2 = HomeFilterTestData.summary("pin-p2", machine: "mac")
+        pinnedParent2.pinned = true
+        pinnedParent2.lastUserMessageAt = 3_000
+
+        var pinnedChild2 = HomeFilterTestData.summary("pin-c2", machine: "mac")
+        pinnedChild2.pinned = true
+        pinnedChild2.lastUserMessageAt = 6_000
+        pinnedChild2.metadata?.parentSessionId = "pin-p2"
+
+        let pinModel = HomeFilterTestData.model(
+            sessions: HomeFilterTestSessions([gpParent, projPinnedChild, pinnedParent2, pinnedChild2])
+        )
+        let pinRows = pinModel.rows
+        // Explicit pinned children detach as independent roots with parentHint (never swallowed into parent's tree)
+        XCTAssertEqual(pinRows.map(\.id), ["gp-p", "pin-c2", "proj-c", "pin-p2"])
+        XCTAssertNil(pinRows[1].hierarchy)
+        XCTAssertEqual(pinRows[1].parentHint, "Review pin-p2")
+        XCTAssertNil(pinRows[2].hierarchy)
+        XCTAssertEqual(pinRows[2].parentHint, "Review gp-p")
+
+        // 5,000-deep chain must complete iteratively without stack overflow
+        let deepSummaries: [SessionSummary] = (0..<5_000).map { index in
+            var item = HomeFilterTestData.summary("deep-\(index)", machine: "mac")
+            item.lastUserMessageAt = index + 1
+            if index > 0 {
+                item.metadata?.parentSessionId = "deep-\(index - 1)"
+            }
+            return item
+        }
+        let deepModel = HomeFilterTestData.model(sessions: HomeFilterTestSessions(deepSummaries))
+        let deepRows = deepModel.rows
+        XCTAssertEqual(deepRows.count, 5_000)
+        XCTAssertEqual(deepRows.first?.id, "deep-0")
+        XCTAssertEqual(deepRows.last?.id, "deep-4999")
+        XCTAssertEqual(deepRows.last?.hierarchy?.visualDepth, 2)
+        XCTAssertEqual(deepRows.last?.parentHint, "Review deep-4998")
+    }
 }
 
 /// In-memory observable stores: no networking, Keychain or disk snapshots.

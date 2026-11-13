@@ -146,7 +146,7 @@ export class Store {
     }
 
     runInTransaction<T>(work: () => T): T {
-        return this.db.transaction(work)()
+        return this.db.inTransaction ? work() : this.db.transaction(work)()
     }
 
     /**

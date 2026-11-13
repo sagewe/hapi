@@ -253,6 +253,8 @@ export default {
   // Шапка сессии
   'session.title': 'Файлы',
   'session.view.returnToChat': 'Вернуться к диалогу',
+  'session.header.parentSession': 'Открыть родительскую сессию: {title}',
+  'session.item.parentSession': 'Родительская сессия: {title}',
   'session.more': 'Дополнительные действия',
   'session.sidebar.show': 'Показать список сессий',
   'session.outline.open': 'План диалога',

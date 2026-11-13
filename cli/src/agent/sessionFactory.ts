@@ -201,6 +201,9 @@ function pickExistingSessionMetadata(metadata: Metadata | null | undefined): Par
     if (metadata.forkedFrom !== undefined) {
         preserved.forkedFrom = metadata.forkedFrom
     }
+    if (metadata.parentSessionId !== undefined) {
+        preserved.parentSessionId = metadata.parentSessionId
+    }
     if (metadata.capabilities?.conversationHistory !== undefined) {
         preserved.capabilities = {
             ...preserved.capabilities,

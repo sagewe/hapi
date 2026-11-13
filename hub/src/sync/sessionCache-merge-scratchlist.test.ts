@@ -268,3 +268,44 @@ describe('cascade-delete safety (regression)', () => {
         expect(store.scratchlist.list(newSession.id)).toEqual([])
     })
 })
+
+describe('mergeSessions (deleteOldSession=true) - parentSessionId repointing & atomic rollback', () => {
+    it('contracts multi-hop ancestor chain (root -> old -> mid -> new) without creating a cycle', async () => {
+        const { store, cache } = setup()
+        const root = cache.getOrCreateSession('tag-root', { path: '/repo', host: 'mac' }, null, 'default')
+        const oldSession = cache.getOrCreateSession('tag-old', { path: '/repo', host: 'mac', parentSessionId: root.id }, null, 'default')
+        const mid = cache.getOrCreateSession('tag-mid', { path: '/repo', host: 'mac', parentSessionId: oldSession.id }, null, 'default')
+        const newSession = cache.getOrCreateSession('tag-new', { path: '/repo', host: 'mac', parentSessionId: mid.id }, null, 'default')
+
+        await cache.mergeSessions(oldSession.id, newSession.id, 'default')
+
+        expect(store.sessions.getSessionByNamespace(oldSession.id, 'default')).toBeNull()
+        expect((store.sessions.getSessionByNamespace(newSession.id, 'default')?.metadata as Record<string, unknown>)?.parentSessionId).toBe(root.id)
+        expect((store.sessions.getSessionByNamespace(mid.id, 'default')?.metadata as Record<string, unknown>)?.parentSessionId).toBe(newSession.id)
+    })
+
+    it('rolls back already-repointed child parentSessionId and preserves oldSession if deleteSession fails via SQLite trigger', async () => {
+        const { store, cache } = setup()
+        const oldSession = cache.getOrCreateSession('tag-rollback-old', { path: '/repo', host: 'mac' }, null, 'default')
+        const childA = cache.getOrCreateSession('tag-rollback-child-a', { path: '/repo', host: 'mac', parentSessionId: oldSession.id }, null, 'default')
+        const childB = cache.getOrCreateSession('tag-rollback-child-b', { path: '/repo', host: 'mac', parentSessionId: oldSession.id }, null, 'default')
+        const newSession = cache.getOrCreateSession('tag-rollback-new', { path: '/repo', host: 'mac' }, null, 'default')
+
+        const rawDb = (store as unknown as { db: { exec: (sql: string) => void } }).db
+        rawDb.exec(`
+            CREATE TRIGGER abort_old_session_delete
+            BEFORE DELETE ON sessions
+            WHEN OLD.id = '${oldSession.id}'
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated delete failure');
+            END;
+        `)
+
+        await expect(cache.mergeSessions(oldSession.id, newSession.id, 'default')).rejects.toThrow(/simulated delete failure/)
+
+        // Both children must still point to oldSession (rolled back), and oldSession must still exist in SQLite.
+        expect(store.sessions.getSessionByNamespace(oldSession.id, 'default')).not.toBeNull()
+        expect((store.sessions.getSessionByNamespace(childA.id, 'default')?.metadata as Record<string, unknown>)?.parentSessionId).toBe(oldSession.id)
+        expect((store.sessions.getSessionByNamespace(childB.id, 'default')?.metadata as Record<string, unknown>)?.parentSessionId).toBe(oldSession.id)
+    })
+})

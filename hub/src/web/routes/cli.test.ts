@@ -288,4 +288,58 @@ describe('cli lazy session creation', () => {
 
         expect(response.status).toBe(409)
     })
+
+    it('strips client-supplied parentSessionId before creating or adopting a CLI session', async () => {
+        let createdMeta: unknown = undefined
+        let adoptedMeta: unknown = undefined
+        const app = createApp({
+            getOrCreateSession: (_tag, metadata) => {
+                createdMeta = metadata
+                return { id: 's-new', namespace: 'default', metadata } as never
+            },
+            adoptPreallocatedSession: (_id, _tag, metadata) => {
+                adoptedMeta = metadata
+                return { id: 's-adopt', namespace: 'default', metadata } as never
+            }
+        })
+
+        const createRes = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'content-type': 'application/json' },
+            body: JSON.stringify({
+                tag: 'cli-tag-1',
+                metadata: { path: '/repo', host: 'mac', parentSessionId: 'forged-parent' }
+            })
+        })
+        expect(createRes.status).toBe(200)
+        expect((createdMeta as Record<string, unknown>)?.parentSessionId).toBeUndefined()
+
+        const adoptRes = await app.request('/cli/sessions', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'content-type': 'application/json' },
+            body: JSON.stringify({
+                id: '11111111-1111-4111-8111-111111111111',
+                adopt: true,
+                tag: 'cli-tag-2',
+                metadata: { path: '/repo', host: 'mac', parentSessionId: 'forged-parent' }
+            })
+        })
+        expect(adoptRes.status).toBe(200)
+        expect(adoptedMeta).toBeDefined()
+        expect((adoptedMeta as Record<string, unknown>)?.parentSessionId).toBeUndefined()
+
+        for (const nonObject of [null, ['bad'], 42] as const) {
+            const badAdoptRes = await app.request('/cli/sessions', {
+                method: 'POST',
+                headers: { ...authHeaders(), 'content-type': 'application/json' },
+                body: JSON.stringify({
+                    id: '11111111-1111-4111-8111-111111111111',
+                    adopt: true,
+                    tag: 'cli-tag-bad',
+                    metadata: nonObject
+                })
+            })
+            expect(badAdoptRes.status).toBe(400)
+        }
+    })
 })

@@ -61,6 +61,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
     /// Native agent session id resolved per flavor by the hub.
     public var agentSessionId: String?
     public var lifecycleState: String?
+    public var parentSessionId: String?
     public var hapiMcpUrl: String?
 
     public init(
@@ -75,6 +76,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
         worktree: WorktreeMetadata? = nil,
         agentSessionId: String? = nil,
         lifecycleState: String? = nil,
+        parentSessionId: String? = nil,
         hapiMcpUrl: String? = nil
     ) {
         self.titleLocked = titleLocked
@@ -88,6 +90,7 @@ public struct SessionSummaryMetadata: Codable, Equatable, Sendable {
         self.worktree = worktree
         self.agentSessionId = agentSessionId
         self.lifecycleState = lifecycleState
+        self.parentSessionId = parentSessionId
         self.hapiMcpUrl = hapiMcpUrl
     }
 }

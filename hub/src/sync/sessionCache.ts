@@ -1556,12 +1556,57 @@ export class SessionCache {
             const source = this.store.sessions.getSessionByNamespace(oldSessionId, namespace)
             const latest = this.store.sessions.getSessionByNamespace(newSessionId, namespace)
             if (!source || !latest) break
+            let mergedMetadata = this.mergeSessionMetadata(source.metadata, latest.metadata)
+            let allowParentSessionUpdate = false
+            if (options.deleteOldSession) {
+                const sourceObj = source.metadata && typeof source.metadata === 'object' && !Array.isArray(source.metadata)
+                    ? source.metadata as Record<string, unknown>
+                    : null
+                const latestObj = latest.metadata && typeof latest.metadata === 'object' && !Array.isArray(latest.metadata)
+                    ? latest.metadata as Record<string, unknown>
+                    : null
+                const sourceParent = typeof sourceObj?.parentSessionId === 'string' && sourceObj.parentSessionId.trim().length > 0
+                    ? sourceObj.parentSessionId.trim()
+                    : undefined
+                const latestParent = typeof latestObj?.parentSessionId === 'string' && latestObj.parentSessionId.trim().length > 0
+                    ? latestObj.parentSessionId.trim()
+                    : undefined
+                const latestDescendsFromOld = Boolean(
+                    latestParent
+                    && (
+                        latestParent === oldSessionId
+                        || latestParent === newSessionId
+                        || this.store.sessions.hasParentChainTarget(namespace, latestParent, oldSessionId)
+                        || this.store.sessions.hasParentChainTarget(namespace, latestParent, newSessionId)
+                    )
+                )
+                if (!latestParent || latestDescendsFromOld) {
+                    const candidateParent = sourceParent
+                        && sourceParent !== newSessionId
+                        && sourceParent !== oldSessionId
+                        && !this.store.sessions.hasParentChainTarget(namespace, sourceParent, oldSessionId)
+                        && !this.store.sessions.wouldCreateParentCycle(namespace, newSessionId, sourceParent)
+                        ? sourceParent
+                        : undefined
+                    if (candidateParent && mergedMetadata && typeof mergedMetadata === 'object' && !Array.isArray(mergedMetadata)) {
+                        mergedMetadata = { ...(mergedMetadata as Record<string, unknown>), parentSessionId: candidateParent }
+                        allowParentSessionUpdate = true
+                    } else if (latestParent && mergedMetadata && typeof mergedMetadata === 'object' && !Array.isArray(mergedMetadata)) {
+                        mergedMetadata = { ...(mergedMetadata as Record<string, unknown>), parentSessionId: null }
+                        allowParentSessionUpdate = true
+                    }
+                }
+            }
             const result = this.store.sessions.updateSessionMetadata(
                 newSessionId,
-                this.mergeSessionMetadata(source.metadata, latest.metadata),
+                mergedMetadata,
                 latest.metadataVersion,
                 namespace,
-                { touchUpdatedAt: false, inheritTitleLockFrom: options.deleteOldSession ? oldSessionId : undefined }
+                {
+                    touchUpdatedAt: false,
+                    allowParentSessionUpdate,
+                    inheritTitleLockFrom: options.deleteOldSession ? oldSessionId : undefined
+                }
             )
             if (result.result === 'success') { metadataTransferred = true; break }
             if (result.result === 'error') break
@@ -1740,13 +1785,17 @@ export class SessionCache {
             )
         }
 
+        let repointedChildIds: string[] = []
         if (options.deleteOldSession) {
-            // Deleting the row cascades to its turns; they're the new row's history now.
-            this.store.turns.transferSession(oldSessionId, newSessionId)
-            const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
-            if (!deleted) {
-                throw new Error('Failed to delete old session during merge')
-            }
+            this.store.runInTransaction(() => {
+                repointedChildIds = this.store.sessions.repointChildParentSessions(namespace, oldSessionId, newSessionId)
+                // Deleting the row cascades to its turns; they're the new row's history now.
+                this.store.turns.transferSession(oldSessionId, newSessionId)
+                const deleted = this.store.sessions.deleteSession(oldSessionId, namespace)
+                if (!deleted) {
+                    throw new Error('Failed to delete old session during merge')
+                }
+            })
 
             const existed = this.sessions.delete(oldSessionId)
             if (existed) {
@@ -1769,6 +1818,12 @@ export class SessionCache {
         const refreshed = this.refreshSession(newSessionId)
         if (refreshed) {
             this.publisher.emit({ type: 'session-updated', sessionId: newSessionId, data: refreshed })
+        }
+        for (const childId of repointedChildIds) {
+            const refreshedChild = this.refreshSession(childId)
+            if (refreshedChild) {
+                this.publisher.emit({ type: 'session-updated', sessionId: childId, data: refreshedChild })
+            }
         }
     }
 

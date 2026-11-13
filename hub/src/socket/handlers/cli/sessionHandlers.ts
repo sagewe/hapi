@@ -59,7 +59,10 @@ const messageSchema = z.object({
 const updateMetadataSchema = z.object({
     sid: z.string(),
     expectedVersion: z.number().int(),
-    metadata: z.unknown()
+    metadata: z.unknown().refine(
+        (value): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value)),
+        { message: 'metadata must be a plain object' }
+    )
 })
 
 const updateStateSchema = z.object({
@@ -73,11 +76,16 @@ const HUB_OWNED_METADATA_KEYS = [
     'opencodeClearOperation',
     'titleSuggestionAutoAttemptedAt',
     'titleSuggestionTurn',
-    'promptTitle'
+    'promptTitle',
+    'parentSessionId'
 ] as const
 
 function preserveHubOwnedMetadata(incoming: unknown, current: unknown): unknown {
-    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return incoming
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        return current && typeof current === 'object' && !Array.isArray(current)
+            ? { ...(current as Record<string, unknown>) }
+            : incoming
+    }
     const next = { ...(incoming as Record<string, unknown>) }
     const existing = current && typeof current === 'object' && !Array.isArray(current)
         ? current as Record<string, unknown>

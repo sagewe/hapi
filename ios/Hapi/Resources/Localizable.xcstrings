@@ -12251,6 +12251,23 @@
         }
       }
     },
+    "Parent: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Родительская сессия: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "父会话：%@"
+          }
+        }
+      }
+    },
     "Web Preview" : {
       "localizations" : {
         "zh-Hans" : {

@@ -24,7 +24,10 @@ import {
     replaceSessionTodos,
     touchSessionUpdatedAt,
     updateSessionAgentState,
-    updateSessionMetadata
+    updateSessionMetadata,
+    wouldCreateParentCycle,
+    hasParentChainTarget,
+    repointChildParentSessions
 } from './sessions'
 
 export class SessionStore {
@@ -71,9 +74,29 @@ export class SessionStore {
         metadata: unknown,
         expectedVersion: number,
         namespace: string,
-        options?: { touchUpdatedAt?: boolean; allowUnarchive?: boolean; allowTitleUpdate?: boolean; titleLocked?: boolean; tags?: string[]; inheritTitleLockFrom?: string }
+        options?: {
+            touchUpdatedAt?: boolean
+            allowUnarchive?: boolean
+            allowTitleUpdate?: boolean
+            allowParentSessionUpdate?: boolean
+            titleLocked?: boolean
+            tags?: string[]
+            inheritTitleLockFrom?: string
+        }
     ): VersionedUpdateResult<unknown | null> {
         return updateSessionMetadata(this.db, id, metadata, expectedVersion, namespace, options)
+    }
+
+    wouldCreateParentCycle(namespace: string, childSessionId: string, candidateParentId: string): boolean {
+        return wouldCreateParentCycle(this.db, namespace, childSessionId, candidateParentId)
+    }
+
+    hasParentChainTarget(namespace: string, startParentId: string, targetSessionId: string): boolean {
+        return hasParentChainTarget(this.db, namespace, startParentId, targetSessionId)
+    }
+
+    repointChildParentSessions(namespace: string, oldParentSessionId: string, newParentSessionId: string): string[] {
+        return repointChildParentSessions(this.db, namespace, oldParentSessionId, newParentSessionId)
     }
 
     updateSessionAgentState(

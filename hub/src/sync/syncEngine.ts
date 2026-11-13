@@ -2637,7 +2637,8 @@ export class SyncEngine {
         startingMode?: 'remote' | 'pty',
         // Required for fresh machine spawns so the runner stamps the HAPI id on
         // argv before the first webhook (#1911 Major: unreapable window).
-        namespace?: string
+        namespace?: string,
+        parentSessionId?: string
     ): ReturnType<RpcGateway['spawnSession']> {
         // Fresh machine spawns historically omitted existingSessionId, so
         // buildCliArgs could not stamp --hapi-session-id / --existing-session-id.
@@ -2650,6 +2651,10 @@ export class SyncEngine {
             const machine = this.getMachineByNamespace(machineId, namespace)
                 ?? this.getMachine(machineId)
             allocatedSessionId = randomUUID()
+            const trimmedParentSessionId = parentSessionId?.trim()
+            const validParentSessionId = trimmedParentSessionId && trimmedParentSessionId !== allocatedSessionId
+                ? trimmedParentSessionId
+                : undefined
             this.sessionCache.getOrCreateSession(
                 `machine-spawn:${allocatedSessionId}`,
                 {
@@ -2659,6 +2664,7 @@ export class SyncEngine {
                     machineId,
                     startedBy: 'runner',
                     startedFromRunner: true,
+                    ...(validParentSessionId ? { parentSessionId: validParentSessionId } : {}),
                 },
                 null,
                 namespace,
@@ -2802,6 +2808,7 @@ export class SyncEngine {
         delete replacementMetadata.opencodeSessionId
         delete replacementMetadata.supersededBySessionId
         delete replacementMetadata.opencodeClearOperation
+        delete replacementMetadata.parentSessionId
         delete replacementMetadata.lifecycleState
         delete replacementMetadata.lifecycleStateSince
         delete replacementMetadata.archivedBy
@@ -2964,6 +2971,7 @@ export class SyncEngine {
         delete replacementMetadata.opencodeSessionId
         delete replacementMetadata.supersededBySessionId
         delete replacementMetadata.opencodeClearOperation
+        delete replacementMetadata.parentSessionId
         delete replacementMetadata.lifecycleState
         delete replacementMetadata.lifecycleStateSince
         delete replacementMetadata.archivedBy

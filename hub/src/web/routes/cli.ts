@@ -118,12 +118,33 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
             )
         }
 
+        // `parentSessionId` is Hub-owned delegation provenance stamped only at
+        // validated machine-spawn preallocation or controlled Hub merge/backfill.
+        const rawClientMetadata = parsed.data.metadata
+        if (
+            parsed.data.adopt === true
+            && rawClientMetadata !== undefined
+            && (!rawClientMetadata || typeof rawClientMetadata !== 'object' || Array.isArray(rawClientMetadata))
+        ) {
+            return c.json({ error: 'Invalid metadata for adopt' }, 400)
+        }
+        const clientMetadata = typeof rawClientMetadata === 'object'
+            && rawClientMetadata !== null
+            && !Array.isArray(rawClientMetadata)
+            && 'parentSessionId' in rawClientMetadata
+            ? (() => {
+                const copy = { ...(rawClientMetadata as Record<string, unknown>) }
+                delete copy.parentSessionId
+                return copy
+            })()
+            : rawClientMetadata
+
         try {
             const session = parsed.data.adopt === true && parsed.data.id
                 ? engine.adoptPreallocatedSession(
                     parsed.data.id,
                     parsed.data.tag,
-                    parsed.data.metadata,
+                    clientMetadata,
                     parsed.data.agentState ?? null,
                     namespace,
                     parsed.data.model,
@@ -132,7 +153,7 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
                 )
                 : engine.getOrCreateSession(
                     parsed.data.tag,
-                    parsed.data.metadata,
+                    clientMetadata,
                     parsed.data.agentState ?? null,
                     namespace,
                     parsed.data.model,

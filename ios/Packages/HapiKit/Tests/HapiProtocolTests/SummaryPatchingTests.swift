@@ -421,6 +421,23 @@ struct SummaryPatchingTests {
         #expect(!SummaryPatching.isRenderIrrelevantPatch(current: current, next: toolChanged))
     }
 
+    @Test func parentSessionIdProjectsTrimmedAndMarksMetadataPatchRelevant() {
+        let projected = SummaryPatching.toSessionSummaryMetadata(
+            SessionMetadata(path: "/repo", host: "h", parentSessionId: "  parent-123  ")
+        )
+        #expect(projected?.parentSessionId == "parent-123")
+
+        let blankProjected = SummaryPatching.toSessionSummaryMetadata(
+            SessionMetadata(path: "/repo", host: "h", parentSessionId: "   ")
+        )
+        #expect(blankProjected?.parentSessionId == nil)
+
+        let a = makeSummary(metadata: SessionSummaryMetadata(path: "/repo", parentSessionId: "parent-1"))
+        let b = makeSummary(metadata: SessionSummaryMetadata(path: "/repo", parentSessionId: "parent-2"))
+        #expect(!SummaryPatching.sameSessionSummaryMetadata(a.metadata, b.metadata))
+        #expect(!SummaryPatching.isRenderIrrelevantPatch(current: a, next: b))
+    }
+
     // MARK: - Legacy detail-required gate
 
     @available(*, deprecated) // silences the deliberate use of the legacy gate

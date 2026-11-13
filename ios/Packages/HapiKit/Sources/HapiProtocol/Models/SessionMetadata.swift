@@ -120,6 +120,8 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
     /// Durable link to the session that replaced this one after a
     /// clear/reopen; used to follow superseding sessions.
     public var supersededBySessionId: String?
+    /// Structured parent session ID set by Hub when spawned as a peer subsession.
+    public var parentSessionId: String?
     public var worktree: WorktreeMetadata?
     public var capabilities: SessionCapabilities?
     /// Loopback MCP URL when the session's CLI happy server is running.
@@ -162,6 +164,7 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
         startingMode: SessionStartingMode? = nil,
         lifecycleState: String? = nil,
         supersededBySessionId: String? = nil,
+        parentSessionId: String? = nil,
         worktree: WorktreeMetadata? = nil,
         capabilities: SessionCapabilities? = nil,
         hapiMcpUrl: String? = nil,
@@ -196,6 +199,7 @@ public struct SessionMetadata: Codable, Equatable, Sendable {
         self.startingMode = startingMode
         self.lifecycleState = lifecycleState
         self.supersededBySessionId = supersededBySessionId
+        self.parentSessionId = parentSessionId
         self.worktree = worktree
         self.capabilities = capabilities
         self.hapiMcpUrl = hapiMcpUrl

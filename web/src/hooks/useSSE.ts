@@ -132,6 +132,7 @@ export function sameSessionSummaryMetadata(
         && current.summary?.text === next.summary?.text
         && current.flavor === next.flavor
         && current.agentSessionId === next.agentSessionId
+        && current.parentSessionId === next.parentSessionId
         && current.lifecycleState === next.lifecycleState
         && current.conversationHistory?.forkCurrent === next.conversationHistory?.forkCurrent
         && current.conversationHistory?.forkAtMessage === next.conversationHistory?.forkAtMessage

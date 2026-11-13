@@ -41,6 +41,8 @@ struct ChatView: View {
     /// Resume/reopen handed back a superseding session id — the host swaps
     /// its navigation entry (HomeView replaces the path element).
     private let onNavigateToSession: ((String) -> Void)?
+    /// Opens the structured parent session without altering navigation history semantics.
+    private let onOpenParentSession: ((String) -> Void)?
 
     /// Kept for the files/viewer pushes (the model owns its own reference).
     private let session: HubSession
@@ -71,17 +73,28 @@ struct ChatView: View {
     init(
         session: HubSession,
         sessionId: String,
-        onNavigateToSession: ((String) -> Void)? = nil
+        onNavigateToSession: ((String) -> Void)? = nil,
+        onOpenParentSession: ((String) -> Void)? = nil
     ) {
-        self.init(session: session, model: ChatModel(session: session, sessionId: sessionId),
-                  onNavigateToSession: onNavigateToSession)
+        self.init(
+            session: session,
+            model: ChatModel(session: session, sessionId: sessionId),
+            onNavigateToSession: onNavigateToSession,
+            onOpenParentSession: onOpenParentSession
+        )
     }
 
-    init(session: HubSession, model: ChatModel, onNavigateToSession: ((String) -> Void)? = nil) {
+    init(
+        session: HubSession,
+        model: ChatModel,
+        onNavigateToSession: ((String) -> Void)? = nil,
+        onOpenParentSession: ((String) -> Void)? = nil
+    ) {
         _model = State(initialValue: model)
         self.session = session
         self.sessionId = model.sessionId
         self.onNavigateToSession = onNavigateToSession
+        self.onOpenParentSession = onOpenParentSession
     }
 
     var body: some View {
@@ -172,13 +185,27 @@ struct ChatView: View {
                 ToolbarItem(placement: .principal) {
                     headerTitle
                 }
-            } else if showsProminentSystemToolbarStatus {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ChatHeaderStatusBadge(
-                        status: model.header.status,
-                        prominent: true,
-                        onTapAttention: { model.jumpToPendingRequestOrLatest() }
-                    )
+            } else {
+                if let parentId = model.header.parentSessionId,
+                   let parentTitle = model.header.parentTitle {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        parentSessionChip(
+                            parentId: parentId,
+                            parentTitle: parentTitle,
+                            isNavigable: model.header.isParentNavigable,
+                            prominent: true,
+                            action: onOpenParentSession
+                        )
+                    }
+                }
+                if showsProminentSystemToolbarStatus {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        ChatHeaderStatusBadge(
+                            status: model.header.status,
+                            prominent: true,
+                            onTapAttention: { model.jumpToPendingRequestOrLatest() }
+                        )
+                    }
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -398,6 +425,20 @@ struct ChatView: View {
 
     private var moreActionsMenu: some View {
         Menu {
+            if model.header.isParentNavigable,
+               let parentId = model.header.parentSessionId,
+               let parentTitle = model.header.parentTitle,
+               let onOpenParentSession {
+                Button {
+                    onOpenParentSession(parentId)
+                } label: {
+                    Label(
+                        String(format: String(localized: "Parent: %@"), parentTitle),
+                        systemImage: "arrow.turn.up.left"
+                    )
+                }
+                Divider()
+            }
             Button {
                 jumpOpen = true
             } label: {
@@ -555,6 +596,16 @@ struct ChatView: View {
                     prominent: false,
                     onTapAttention: { model.jumpToPendingRequestOrLatest() }
                 )
+                if let parentId = model.header.parentSessionId,
+                   let parentTitle = model.header.parentTitle {
+                    parentSessionChip(
+                        parentId: parentId,
+                        parentTitle: parentTitle,
+                        isNavigable: model.header.isParentNavigable,
+                        prominent: false,
+                        action: onOpenParentSession
+                    )
+                }
                 if let subtitle = model.header.subtitle {
                     if model.header.flavor != nil {
                         AgentFlavorIconView(flavor: model.header.flavor, size: 12)
@@ -574,6 +625,61 @@ struct ChatView: View {
                 }
             }
             .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func parentSessionChip(
+        parentId: String,
+        parentTitle: String,
+        isNavigable: Bool,
+        prominent: Bool,
+        action: ((String) -> Void)?
+    ) -> some View {
+        let label = String(format: String(localized: "Parent: %@"), parentTitle)
+        let displayTitle: String = {
+            if prominent, parentTitle.count > 22 {
+                return String(parentTitle.prefix(20)) + "…"
+            }
+            return parentTitle
+        }()
+        let pillContent = HStack(spacing: prominent ? 3.5 : 2.5) {
+            Text(verbatim: "↳")
+                .font(prominent ? .caption.weight(.semibold) : .caption2.weight(.semibold))
+            Text(verbatim: displayTitle)
+                .font(prominent ? .caption.weight(.medium) : .caption2.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .foregroundStyle(theme.textSecondary.opacity(isNavigable && action != nil ? 1 : 0.8))
+        .padding(.horizontal, prominent ? 8 : 5.5)
+        .padding(.vertical, prominent ? 3.5 : 1.5)
+        .background {
+            Capsule()
+                .fill(theme.textSecondary.opacity(theme.isDark ? 0.16 : 0.10))
+        }
+        .overlay {
+            Capsule()
+                .strokeBorder(theme.textSecondary.opacity(isNavigable && action != nil ? 0.24 : 0.16), lineWidth: 0.75)
+        }
+
+        if isNavigable, let action {
+            Button {
+                action(parentId)
+            } label: {
+                pillContent
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(0.6)
+            .accessibilityLabel(Text(verbatim: label))
+            .accessibilityIdentifier("chat.header.parent")
+            .help(label)
+        } else {
+            pillContent
+                .layoutPriority(0.6)
+                .accessibilityLabel(Text(verbatim: label))
+                .accessibilityIdentifier("chat.header.parent")
+                .help(label)
         }
     }
 

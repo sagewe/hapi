@@ -157,9 +157,69 @@ function preserveForkSummary(
     return result
 }
 
-export function mergeSessionMetadata(prior: unknown, next: unknown): unknown {
-    if (!isPlainObject(prior) || !isPlainObject(next)) {
-        return next
+function preserveParentSessionId(
+    prior: Record<string, unknown> | null,
+    next: Record<string, unknown>,
+    merged: Record<string, unknown> | null,
+    allowParentSessionUpdate: boolean
+): Record<string, unknown> | null {
+    const priorParent = prior && typeof prior.parentSessionId === 'string' && prior.parentSessionId.trim().length > 0
+        ? prior.parentSessionId.trim()
+        : undefined
+
+    if (!allowParentSessionUpdate) {
+        const target = merged ?? next
+        if (priorParent !== undefined) {
+            if (target.parentSessionId !== priorParent) {
+                const result = merged ?? { ...next }
+                result.parentSessionId = priorParent
+                return result
+            }
+            return merged
+        }
+        if ('parentSessionId' in target) {
+            const result = merged ?? { ...next }
+            delete result.parentSessionId
+            return result
+        }
+        return merged
+    }
+
+    if (next.parentSessionId === null) {
+        const result = merged ?? { ...next }
+        delete result.parentSessionId
+        return result
+    }
+    if (typeof next.parentSessionId === 'string') {
+        const trimmed = next.parentSessionId.trim()
+        const result = merged ?? { ...next }
+        if (trimmed.length > 0) {
+            result.parentSessionId = trimmed
+        } else {
+            delete result.parentSessionId
+        }
+        return result
+    }
+    if (next.parentSessionId === undefined && priorParent !== undefined) {
+        const result = merged ?? { ...next }
+        result.parentSessionId = priorParent
+        return result
+    }
+    return merged
+}
+
+export function mergeSessionMetadata(
+    prior: unknown,
+    next: unknown,
+    options?: { allowParentSessionUpdate?: boolean }
+): unknown {
+    if (!isPlainObject(next)) {
+        return isPlainObject(prior) ? { ...prior } : next
+    }
+    const allowParentSessionUpdate = options?.allowParentSessionUpdate === true
+    if (!isPlainObject(prior)) {
+        const guarded = preserveParentSessionId(null, next, null, allowParentSessionUpdate)
+        return guarded ?? next
     }
     let merged: Record<string, unknown> | null = null
     merged = carryForwardIfMissing(prior, next, merged, PARSE_IDENTITY_FIELDS)
@@ -168,6 +228,7 @@ export function mergeSessionMetadata(prior: unknown, next: unknown): unknown {
     merged = carryForwardIfMissing(prior, next, merged, HUB_OWNED_METADATA_FIELDS)
     merged = preserveForkSummary(prior, next, merged)
     merged = preserveCursorProtocolPair(prior, next, merged)
+    merged = preserveParentSessionId(prior, next, merged, allowParentSessionUpdate)
     return merged ?? next
 }
 
@@ -458,14 +519,22 @@ export function updateSessionMetadata(
     metadata: unknown,
     expectedVersion: number,
     namespace: string,
-    options?: { touchUpdatedAt?: boolean; allowUnarchive?: boolean; allowTitleUpdate?: boolean; titleLocked?: boolean; tags?: string[]; inheritTitleLockFrom?: string }
+    options?: {
+        touchUpdatedAt?: boolean
+        allowUnarchive?: boolean
+        allowTitleUpdate?: boolean
+        allowParentSessionUpdate?: boolean
+        titleLocked?: boolean
+        tags?: string[]
+        inheritTitleLockFrom?: string
+    }
 ): VersionedUpdateResult<unknown | null> {
     const now = Date.now()
     const touchUpdatedAt = options?.touchUpdatedAt !== false
     const allowUnarchive = options?.allowUnarchive === true
 
     try {
-        return db.transaction((): VersionedUpdateResult<unknown | null> => {
+        return runInTransaction(db, (): VersionedUpdateResult<unknown | null> => {
             const existing = getSessionByNamespace(db, id, namespace)
             if (!existing) {
                 return { result: 'error' }
@@ -479,7 +548,11 @@ export function updateSessionMetadata(
             const titleOwner = isPlainObject(baseOwner) && !Array.isArray(baseOwner.tags) && isPlainObject(sourceTitle) && Array.isArray(sourceTitle.tags)
                 ? { ...baseOwner, tags: sourceTitle.tags }
                 : baseOwner
-            let merged = preserveSessionTitle(titleOwner, mergeSessionMetadata(prior, metadata), options)
+            let merged = preserveSessionTitle(
+                titleOwner,
+                mergeSessionMetadata(prior, metadata, { allowParentSessionUpdate: options?.allowParentSessionUpdate }),
+                options
+            )
 
             // #1911 M1: unauthorized un-archive of hub-archived rows.
             // Return success + merge-preserved archive fields — NOT version-mismatch
@@ -527,6 +600,7 @@ export function updateSessionMetadata(
             if (
                 result.result === 'success'
                 && !options?.allowTitleUpdate
+                && !options?.allowParentSessionUpdate
                 && isMachineSpawnPreallocatedStub(existing)
                 && !isHubArchivedSessionMetadata(merged)
             ) {
@@ -550,7 +624,7 @@ export function updateSessionMetadata(
             }
 
             return result
-        })()
+        })
     } catch {
         return { result: 'error' }
     }
@@ -961,5 +1035,165 @@ export function deleteSession(db: Database, id: string, namespace: string): bool
             bumpSessionDeletionEpoch()
         }
         return result.changes > 0
+    })
+}
+
+export function wouldCreateParentCycle(
+    db: Database,
+    namespace: string,
+    childSessionId: string,
+    candidateParentId: string
+): boolean {
+    const childId = childSessionId.trim()
+    const parentId = candidateParentId.trim()
+    if (!childId || !parentId) return false
+    if (childId === parentId) return true
+
+    const visited = new Set<string>([childId])
+    let cursor: string | undefined = parentId
+    while (cursor) {
+        if (visited.has(cursor)) {
+            return true
+        }
+        visited.add(cursor)
+        const ancestor = getSessionByNamespace(db, cursor, namespace)
+        if (!ancestor || !isPlainObject(ancestor.metadata)) {
+            break
+        }
+        const rawNext = ancestor.metadata.parentSessionId
+        cursor = typeof rawNext === 'string' && rawNext.trim().length > 0
+            ? rawNext.trim()
+            : undefined
+    }
+    return false
+}
+
+export function hasParentChainTarget(
+    db: Database,
+    namespace: string,
+    startParentId: string,
+    targetSessionId: string
+): boolean {
+    const start = startParentId.trim()
+    const target = targetSessionId.trim()
+    if (!start || !target) return false
+    if (start === target) return true
+
+    const visited = new Set<string>()
+    let cursor: string | undefined = start
+    while (cursor) {
+        if (cursor === target) {
+            return true
+        }
+        if (visited.has(cursor)) {
+            break
+        }
+        visited.add(cursor)
+        const ancestor = getSessionByNamespace(db, cursor, namespace)
+        if (!ancestor || !isPlainObject(ancestor.metadata)) {
+            break
+        }
+        const rawNext = ancestor.metadata.parentSessionId
+        cursor = typeof rawNext === 'string' && rawNext.trim().length > 0
+            ? rawNext.trim()
+            : undefined
+    }
+    return false
+}
+
+export function repointChildParentSessions(
+    db: Database,
+    namespace: string,
+    oldParentSessionId: string,
+    newParentSessionId: string
+): string[] {
+    const oldParent = oldParentSessionId.trim()
+    const newParent = newParentSessionId.trim()
+    if (!oldParent || !newParent || oldParent === newParent) {
+        return []
+    }
+
+    return runInTransaction(db, () => {
+        const candidates = prepareCached(db, `
+            SELECT id, metadata
+            FROM sessions
+            WHERE namespace = @namespace
+              AND metadata LIKE '%parentSessionId%'
+        `).all({ namespace }) as Array<{ id: string; metadata: string | null }>
+
+        const repointed: string[] = []
+        for (const row of candidates) {
+            if (row.id === oldParent) continue
+            const parsed = safeJsonParse(row.metadata)
+            if (!isPlainObject(parsed)) continue
+            const currentParent = typeof parsed.parentSessionId === 'string' ? parsed.parentSessionId.trim() : ''
+            if (currentParent !== oldParent) continue
+
+            if (row.id === newParent) {
+                let cleared = false
+                for (let attempt = 0; attempt < 3; attempt += 1) {
+                    const fresh = getSessionByNamespace(db, row.id, namespace)
+                    if (!fresh || !isPlainObject(fresh.metadata)) break
+                    const res = updateSessionMetadata(
+                        db,
+                        row.id,
+                        { ...fresh.metadata, parentSessionId: null },
+                        fresh.metadataVersion,
+                        namespace,
+                        { touchUpdatedAt: false, allowParentSessionUpdate: true }
+                    )
+                    if (res.result === 'success') {
+                        cleared = true
+                        break
+                    }
+                    if (res.result !== 'version-mismatch') break
+                }
+                if (!cleared) {
+                    throw new Error(`Failed to clear self-parent reference on merged session ${row.id}`)
+                }
+                continue
+            }
+
+            if (wouldCreateParentCycle(db, namespace, row.id, newParent)) {
+                throw new Error(
+                    `Cannot repoint child session ${row.id} from ${oldParent} to ${newParent}: parent cycle detected`
+                )
+            }
+
+            let updated = false
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const fresh = getSessionByNamespace(db, row.id, namespace)
+                if (!fresh || !isPlainObject(fresh.metadata)) {
+                    throw new Error(`Cannot repoint missing or non-object child session ${row.id}`)
+                }
+                const freshParent = typeof fresh.metadata.parentSessionId === 'string'
+                    ? fresh.metadata.parentSessionId.trim()
+                    : ''
+                if (freshParent !== oldParent) {
+                    updated = true
+                    break
+                }
+                const updateResult = updateSessionMetadata(
+                    db,
+                    row.id,
+                    { ...fresh.metadata, parentSessionId: newParent },
+                    fresh.metadataVersion,
+                    namespace,
+                    { touchUpdatedAt: false, allowParentSessionUpdate: true }
+                )
+                if (updateResult.result === 'success') {
+                    repointed.push(row.id)
+                    updated = true
+                    break
+                }
+                if (updateResult.result !== 'version-mismatch') {
+                    break
+                }
+            }
+            if (!updated) {
+                throw new Error(`Failed to repoint child session ${row.id} from ${oldParent} to ${newParent}`)
+            }
+        }
+        return repointed
     })
 }

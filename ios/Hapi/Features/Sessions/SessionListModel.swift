@@ -6,6 +6,14 @@ import Observation
 /// Sessions whose metadata carries no machine id group under this filter id.
 let unknownMachineFilterId = "__unknown__"
 
+/// Tree connector geometry for a single child row in default relationship browse mode.
+struct SessionTreeConnector: Equatable, Hashable {
+    let visualDepth: Int
+    let continuesAtLevel1: Bool
+    let isLastChild: Bool
+    let isDepthCapped: Bool
+}
+
 /// One rendered list row: the summary plus everything derived for display.
 struct SessionRowUI: Identifiable, Equatable {
     let summary: SessionSummary
@@ -17,11 +25,17 @@ struct SessionRowUI: Identifiable, Equatable {
     /// Raw flavor id (`claude`, `codex`, …); labels resolve via the catalog.
     let flavor: String?
     let unread: Bool
+    var hierarchy: SessionTreeConnector? = nil
+    var parentHint: String? = nil
+    var inPinnedSection: Bool? = nil
 
     var id: String { summary.id }
     var status: SessionRowStatus? { SessionRowStatus(summary: summary) }
     var tags: [String] { summary.metadata?.tags ?? [] }
     var isArchived: Bool { summary.metadata?.lifecycleState == "archived" }
+    var belongsToPinnedSection: Bool {
+        inPinnedSection ?? (summary.globalPinned == true || summary.pinned == true)
+    }
 }
 
 /// Quick status lens for the Option-B top summary bar (non-reordering).
@@ -627,15 +641,295 @@ final class SessionListModel {
     var rows: [SessionRowUI] {
         let readState = lastSeenStore.state
         let followedTails = lastSeenStore.followedTails
-        return filteredSessions(includeArchived: showArchivedSessions).map { summary in
-            SessionRowUI(
+        let visible = filteredSessions(includeArchived: showArchivedSessions)
+        let titleById = Dictionary(
+            sessionStore.sessions.map { ($0.id, Self.sessionTitle($0)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        if hasActiveFilters || isSearching || groupByTag {
+            return visible.map { summary in
+                let parentHint = Self.rawParentSessionId(summary).map {
+                    Self.resolveParentTitle($0, titleById: titleById)
+                }
+                return SessionRowUI(
+                    summary: summary,
+                    title: Self.sessionTitle(summary),
+                    project: Self.projectLabel(summary),
+                    flavor: summary.metadata?.flavor,
+                    unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails),
+                    parentHint: parentHint
+                )
+            }
+        }
+        return Self.buildHierarchyRows(
+            from: visible,
+            titleById: titleById,
+            readState: readState,
+            followedTails: followedTails
+        )
+    }
+
+    private static func rawParentSessionId(_ summary: SessionSummary) -> String? {
+        guard let raw = summary.metadata?.parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              raw != summary.id else {
+            return nil
+        }
+        return raw
+    }
+
+    private static func resolveParentTitle(_ parentId: String, titleById: [String: String]) -> String {
+        titleById[parentId] ?? String(parentId.prefix(8))
+    }
+
+    private static func pinTier(_ summary: SessionSummary) -> Int {
+        if summary.globalPinned == true { return 2 }
+        if summary.pinned == true { return 1 }
+        return 0
+    }
+
+    private static func orderTimestamp(_ summary: SessionSummary) -> Int {
+        summary.lastUserMessageAt ?? summary.createdAt ?? 0
+    }
+
+    private static func buildHierarchyRows(
+        from visible: [SessionSummary],
+        titleById: [String: String],
+        readState: LastSeenState,
+        followedTails: [String: Int]
+    ) -> [SessionRowUI] {
+        guard !visible.isEmpty else { return [] }
+
+        final class Node {
+            let summary: SessionSummary
+            let originalIndex: Int
+            var children: [Node] = []
+            var subtreeOrderAt: Int
+
+            init(summary: SessionSummary, originalIndex: Int, subtreeOrderAt: Int) {
+                self.summary = summary
+                self.originalIndex = originalIndex
+                self.subtreeOrderAt = subtreeOrderAt
+            }
+        }
+
+        var byId: [String: SessionSummary] = [:]
+        var nodeById: [String: Node] = [:]
+        var orderedNodes: [Node] = []
+        orderedNodes.reserveCapacity(visible.count)
+
+        for (index, summary) in visible.enumerated() where byId[summary.id] == nil {
+            byId[summary.id] = summary
+            let node = Node(
                 summary: summary,
-                title: Self.sessionTitle(summary),
-                project: Self.projectLabel(summary),
-                flavor: summary.metadata?.flavor,
-                unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails)
+                originalIndex: index,
+                subtreeOrderAt: orderTimestamp(summary)
+            )
+            nodeById[summary.id] = node
+            orderedNodes.append(node)
+        }
+
+        func canAttach(child: SessionSummary, parent _: SessionSummary) -> Bool {
+            pinTier(child) == 0
+        }
+
+        var candidateParentById: [String: String] = [:]
+        candidateParentById.reserveCapacity(orderedNodes.count)
+        for node in orderedNodes {
+            let summary = node.summary
+            guard let rawParentId = rawParentSessionId(summary),
+                  let parent = byId[rawParentId],
+                  canAttach(child: summary, parent: parent) else {
+                continue
+            }
+            candidateParentById[summary.id] = parent.id
+        }
+
+        // 3-state iterative memoization: 1 = visiting on current path, 2 = resolved.
+        var visitState: [String: UInt8] = [:]
+        var reachesCycle: [String: Bool] = [:]
+        visitState.reserveCapacity(orderedNodes.count)
+        reachesCycle.reserveCapacity(orderedNodes.count)
+
+        for node in orderedNodes {
+            let startId = node.summary.id
+            if visitState[startId] == 2 { continue }
+            var chain: [String] = []
+            var cursor: String? = startId
+            var hitCycle = false
+            while let current = cursor {
+                if let state = visitState[current] {
+                    if state == 1 {
+                        hitCycle = true
+                    } else {
+                        hitCycle = reachesCycle[current] ?? false
+                    }
+                    break
+                }
+                visitState[current] = 1
+                chain.append(current)
+                cursor = candidateParentById[current]
+            }
+            for id in chain {
+                visitState[id] = 2
+                reachesCycle[id] = hitCycle
+            }
+        }
+
+        var resolvedParentById: [String: String] = [:]
+        resolvedParentById.reserveCapacity(candidateParentById.count)
+        for (id, parentId) in candidateParentById where reachesCycle[id] != true {
+            resolvedParentById[id] = parentId
+        }
+
+        var roots: [Node] = []
+        for node in orderedNodes {
+            if let parentId = resolvedParentById[node.summary.id],
+               let parentNode = nodeById[parentId] {
+                parentNode.children.append(node)
+            } else {
+                roots.append(node)
+            }
+        }
+
+        func siblingPrecedes(_ lhs: Node, _ rhs: Node) -> Bool {
+            if lhs.subtreeOrderAt != rhs.subtreeOrderAt {
+                return lhs.subtreeOrderAt > rhs.subtreeOrderAt
+            }
+            let lhsCreated = lhs.summary.createdAt ?? 0
+            let rhsCreated = rhs.summary.createdAt ?? 0
+            if lhsCreated != rhsCreated {
+                return lhsCreated > rhsCreated
+            }
+            return lhs.originalIndex < rhs.originalIndex
+        }
+
+        struct FinalizeFrame {
+            let node: Node
+            var expanded: Bool
+        }
+        var finalizeStack: [FinalizeFrame] = roots.reversed().map { FinalizeFrame(node: $0, expanded: false) }
+        while let frame = finalizeStack.last {
+            if !frame.expanded {
+                finalizeStack[finalizeStack.count - 1].expanded = true
+                for child in frame.node.children.reversed() {
+                    finalizeStack.append(FinalizeFrame(node: child, expanded: false))
+                }
+            } else {
+                finalizeStack.removeLast()
+                let node = frame.node
+                for child in node.children where child.subtreeOrderAt > node.subtreeOrderAt {
+                    node.subtreeOrderAt = child.subtreeOrderAt
+                }
+                if node.children.count > 1 {
+                    node.children.sort(by: siblingPrecedes)
+                }
+            }
+        }
+
+        roots.sort { lhs, rhs in
+            let lhsTier = pinTier(lhs.summary)
+            let rhsTier = pinTier(rhs.summary)
+            if lhsTier != rhsTier {
+                return lhsTier > rhsTier
+            }
+            return siblingPrecedes(lhs, rhs)
+        }
+
+        var result: [SessionRowUI] = []
+        result.reserveCapacity(orderedNodes.count)
+
+        func appendRow(
+            _ summary: SessionSummary,
+            hierarchy: SessionTreeConnector?,
+            parentHint: String?,
+            inPinnedSection: Bool
+        ) {
+            result.append(
+                SessionRowUI(
+                    summary: summary,
+                    title: sessionTitle(summary),
+                    project: projectLabel(summary),
+                    flavor: summary.metadata?.flavor,
+                    unread: LastSeenStore.isUnread(summary, state: readState, followedTails: followedTails),
+                    hierarchy: hierarchy,
+                    parentHint: parentHint,
+                    inPinnedSection: inPinnedSection
+                )
             )
         }
+
+        struct WalkFrame {
+            let children: [Node]
+            var index: Int
+            let depth: Int
+            let directParentId: String
+            let level1HasNextSibling: Bool
+        }
+
+        for root in roots {
+            let inPinned = pinTier(root.summary) > 0
+            let rootHint = rawParentSessionId(root.summary).map {
+                resolveParentTitle($0, titleById: titleById)
+            }
+            appendRow(root.summary, hierarchy: nil, parentHint: rootHint, inPinnedSection: inPinned)
+            if !root.children.isEmpty {
+                var walkStack: [WalkFrame] = [
+                    WalkFrame(
+                        children: root.children,
+                        index: 0,
+                        depth: 1,
+                        directParentId: root.summary.id,
+                        level1HasNextSibling: false
+                    ),
+                ]
+                while let topIndex = walkStack.indices.last {
+                    let idx = walkStack[topIndex].index
+                    let children = walkStack[topIndex].children
+                    if idx >= children.count {
+                        walkStack.removeLast()
+                        continue
+                    }
+                    walkStack[topIndex].index = idx + 1
+                    let depth = walkStack[topIndex].depth
+                    let directParentId = walkStack[topIndex].directParentId
+                    let level1HasNextSibling = walkStack[topIndex].level1HasNextSibling
+
+                    let child = children[idx]
+                    let isLast = idx == children.count - 1
+                    let visualDepth = depth == 1 ? 1 : 2
+                    let isDepthCapped = depth >= 3
+                    let continuesAtLevel1 = depth >= 2 ? level1HasNextSibling : false
+                    let connector = SessionTreeConnector(
+                        visualDepth: visualDepth,
+                        continuesAtLevel1: continuesAtLevel1,
+                        isLastChild: isDepthCapped ? true : isLast,
+                        isDepthCapped: isDepthCapped
+                    )
+                    let hint = isDepthCapped ? resolveParentTitle(directParentId, titleById: titleById) : nil
+                    appendRow(
+                        child.summary,
+                        hierarchy: connector,
+                        parentHint: hint,
+                        inPinnedSection: inPinned
+                    )
+                    if !child.children.isEmpty {
+                        let nextLevel1Sibling = depth == 1 ? !isLast : level1HasNextSibling
+                        walkStack.append(
+                            WalkFrame(
+                                children: child.children,
+                                index: 0,
+                                depth: depth + 1,
+                                directParentId: child.summary.id,
+                                level1HasNextSibling: nextLevel1Sibling
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return result
     }
 
     /// Unique session ids in current visual display order (respects `groupByTag` and collapsed tag groups).
@@ -703,10 +997,10 @@ final class SessionListModel {
         }
     }
 
-    /// The sort contract puts globalPinned/pinned rows first; this boundary
+    /// The sort contract puts globalPinned/pinned root units first; this boundary
     /// index is where the pinned section ends.
     static func pinnedCount(of rows: [SessionRowUI]) -> Int {
-        rows.prefix { $0.summary.globalPinned == true || $0.summary.pinned == true }.count
+        rows.prefix { $0.belongsToPinnedSection }.count
     }
 
     /// Groups rows by tag for the sidebar's "Group by Tag" mode.

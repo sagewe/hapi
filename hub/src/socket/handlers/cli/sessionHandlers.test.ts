@@ -460,7 +460,7 @@ describe('cli session handlers', () => {
         expect(uuids).toEqual(['msg-1', 'msg-2'])
     })
 
-    it.each(['supersededBySessionId', 'opencodeClearOperation', 'titleSuggestionAutoAttemptedAt', 'titleSuggestionTurn', 'promptTitle'] as const)(
+    it.each(['supersededBySessionId', 'opencodeClearOperation', 'titleSuggestionAutoAttemptedAt', 'titleSuggestionTurn', 'promptTitle', 'parentSessionId'] as const)(
         'ignores a forged hub-owned %s addition from CLI metadata',
         (field) => {
             const store = new Store(':memory:')
@@ -476,7 +476,7 @@ describe('cli session handlers', () => {
                 expectedVersion: session.metadataVersion,
                 metadata: {
                     path: '/tmp/project',
-                    [field]: field === 'supersededBySessionId'
+                    [field]: field === 'supersededBySessionId' || field === 'parentSessionId'
                         ? 'foreign-session'
                         : field === 'opencodeClearOperation'
                             ? { replacementSessionId: 'foreign-session', state: 'reserved', updatedAt: Date.now() }
@@ -487,6 +487,37 @@ describe('cli session handlers', () => {
             expect(store.sessions.getSessionByNamespace(session.id, 'default')?.metadata).not.toHaveProperty(field)
         }
     )
+
+    it('rejects non-object metadata payloads (null, array, primitive) on update-metadata and preserves parentSessionId', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('non-obj-meta', {
+            path: '/tmp/project',
+            parentSessionId: 'parent-owned-1'
+        }, null, 'default')
+        const socket = new FakeSocket()
+        registerSessionHandlers(socket as unknown as CliSocketWithData, {
+            store,
+            resolveSessionAccess: () => ({ ok: true, value: store.sessions.getSession(session.id) as StoredSession }),
+            emitAccessError: () => { throw new Error('unexpected access error') }
+        })
+
+        for (const invalidMetadata of [null, ['array'], 42, 'str'] as const) {
+            let ackResult: unknown = undefined
+            socket.trigger('update-metadata', {
+                sid: session.id,
+                expectedVersion: session.metadataVersion,
+                metadata: invalidMetadata
+            }, (res) => {
+                ackResult = res
+            })
+            expect(ackResult).toEqual({ result: 'error' })
+            expect(store.sessions.getSessionByNamespace(session.id, 'default')?.metadata).toMatchObject({
+                path: '/tmp/project',
+                parentSessionId: 'parent-owned-1'
+            })
+        }
+        store.close()
+    })
 
     it('preserves existing hub-owned clear metadata across CLI metadata updates', () => {
         const store = new Store(':memory:')

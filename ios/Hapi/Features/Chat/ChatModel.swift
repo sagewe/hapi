@@ -98,6 +98,9 @@ struct ChatHeaderUI: Equatable {
     var active: Bool
     var thinking: Bool
     var status: ChatHeaderStatus = .offline
+    var parentSessionId: String? = nil
+    var parentTitle: String? = nil
+    var isParentNavigable: Bool = false
 }
 
 struct ChatTurnNavItem: Identifiable, Equatable, Sendable {
@@ -366,6 +369,7 @@ final class ChatModel {
     @ObservationIgnored private var wantsTailFollowing = false
     @ObservationIgnored private var registeredTailFollowing = false
     @ObservationIgnored private var everStarted = false
+    @ObservationIgnored private var headerObservationToken = 0
 
     init(session: HubSession, sessionId: String) {
         self.hub = session
@@ -385,12 +389,21 @@ final class ChatModel {
         #endif
         self.mediaLoader = GeneratedMediaLoader(api: session.api, sessionId: sessionId)
         self.scratchlistAttachments = ScratchlistAttachmentLoader(api: session.api, sessionId: sessionId)
-        self.header = ChatHeaderUI(
-            title: String(sessionId.prefix(8)),
-            subtitle: nil,
-            flavor: nil,
-            active: false,
-            thinking: false
+        let initialDetail = session.sessionStore.detail(for: sessionId)
+        let initialSessions = session.sessionStore.sessions
+        let initialSummary = initialSessions.first { $0.id == sessionId }
+        let initialRawParent = (initialDetail?.metadata?.parentSessionId ?? initialSummary?.metadata?.parentSessionId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let initialParentDetail = initialRawParent.flatMap { pid in
+            pid.isEmpty || pid == sessionId ? nil : session.sessionStore.detail(for: pid)
+        }
+        self.header = Self.buildHeader(
+            sessionId: sessionId,
+            detail: initialDetail,
+            summary: initialSummary,
+            allSessions: initialSessions,
+            parentDetail: initialParentDetail,
+            machines: session.machineStore.machines
         )
     }
 
@@ -509,6 +522,7 @@ final class ChatModel {
         chat.onStoreActivity = { [weak self] in
             self?.scheduleRecompute()
         }
+        startObservingHeaderStores()
         Task { [weak self] in
             await chat.start(preservingHistory: preservingHistory)
             guard let self, self.isActive, self.chat === chat else { return }
@@ -528,6 +542,7 @@ final class ChatModel {
     func stop() {
         guard isActive else { return }
         isActive = false
+        stopObservingHeaderStores()
         syncTailFollowing()
         displayedReadRevision = nil
         statesTask?.cancel()
@@ -1007,7 +1022,13 @@ final class ChatModel {
             let revision = inputRevision
             if let window = windowState {
                 let detail = hub.sessionStore.detail(for: sessionId)
-                let summary = hub.sessionStore.sessions.first { $0.id == sessionId }
+                let allSessions = hub.sessionStore.sessions
+                let summary = allSessions.first { $0.id == sessionId }
+                let rawParentId = (detail?.metadata?.parentSessionId ?? summary?.metadata?.parentSessionId)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let parentDetail = rawParentId.flatMap { pid in
+                    pid.isEmpty || pid == sessionId ? nil : hub.sessionStore.detail(for: pid)
+                }
                 let machines = hub.machineStore.machines
                 let visible = await pipeline.run(
                     messages: window.messages,
@@ -1017,7 +1038,16 @@ final class ChatModel {
                 )
                 let prepared = await renderPreparation.prepare(visible, previous: blocks, markdownCache: markdownCache)
                 guard !Task.isCancelled else { return }
-                apply(visible, prepared: prepared, window: window, detail: detail, summary: summary, machines: machines)
+                apply(
+                    visible,
+                    prepared: prepared,
+                    window: window,
+                    detail: detail,
+                    summary: summary,
+                    allSessions: allSessions,
+                    parentDetail: parentDetail,
+                    machines: machines
+                )
             }
             // No suspension between this check and parking, so a concurrent
             // scheduleRecompute either lands before it (loop again) or finds
@@ -1035,6 +1065,8 @@ final class ChatModel {
         window: MessageWindowState,
         detail: Session?,
         summary: SessionSummary?,
+        allSessions: [SessionSummary],
+        parentDetail: Session?,
         machines: [Machine]
     ) {
         guard !chat.isRemoved else { return }
@@ -1085,6 +1117,8 @@ final class ChatModel {
             sessionId: sessionId,
             detail: detail,
             summary: summary,
+            allSessions: allSessions,
+            parentDetail: parentDetail,
             machines: machines
         )
         basePath = detail?.metadata?.path ?? summary?.metadata?.path
@@ -1159,10 +1193,12 @@ final class ChatModel {
 
     // MARK: - Header derivation (Android `buildHeader` port)
 
-    private static func buildHeader(
+    static func buildHeader(
         sessionId: String,
         detail: Session?,
         summary: SessionSummary?,
+        allSessions: [SessionSummary] = [],
+        parentDetail: Session? = nil,
         machines: [Machine]
     ) -> ChatHeaderUI {
         // Detail first — the fresher source once loaded (this pipe patches
@@ -1197,14 +1233,86 @@ final class ChatModel {
         let thinking = detail?.thinking ?? summary?.thinking ?? false
         let status = resolveHeaderStatus(detail: detail, summary: summary)
 
+        let rawParent = (detail?.metadata?.parentSessionId ?? summary?.metadata?.parentSessionId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parentSessionId: String? = {
+            guard let rawParent, !rawParent.isEmpty, rawParent != sessionId else { return nil }
+            return rawParent
+        }()
+        let parentSummary = parentSessionId.flatMap { pid in
+            allSessions.first(where: { $0.id == pid })
+        }
+        let isParentNavigable = parentSummary != nil
+        let parentTitle: String? = parentSessionId.map { pid in
+            if let parentSummary {
+                if let parentDetail, parentDetail.id == pid, let resolved = detailTitle(parentDetail) {
+                    return resolved
+                }
+                return SessionListModel.sessionTitle(parentSummary)
+            }
+            return String(pid.prefix(8))
+        }
+
         return ChatHeaderUI(
             title: title,
             subtitle: parts.isEmpty ? nil : parts.joined(separator: " · "),
             flavor: flavor,
             active: active,
             thinking: thinking,
-            status: status
+            status: status,
+            parentSessionId: parentSessionId,
+            parentTitle: parentTitle,
+            isParentNavigable: isParentNavigable
         )
+    }
+
+    private func startObservingHeaderStores() {
+        headerObservationToken &+= 1
+        let token = headerObservationToken
+        armHeaderStoreObservation(token: token)
+    }
+
+    private func stopObservingHeaderStores() {
+        headerObservationToken &+= 1
+    }
+
+    private func armHeaderStoreObservation(token: Int) {
+        guard isActive, headerObservationToken == token else { return }
+        withObservationTracking {
+            refreshHeaderFromStores()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isActive, self.headerObservationToken == token else { return }
+                self.armHeaderStoreObservation(token: token)
+            }
+        }
+    }
+
+    func refreshHeaderFromStores() {
+        guard !chat.isRemoved else { return }
+        let detail = hub.sessionStore.detail(for: sessionId)
+        let allSessions = hub.sessionStore.sessions
+        let summary = allSessions.first { $0.id == sessionId }
+        let rawParent = (detail?.metadata?.parentSessionId ?? summary?.metadata?.parentSessionId)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let parentDetail = rawParent.flatMap { pid in
+            pid.isEmpty || pid == sessionId ? nil : hub.sessionStore.detail(for: pid)
+        }
+        let nextHeader = Self.buildHeader(
+            sessionId: sessionId,
+            detail: detail,
+            summary: summary,
+            allSessions: allSessions,
+            parentDetail: parentDetail,
+            machines: hub.machineStore.machines
+        )
+        if header != nextHeader {
+            header = nextHeader
+        }
+        let nextBasePath = detail?.metadata?.path ?? summary?.metadata?.path
+        if basePath != nextBasePath {
+            basePath = nextBasePath
+        }
     }
 
     private static let inputRequestTools: Set<String> = [

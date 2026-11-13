@@ -24,6 +24,7 @@ import { useToast } from '@/lib/toast-context'
 import { queryKeys } from '@/lib/query-keys'
 import { markCodexSessionsImported } from '@/lib/codexImportedSessions'
 import { useMachines } from '@/hooks/queries/useMachines'
+import { useSessions } from '@/hooks/queries/useSessions'
 import { useMachineLabels } from '@/hooks/useMachineLabels'
 import { formatAbsoluteDateTime, formatRelativeTime } from '@/lib/relativeTime'
 import { useSessionHeaderMetadata } from '@/hooks/useSessionHeaderMetadata'
@@ -294,13 +295,33 @@ export function SessionHeader(props: {
     reopenHint?: string
     onSessionDeleted?: () => void
     onSessionReopened?: (newSessionId: string) => void | Promise<void>
+    onOpenParentSession?: (parentSessionId: string) => void
 }) {
     const { t, locale } = useTranslation()
     const queryClient = useQueryClient()
     const { addToast } = useToast()
-    const { session, api, onSessionDeleted, onSessionReopened } = props
+    const { session, api, onSessionDeleted, onSessionReopened, onOpenParentSession } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const visualStatus = useMemo(() => classifySessionDetailVisualStatus(session), [session])
+    const parentSessionId = useMemo(() => {
+        const raw = session.metadata?.parentSessionId
+        if (typeof raw !== 'string') return null
+        const trimmed = raw.trim()
+        return trimmed.length > 0 && trimmed !== session.id ? trimmed : null
+    }, [session.id, session.metadata?.parentSessionId])
+    const { sessions: knownSessions } = useSessions(
+        api,
+        { enabled: Boolean(parentSessionId && typeof api?.getSessions === 'function') }
+    )
+    const parentSummary = useMemo(() => {
+        if (!parentSessionId) return null
+        return knownSessions.find((item) => item.id === parentSessionId) ?? null
+    }, [knownSessions, parentSessionId])
+    const parentTitle = useMemo(() => {
+        if (!parentSessionId) return null
+        return parentSummary ? getSessionTitle(parentSummary) : parentSessionId.slice(0, 8)
+    }, [parentSessionId, parentSummary])
+    const canOpenParentSession = Boolean(parentSessionId && parentSummary && onOpenParentSession)
     const projectPath = getSessionProjectPath(session.metadata)
     const projectLabel = projectPath ? getSessionProjectLabel(projectPath) : null
     const worktreeBranch = session.metadata?.worktree?.branch?.trim() || null
@@ -356,7 +377,8 @@ export function SessionHeader(props: {
         worktree: headerMetadata.worktree && Boolean(worktreeBranch),
         fastMode: headerMetadata.fastMode && showFastBadge,
     })
-    const showMobileMetadata = (headerMetadata.agent && agentLabel !== null) || mobileSecondary !== null
+    const showParentBadge = Boolean(parentSessionId && parentTitle)
+    const showMobileMetadata = showParentBadge || (headerMetadata.agent && agentLabel !== null) || mobileSecondary !== null
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -552,6 +574,30 @@ export function SessionHeader(props: {
                         </div>
                         {showMobileMetadata ? (
                             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs text-[var(--app-hint)] sm:hidden">
+                                {showParentBadge && parentSessionId && parentTitle ? (
+                                    canOpenParentSession ? (
+                                        <button
+                                            type="button"
+                                            data-testid="session-header-parent-mobile"
+                                            onClick={() => onOpenParentSession?.(parentSessionId)}
+                                            title={t('session.header.parentSession', { title: parentTitle })}
+                                            aria-label={t('session.header.parentSession', { title: parentTitle })}
+                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                        >
+                                            <span aria-hidden="true" className="shrink-0 opacity-80">↳</span>
+                                            <span className="truncate">{parentTitle}</span>
+                                        </button>
+                                    ) : (
+                                        <span
+                                            data-testid="session-header-parent-mobile"
+                                            title={t('session.header.parentSession', { title: parentTitle })}
+                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-full border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
+                                        >
+                                            <span aria-hidden="true" className="shrink-0 opacity-70">↳</span>
+                                            <span className="truncate">{parentTitle}</span>
+                                        </span>
+                                    )
+                                ) : null}
                                 {headerMetadata.agent && agentLabel ? (
                                     <span className="inline-flex shrink-0 items-center gap-1">
                                         <AgentFlavorIcon flavor={session.metadata?.flavor} className="h-3.5 w-3.5 shrink-0 -translate-y-px" />
@@ -570,6 +616,30 @@ export function SessionHeader(props: {
                             </div>
                         ) : null}
                         <div className="hidden flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-[var(--app-hint)] sm:flex">
+                            {showParentBadge && parentSessionId && parentTitle ? (
+                                canOpenParentSession ? (
+                                    <button
+                                        type="button"
+                                        data-testid="session-header-parent"
+                                        onClick={() => onOpenParentSession?.(parentSessionId)}
+                                        title={t('session.header.parentSession', { title: parentTitle })}
+                                        aria-label={t('session.header.parentSession', { title: parentTitle })}
+                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                    >
+                                        <span aria-hidden="true" className="shrink-0 opacity-80">↳</span>
+                                        <span className="truncate">{parentTitle}</span>
+                                    </button>
+                                ) : (
+                                    <span
+                                        data-testid="session-header-parent"
+                                        title={t('session.header.parentSession', { title: parentTitle })}
+                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-full border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
+                                    >
+                                        <span aria-hidden="true" className="shrink-0 opacity-70">↳</span>
+                                        <span className="truncate">{parentTitle}</span>
+                                    </span>
+                                )
+                            ) : null}
                             {headerMetadata.agent && agentLabel ? (
                                 <span className="inline-flex items-center gap-1">
                                     <AgentFlavorIcon flavor={session.metadata?.flavor} className="h-3.5 w-3.5 shrink-0 -translate-y-px" />

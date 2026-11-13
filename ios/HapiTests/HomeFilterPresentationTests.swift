@@ -141,6 +141,33 @@ final class HomeFilterPresentationTests: XCTestCase {
         XCTAssertEqual(heights[0], heights[2], accuracy: 1, "Activity shares the same quiet secondary line")
     }
 
+    func testNestedSubsessionRowsKeepCompactTwoLineHeight() async throws {
+        var root = HomeFilterTestData.summary("h-0", machine: nil)
+        root.thinking = true
+        var child1 = HomeFilterTestData.summary("h-1", machine: nil)
+        child1.metadata?.parentSessionId = "h-0"
+        var child2 = HomeFilterTestData.summary("h-2", machine: nil)
+        child2.metadata?.parentSessionId = "h-1"
+        var child3 = HomeFilterTestData.summary("h-3", machine: nil)
+        child3.metadata?.parentSessionId = "h-2"
+        child3.pendingRequestsCount = 1
+        child3.pendingRequestKinds = [.permission]
+
+        let model = HomeFilterTestData.model(sessions: HomeFilterTestSessions([root, child1, child2, child3]))
+        let window = try makeWindow(Harness(model: model, navigation: Navigation()), width: 390)
+        defer { window.isHidden = true }
+        try await settle()
+        let list = try XCTUnwrap(findCollection(window))
+        let heights = try (0..<4).map { index in
+            try XCTUnwrap(list.layoutAttributesForItem(at: IndexPath(item: index, section: 0))).size.height
+        }
+        for height in heights {
+            XCTAssertGreaterThanOrEqual(height, 60)
+            XCTAssertLessThanOrEqual(height, 70, "Nested subsession rows must stay two lines")
+            XCTAssertEqual(height, heights[0], accuracy: 1)
+        }
+    }
+
     func testHomeLayoutSpecimens() async throws {
         let now = Int(Date.now.timeIntervalSince1970 * 1_000)
         let sessions = HomeFilterTestSessions((0..<6).map {

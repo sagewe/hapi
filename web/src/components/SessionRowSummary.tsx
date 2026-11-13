@@ -99,6 +99,8 @@ export function SessionRowSummary(props: {
     projectLabel?: string
     /** Machine label shown next to the project name (pinned "in progress" rows). */
     machineLabel?: string
+    /** Read-only parent session title hint when not visually nested under direct parent. */
+    parentHint?: string | null
     /** Context returned by the opt-in session message-content search. */
     contentSnippet?: string
     /** The indexed message exceeded the search index budget. */
@@ -119,6 +121,7 @@ export function SessionRowSummary(props: {
         inRunningSection: _inRunningSection = false,
         projectLabel,
         machineLabel,
+        parentHint,
         contentSnippet,
         contentSearchTruncated = false,
         trailingClassName,
@@ -281,6 +284,11 @@ export function SessionRowSummary(props: {
         />
     ) : rawStatusPill
 
+    const parentHintLabel = parentHint?.trim() || null
+    const parentHintTooltip = parentHintLabel
+        ? t('session.item.parentSession', { title: parentHintLabel })
+        : undefined
+
     const secondaryText = projectLabel || machineLabel
         ? [projectLabel, machineLabel].filter(Boolean).join(' · ')
         : (showPath || worktreeLabel)
@@ -367,10 +375,27 @@ export function SessionRowSummary(props: {
                         ) : null}
                     </div>
                 ) : null}
-                {(secondaryText !== null || statusPillNode !== null) ? (
+                {(secondaryText !== null || parentHintLabel !== null || statusPillNode !== null) ? (
                     <div className="flex min-w-0 items-center justify-between gap-2">
-                        <div className="min-w-0 flex-1 truncate text-xs text-[var(--app-hint)]" title={secondaryTitle}>
-                            {secondaryText ?? ''}
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-xs text-[var(--app-hint)]">
+                            {parentHintLabel ? (
+                                <span
+                                    data-testid="session-parent-hint"
+                                    className="inline-flex max-w-[11rem] min-w-0 shrink items-center gap-0.5 truncate text-[var(--app-hint)]"
+                                    title={parentHintTooltip}
+                                >
+                                    <span aria-hidden="true" className="shrink-0 opacity-75">↳</span>
+                                    <span className="truncate">{parentHintLabel}</span>
+                                </span>
+                            ) : null}
+                            {parentHintLabel && secondaryText !== null ? (
+                                <span aria-hidden="true" className="shrink-0 opacity-60">·</span>
+                            ) : null}
+                            {secondaryText !== null ? (
+                                <span className="min-w-0 flex-1 truncate" title={secondaryTitle}>
+                                    {secondaryText}
+                                </span>
+                            ) : null}
                         </div>
                         {statusPillNode}
                     </div>

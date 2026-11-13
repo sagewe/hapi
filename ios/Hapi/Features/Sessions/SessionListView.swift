@@ -292,11 +292,15 @@ struct SessionListView: View {
 
     @ViewBuilder
     private func rowBackground(for row: SessionRowUI, isSelected: Bool) -> some View {
+        let indent = CGFloat(row.hierarchy?.visualDepth ?? 0) * 12
         #if targetEnvironment(macCatalyst)
         if isSelected {
-            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.2))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.accentColor.opacity(0.2))
+                .padding(.leading, indent)
         }
         #else
+        let backgroundLead = indent > 0 ? indent + 2 : 0
         let stripeColor = SessionStatusPalette.stripeColor(for: row.status, theme: theme)
         let tintFill = SessionStatusPalette.rowTint(for: row.status, theme: theme)
         if isSelected {
@@ -311,6 +315,7 @@ struct SessionListView: View {
                         .padding(.leading, 4)
                 }
             }
+            .padding(.leading, backgroundLead)
         } else if let stripeColor {
             ZStack(alignment: .leading) {
                 Rectangle()
@@ -321,6 +326,7 @@ struct SessionListView: View {
                     .padding(.vertical, 6)
                     .padding(.leading, 4)
             }
+            .padding(.leading, backgroundLead)
         }
         #endif
     }
@@ -442,8 +448,21 @@ struct SessionListView: View {
     }
 
     private func rowLabel(_ row: SessionRowUI, isSelected: Bool = false) -> some View {
-        SessionRowView(row: row, isSelected: isSelected)
+        let indent = CGFloat(row.hierarchy?.visualDepth ?? 0) * 12
+        return SessionRowView(row: row, isSelected: isSelected)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, indent)
+            .overlay(alignment: .leading) {
+                if let connector = row.hierarchy {
+                    SessionTreeConnectorView(connector: connector)
+                        .frame(width: indent)
+                        .padding(.vertical, -Self.rowVerticalInset)
+                        #if !targetEnvironment(macCatalyst)
+                        .offset(x: -12)
+                        #endif
+                        .allowsHitTesting(false)
+                }
+            }
             .contentShape(Rectangle())
     }
 
@@ -933,13 +952,32 @@ struct SessionRowView: View {
         }
     }
 
-    /// Project + tags left; semantic status pill right (kept within `statusSlotSize`
+    /// Project + parent hint + tags left; semantic status pill right (kept within `statusSlotSize`
     /// height so row geometry never jumps across states).
     private var detailLine: some View {
         HStack(alignment: .center, spacing: 6) {
-            Text(verbatim: row.project ?? " ")
-                .lineLimit(1)
-                .accessibilityHidden(row.project == nil)
+            if let parentHint = row.parentHint {
+                HStack(spacing: 4) {
+                    Text(verbatim: "↳ \(parentHint)")
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(theme.textSecondary.opacity(0.9))
+                        .layoutPriority(0.5)
+                        .help(parentHint)
+                    if let project = row.project {
+                        Text(verbatim: "·")
+                            .foregroundStyle(theme.textSecondary.opacity(0.55))
+                            .accessibilityHidden(true)
+                        Text(verbatim: project)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+            } else {
+                Text(verbatim: row.project ?? " ")
+                    .lineLimit(1)
+                    .accessibilityHidden(row.project == nil)
+            }
             if !row.tags.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(Array(row.tags.prefix(3)), id: \.self) { tag in
@@ -1244,6 +1282,79 @@ struct SessionTitleEditor: View {
             }
             .interactiveDismissDisabled(busy)
         }
+    }
+}
+
+/// Neutral hairline tree guide rendered in the outer indentation gutter.
+private struct SessionTreeConnectorView: View {
+    @Environment(\.hapiTheme) private var theme
+    let connector: SessionTreeConnector
+
+    var body: some View {
+        let strokeColor = theme.textSecondary.opacity(theme.isDark ? 0.30 : 0.24)
+        Canvas { context, size in
+            let midY = floor(size.height * 0.5) + 0.5
+            let radius: CGFloat = 5
+            let style = StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round)
+
+            if connector.visualDepth == 1 {
+                let x: CGFloat = 3.5
+                let endX: CGFloat = 9.5
+                var path = Path()
+                if connector.isLastChild {
+                    let bendStart = max(0, midY - radius)
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: bendStart))
+                    path.addQuadCurve(
+                        to: CGPoint(x: x + radius, y: midY),
+                        control: CGPoint(x: x, y: midY)
+                    )
+                    path.addLine(to: CGPoint(x: endX, y: midY))
+                } else {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                    path.move(to: CGPoint(x: x, y: midY))
+                    path.addLine(to: CGPoint(x: endX, y: midY))
+                }
+                context.stroke(path, with: .color(strokeColor), style: style)
+            } else {
+                var path = Path()
+                if connector.continuesAtLevel1 {
+                    path.move(to: CGPoint(x: 3.5, y: 0))
+                    path.addLine(to: CGPoint(x: 3.5, y: size.height))
+                }
+                let x: CGFloat = 15.5
+                let endX: CGFloat = 21.5
+                if connector.isDepthCapped {
+                    let topStub = max(4, midY - 8)
+                    let bendStart = max(topStub, midY - 4)
+                    path.move(to: CGPoint(x: x, y: topStub))
+                    path.addLine(to: CGPoint(x: x, y: bendStart))
+                    path.addQuadCurve(
+                        to: CGPoint(x: x + 4, y: midY),
+                        control: CGPoint(x: x, y: midY)
+                    )
+                    path.addLine(to: CGPoint(x: endX, y: midY))
+                } else if connector.isLastChild {
+                    let bendStart = max(0, midY - radius)
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: bendStart))
+                    path.addQuadCurve(
+                        to: CGPoint(x: x + radius, y: midY),
+                        control: CGPoint(x: x, y: midY)
+                    )
+                    path.addLine(to: CGPoint(x: endX, y: midY))
+                } else {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: size.height))
+                    path.move(to: CGPoint(x: x, y: midY))
+                    path.addLine(to: CGPoint(x: x, y: midY))
+                    path.addLine(to: CGPoint(x: endX, y: midY))
+                }
+                context.stroke(path, with: .color(strokeColor), style: style)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

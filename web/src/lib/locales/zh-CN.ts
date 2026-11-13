@@ -254,6 +254,8 @@ export default {
   'session.badge.archived': '已归档',
   'session.header.status.online': '在线',
   'session.header.status.offline': '离线',
+  'session.header.parentSession': '打开父会话：{title}',
+  'session.item.parentSession': '父会话：{title}',
   'session.quickFilter.needsAction': '待处理',
   'session.item.scheduledMessage': '有待发送的定时消息',
   'session.item.scheduledMessages': '{count} 条定时消息待发送',

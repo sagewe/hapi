@@ -543,6 +543,13 @@ export default function FilesPage() {
                 api={api}
                 titleSuggestionAvailable={titleSuggestionAvailable}
                 onSessionDeleted={goBack}
+                onOpenParentSession={(parentSessionId) => {
+                    void navigate({
+                        to: '/sessions/$sessionId',
+                        params: { sessionId: parentSessionId },
+                        ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+                    })
+                }}
                 onSessionReopened={async (newSessionId) => {
                     await transferComposerDraftThenNavigate(
                         session.id,

@@ -2133,6 +2133,13 @@ function SessionChatInner(props: SessionChatProps) {
                 reopenDisabledReason={props.reopenDisabledReason}
                 reopenHint={props.reopenHint}
                 onSessionDeleted={props.onBack}
+                onOpenParentSession={(parentSessionId) => {
+                    void navigate({
+                        to: '/sessions/$sessionId',
+                        params: { sessionId: parentSessionId },
+                        ...PRESERVE_SESSION_SIDEBAR_SCROLL,
+                    })
+                }}
                 onSessionReopened={async (newSessionId) => {
                     await transferComposerDraftThenNavigate(
                         props.session.id,

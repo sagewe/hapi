@@ -1367,4 +1367,45 @@ describe('machines routes', () => {
         expect(response.status).toBe(503)
         expect(await response.json()).toMatchObject({ success: false, code: RPC_TARGET_MISSING_ERROR_CODE })
     })
+
+    it('validates parentSessionId in namespace and forwards it to SyncEngine.spawnSession', async () => {
+        const machine = createMachine()
+        let capturedArgs: unknown[] | null = null
+        const engine = {
+            getMachine: () => machine,
+            getMachineByNamespace: () => machine,
+            getSessionByNamespace: (id: string, ns: string) => (
+                id === 'parent-archived' && ns === 'default'
+                    ? { id: 'parent-archived', namespace: 'default', active: false, metadata: { lifecycleState: 'archived' } }
+                    : undefined
+            ),
+            spawnSession: async (...args: unknown[]) => {
+                capturedArgs = args
+                return { type: 'success' as const, sessionId: 'child-1' }
+            }
+        } as unknown as Partial<SyncEngine>
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => { c.set('namespace', 'default'); await next() })
+        app.route('/api', createMachinesRoutes(() => engine as SyncEngine))
+
+        const badRes = await app.request('/api/machines/machine-1/spawn', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ directory: '/tmp/x', parentSessionId: 'other-ns-or-missing' })
+        })
+        expect(badRes.status).toBe(400)
+        expect(await badRes.json()).toMatchObject({ code: 'invalid_parent_session' })
+        expect(capturedArgs).toBeNull()
+
+        const okRes = await app.request('/api/machines/machine-1/spawn', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ directory: '/tmp/x', parentSessionId: 'parent-archived' })
+        })
+        expect(okRes.status).toBe(200)
+        expect(capturedArgs).not.toBeNull()
+        expect(capturedArgs![16]).toBe('default')
+        expect(capturedArgs![17]).toBe('parent-archived')
+    })
 })
