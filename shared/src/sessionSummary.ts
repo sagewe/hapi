@@ -1,3 +1,4 @@
+import { isObject } from './utils'
 import type { AgentState, Metadata, Session, TodoItem, WorktreeMetadata } from './schemas'
 import type { SessionReadState } from './sessionReadState'
 import type { ConversationHistoryCapabilities } from './conversationHistory'
@@ -57,6 +58,13 @@ export function classifyKind(tool: string): PendingRequestKind {
     return INPUT_REQUEST_TOOLS.has(tool) ? 'input' : 'permission'
 }
 
+/** Optional Codex questions remain answerable in agentState, but do not block
+ * execution. Never hide approvals based on arbitrary tool arguments. */
+export function isBlockingPendingRequest(request: { tool: string; arguments?: unknown }): boolean {
+    return !(request.tool === 'request_user_input'
+        && isObject(request.arguments) && request.arguments.isBlocking === false)
+}
+
 export type SessionSummaryMetadata = {
     name?: string
     titleLocked?: boolean
@@ -98,6 +106,7 @@ export type SessionSummary = {
     agentStateVersion: number
     todosUpdatedAt: number
     todoProgress: { completed: number; total: number } | null
+    /** Blocking attention only; optional questions remain in agentState.requests. */
     pendingRequestsCount: number
     pendingRequestKinds: PendingRequestKind[]
     /** Capped, oldest-first slice of pending tool requests. Use this for tooltip
@@ -124,6 +133,7 @@ export function computePendingRequestKinds(agentState: AgentState | null | undef
 
     const kinds = new Set<PendingRequestKind>()
     for (const request of Object.values(requests)) {
+        if (!isBlockingPendingRequest(request)) continue
         kinds.add(classifyKind(request.tool))
     }
 
@@ -144,6 +154,7 @@ export function computePendingRequests(
 
     const items: PendingRequest[] = []
     for (const [id, request] of Object.entries(requests)) {
+        if (!isBlockingPendingRequest(request)) continue
         items.push({
             id,
             kind: classifyKind(request.tool),
@@ -172,7 +183,7 @@ export function getPendingRequests(
 }
 
 export function computePendingRequestsCount(agentState: AgentState | null | undefined): number {
-    return agentState?.requests ? Object.keys(agentState.requests).length : 0
+    return agentState?.requests ? Object.values(agentState.requests).filter(isBlockingPendingRequest).length : 0
 }
 
 export function computeTodoProgress(todos: TodoItem[] | undefined): SessionSummary['todoProgress'] {

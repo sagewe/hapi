@@ -48,9 +48,9 @@ not rewind the timestamp.
 remains transport keep-alive state. The Web session list may
 apply client-side grouping and search ranking after receiving this response;
 `GET /api/sessions` itself has no text-search parameter. List badges come from
-`SessionSummary.pendingRequestsCount` (authoritative total) and
+`SessionSummary.pendingRequestsCount` (authoritative blocking total) and
 `pendingRequests` (capped at 5, oldest-first) — do not derive counts from
-`pendingRequests.length`.
+`pendingRequests.length`. Optional `request_user_input` questions with `arguments.isBlocking === false` are excluded from these summary counts, kinds, and capped entries. They remain in `Session.agentState.requests` and can still be answered. Missing flags and permission requests remain blocking.
 
 ### Sessions — lifecycle
 

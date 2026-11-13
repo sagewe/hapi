@@ -2,6 +2,8 @@ package app.hapi.protocol.wire
 
 import app.hapi.protocol.catalog.AgentFlavor
 import kotlin.math.max
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Summary-side patch path — faithful port of the web reference:
@@ -48,6 +50,11 @@ object SummaryPatching {
     private fun classifyKind(tool: String): String =
         if (tool in INPUT_REQUEST_TOOLS) KIND_INPUT else KIND_PERMISSION
 
+    // Optional questions remain answerable, but do not block the session.
+    private fun isBlockingRequest(request: AgentStateRequest): Boolean =
+        !(request.tool == "request_user_input" &&
+            (request.arguments as? JsonObject)?.get("isBlocking") == JsonPrimitive(false))
+
     // ------------------------------------------------------- derivations --
 
     /**
@@ -59,6 +66,7 @@ object SummaryPatching {
         val requests = agentState?.requests ?: return emptyList()
         val kinds = LinkedHashSet<String>()
         for (request in requests.values) {
+            if (!isBlockingRequest(request)) continue
             kinds.add(classifyKind(request.tool))
         }
         return if (KIND_PERMISSION in kinds && KIND_INPUT in kinds) {
@@ -79,7 +87,7 @@ object SummaryPatching {
         cap: Int = PENDING_REQUEST_SUMMARY_CAP,
     ): List<PendingRequest> {
         val requests = agentState?.requests ?: return emptyList()
-        val items = requests.map { (id, request) ->
+        val items = requests.filterValues(::isBlockingRequest).map { (id, request) ->
             PendingRequest(
                 id = id,
                 kind = classifyKind(request.tool),
@@ -92,7 +100,7 @@ object SummaryPatching {
 
     /** `computePendingRequestsCount` — the authoritative (uncapped) total. */
     fun computePendingRequestsCount(agentState: AgentState?): Int =
-        agentState?.requests?.size ?: 0
+        agentState?.requests?.values?.count(::isBlockingRequest) ?: 0
 
     /** `computeTodoProgress`: null for absent/empty todos. */
     fun computeTodoProgress(todos: List<TodoItem>?): TodoProgress? {

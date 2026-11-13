@@ -1,3 +1,4 @@
+import { computePendingRequestKinds, computePendingRequestsCount } from '@hapi/protocol'
 import type { PendingRequestKind, Session, SessionSummary } from '@/types/api'
 
 export type SessionQuickStatusLens = 'attention' | 'running' | 'background'
@@ -11,16 +12,6 @@ export type SessionVisualStatus =
     | { tier: 'online' }
     | { tier: 'archived' }
     | { tier: 'offline' }
-
-const INPUT_REQUEST_TOOLS = new Set([
-    'AskUserQuestion',
-    'ask_user_question',
-    'ask_question',
-    'Run ask_question',
-    'ExitPlanMode',
-    'exit_plan_mode',
-    'request_user_input',
-])
 
 function resolvePendingTier(
     kinds: readonly PendingRequestKind[],
@@ -59,17 +50,9 @@ export function classifySessionRowVisualStatus(summary: SessionSummary): Session
 }
 
 export function classifySessionDetailVisualStatus(session: Session): SessionVisualStatus {
-    const requests = session.agentState?.requests
-    const entries = requests ? Object.values(requests) : []
-    if (session.active && entries.length > 0) {
-        const kinds: PendingRequestKind[] = []
-        for (const req of entries) {
-            const kind: PendingRequestKind = INPUT_REQUEST_TOOLS.has(req.tool) ? 'input' : 'permission'
-            if (!kinds.includes(kind)) {
-                kinds.push(kind)
-            }
-        }
-        return resolvePendingTier(kinds, entries.length)
+    const count = computePendingRequestsCount(session.agentState)
+    if (session.active && count > 0) {
+        return resolvePendingTier(computePendingRequestKinds(session.agentState), count)
     }
     if (session.active && session.thinking) {
         return { tier: 'running', lens: 'running' }

@@ -42,6 +42,12 @@ public enum SummaryPatching {
         inputRequestTools.contains(tool) ? .input : .permission
     }
 
+    /// Optional questions stay in agentState for answering, but do not block execution.
+    private static func isBlockingRequest(_ request: AgentStateRequest) -> Bool {
+        guard request.tool == "request_user_input", case .object(let arguments)? = request.arguments else { return true }
+        return arguments["isBlocking"] != .bool(false)
+    }
+
     // MARK: - Derivations (shared/src/sessionSummary.ts)
 
     /// `computePendingRequestKinds`: deduplicated kinds; when both are present
@@ -53,7 +59,7 @@ public enum SummaryPatching {
         guard let requests = agentState?.requests else { return [] }
         var hasPermission = false
         var hasInput = false
-        for request in requests.values {
+        for request in requests.values where isBlockingRequest(request) {
             switch classifyKind(tool: request.tool) {
             case .permission: hasPermission = true
             case .input: hasInput = true
@@ -78,7 +84,7 @@ public enum SummaryPatching {
         cap: Int = pendingRequestSummaryCap
     ) -> [PendingRequest] {
         guard let requests = agentState?.requests else { return [] }
-        var items = requests.map { id, request in
+        var items = requests.filter { isBlockingRequest($0.value) }.map { id, request in
             PendingRequest(
                 id: id,
                 kind: classifyKind(tool: request.tool),
@@ -95,7 +101,7 @@ public enum SummaryPatching {
 
     /// `computePendingRequestsCount` — the authoritative (uncapped) total.
     public static func computePendingRequestsCount(_ agentState: AgentState?) -> Int {
-        agentState?.requests?.count ?? 0
+        agentState?.requests?.values.filter { isBlockingRequest($0) }.count ?? 0
     }
 
     /// `computeTodoProgress`: `nil` for absent/empty todos.

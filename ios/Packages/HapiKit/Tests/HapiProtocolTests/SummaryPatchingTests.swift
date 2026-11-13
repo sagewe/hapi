@@ -63,6 +63,24 @@ struct SummaryPatchingTests {
 
     // MARK: - Derivations
 
+    @Test func nonBlockingQuestionsStayAnswerableWithoutBlockingSummaryStatus() {
+        let optional = AgentStateRequest(tool: "request_user_input", arguments: .object(["isBlocking": .bool(false)]))
+        let state = AgentState(requests: ["optional": optional])
+        #expect(SummaryPatching.computePendingRequestsCount(state) == 0)
+        #expect(SummaryPatching.computePendingRequestKinds(state) == [])
+        #expect(SummaryPatching.computePendingRequests(state, fallbackSince: 0) == [])
+        #expect(state.requests?["optional"] == optional)
+        let mixed = AgentState(requests: [
+            "optional": optional,
+            "legacy": request("request_user_input"),
+            "malformed": AgentStateRequest(tool: "request_user_input", arguments: .object(["isBlocking": .string("false")])),
+            "permission": AgentStateRequest(tool: "Bash", arguments: .object(["isBlocking": .bool(false)])),
+        ])
+        #expect(SummaryPatching.computePendingRequestsCount(mixed) == 3)
+        #expect(SummaryPatching.computePendingRequestKinds(mixed) == [.permission, .input])
+        #expect(SummaryPatching.computePendingRequests(mixed, fallbackSince: 0).map(\.id) == ["legacy", "malformed", "permission"])
+    }
+
     @Test func pendingRequestKindsDedupeAndCanonicalizeBothKindsOrder() {
         #expect(SummaryPatching.computePendingRequestKinds(nil) == [])
         #expect(SummaryPatching.computePendingRequestKinds(AgentState()) == [])

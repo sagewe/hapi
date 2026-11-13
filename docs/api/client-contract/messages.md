@@ -253,7 +253,7 @@ session.agentState = {
 }
 ```
 
-`agentState` updates arrive as a versioned SSE patch — apply it under the version gate described in [sse.md](./sse.md#versioned-patch-algorithm). Render pending `requests` as approval cards interleaved with the chat (the web reducer keys them to the matching `tool_use` when one exists); on resolution the entry moves to `completedRequests`, whose `status`/`answers` back-fill the tool card's permission state. Decide via `POST /api/sessions/:id/permissions/:requestId/approve` (`{mode?, allowTools?, decision?, answers?}`) or `…/deny` (`{decision?}`) — see [rest.md](./rest.md). Session-list badges come precomputed on `SessionSummary.pendingRequestsCount` / `pendingRequests` (≤ 5 entries).
+`agentState` updates arrive as a versioned SSE patch — apply it under the version gate described in [sse.md](./sse.md#versioned-patch-algorithm). Render pending `requests` as approval cards interleaved with the chat (the web reducer keys them to the matching `tool_use` when one exists); on resolution the entry moves to `completedRequests`, whose `status`/`answers` back-fill the tool card's permission state. Decide via `POST /api/sessions/:id/permissions/:requestId/approve` (`{mode?, allowTools?, decision?, answers?}`) or `…/deny` (`{decision?}`) — see [rest.md](./rest.md). Session-list blocking-attention badges come precomputed on `SessionSummary.pendingRequestsCount` / `pendingRequests` (≤ 5 entries). Optional `request_user_input` questions with `arguments.isBlocking === false` remain answerable cards but do not contribute to these badges or waiting-state priority.
 
 `resolved` means native completion is known, but the winning answer/decision
 is not. Render it neutrally; never infer approval or fill answers from an

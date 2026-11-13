@@ -1,6 +1,8 @@
 package app.hapi.protocol.wire
 
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -64,6 +66,25 @@ class SummaryPatchingTest {
         AgentStateRequest(tool = tool, arguments = JsonNull, createdAt = createdAt)
 
     // ------------------------------------------------------- derivations --
+
+    @Test
+    fun `optional questions remain answerable but do not block summary status`() {
+        val optional = AgentStateRequest(tool = "request_user_input", arguments = JsonObject(mapOf("isBlocking" to JsonPrimitive(false))))
+        val state = AgentState(requests = mapOf("optional" to optional))
+        assertEquals(0, SummaryPatching.computePendingRequestsCount(state))
+        assertEquals(emptyList(), SummaryPatching.computePendingRequestKinds(state))
+        assertEquals(emptyList(), SummaryPatching.computePendingRequests(state, 0))
+        assertEquals(optional, state.requests?.get("optional"))
+        val mixed = AgentState(requests = mapOf(
+            "optional" to optional,
+            "legacy" to request("request_user_input"),
+            "malformed" to AgentStateRequest(tool = "request_user_input", arguments = JsonObject(mapOf("isBlocking" to JsonPrimitive("false")))),
+            "permission" to AgentStateRequest(tool = "Bash", arguments = JsonObject(mapOf("isBlocking" to JsonPrimitive(false)))),
+        ))
+        assertEquals(3, SummaryPatching.computePendingRequestsCount(mixed))
+        assertEquals(listOf("permission", "input"), SummaryPatching.computePendingRequestKinds(mixed))
+        assertEquals(listOf("legacy", "malformed", "permission"), SummaryPatching.computePendingRequests(mixed, 0).map { it.id })
+    }
 
     @Test
     fun `computePendingRequestKinds dedupes and canonicalizes both-kinds order`() {

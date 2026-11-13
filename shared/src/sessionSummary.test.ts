@@ -32,6 +32,33 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     }
 }
 
+describe('non-blocking questions', () => {
+    it('keeps optional questions answerable without marking the session blocked', () => {
+        const session = makeSession({ thinking: true, agentState: { requests: {
+            optional: { tool: 'request_user_input', arguments: { isBlocking: false, questions: [] } }
+        } } })
+        const summary = toSessionSummary(session)
+        expect(summary.pendingRequestsCount).toBe(0)
+        expect(summary.pendingRequestKinds).toEqual([])
+        expect(summary.pendingRequests).toEqual([])
+        expect(summary.thinking).toBe(true)
+        expect(session.agentState?.requests?.optional).toBeDefined()
+    })
+
+    it('retains blocking and legacy questions and never hides an approval based on tool arguments', () => {
+        const session = makeSession({ agentState: { requests: {
+            optional: { tool: 'request_user_input', arguments: { isBlocking: false } },
+            legacy: { tool: 'request_user_input', arguments: {} },
+            malformed: { tool: 'request_user_input', arguments: { isBlocking: 'false' } },
+            permission: { tool: 'Bash', arguments: { isBlocking: false } }
+        } } })
+        const summary = toSessionSummary(session)
+        expect(summary.pendingRequestsCount).toBe(3)
+        expect(summary.pendingRequestKinds).toEqual(['permission', 'input'])
+        expect(summary.pendingRequests.map(request => request.id).sort()).toEqual(['legacy', 'malformed', 'permission'])
+    })
+})
+
 describe('getPendingRequestKinds', () => {
     it('classifies ask-user tools as input', () => {
         const kinds = getPendingRequestKinds(makeSession({
