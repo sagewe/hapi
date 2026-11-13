@@ -23,6 +23,7 @@ type GetMessageContext = SyncEngine['getMessageContext']
 
 function createApp(opts: {
     active?: boolean
+    denyAccess?: boolean
     sendMessage?: (sessionId: string, payload: unknown) => Promise<void>
     getMessagesPage?: GetMessagesPage
     getMessageContext?: GetMessageContext
@@ -67,7 +68,7 @@ function createApp(opts: {
     const getMessageContext = opts.getMessageContext ?? (() => null)
 
     const engine = {
-        resolveSessionAccess: () => ({
+        resolveSessionAccess: () => opts.denyAccess ? ({ ok: false, reason: 'access-denied' }) : ({
             ok: true,
             sessionId: 'session-1',
             session: { id: 'session-1', active: opts.active !== false }
@@ -227,6 +228,17 @@ describe('GET /api/sessions/:id/messages/:messageId/context', () => {
         expect(response.status).toBe(200)
         expect(calls).toEqual([{ sessionId: 'session-1', messageId: 'message-target' }])
         expect(await response.json()).toEqual(context)
+    })
+
+    it('rejects a foreign-session alias before invoking context lookup', async () => {
+        let lookedUp = false
+        const { app } = createApp({ denyAccess: true, getMessageContext: () => {
+            lookedUp = true
+            return null
+        } })
+        const response = await app.request('/api/sessions/foreign/messages/tool-call%3Asecret/context')
+        expect(response.status).toBe(403)
+        expect(lookedUp).toBe(false)
     })
 
     it('returns null when the target message no longer exists', async () => {

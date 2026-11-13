@@ -1217,6 +1217,8 @@ export default {
   'misc.typeAMessageWithMentions': 'Введите, что должен сделать агент, или @упомяните другую сессию для контекста или передачи',
   'misc.offline': 'офлайн',
   'misc.permissionRequired': 'требуется разрешение',
+  'misc.pendingRequests': 'Ожидают обработки: {count}',
+  'misc.moreQuestions': 'Ещё вопросов: {count}',
   'misc.online': 'онлайн',
   'misc.contextDetails': 'Сведения о контексте',
   'misc.contextCache': 'Кэш: {value}',

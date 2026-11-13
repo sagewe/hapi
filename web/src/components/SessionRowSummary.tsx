@@ -202,6 +202,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier={visualStatus.tier}
+                    data-session-pending-request-id={s.pendingRequests?.[0]?.id}
                     className="inline-flex shrink-0 items-center gap-1 text-[11px] font-normal leading-none text-[var(--app-badge-warning-text)]"
                 >
                     <span>{t(badgeKey)}</span>

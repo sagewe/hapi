@@ -94,7 +94,7 @@ export class OpencodePermissionHandler extends BasePermissionHandler<PermissionR
         this.addPendingRequest(request.id, toolName, toolInput, {
             resolve: () => {},
             reject: () => {}
-        });
+        }, request.toolCallId);
 
         logger.debug(`[Opencode] Permission request queued for ${toolName} (${request.id})`);
     }

@@ -308,6 +308,7 @@ export function HappyComposer(props: {
     allowSendWhenInactive?: boolean
     thinking?: boolean
     agentState?: AgentState | null
+    onPendingRequestClick?: (requestId: string) => void
     backgroundTaskCount?: number
     contextSize?: number
     contextCacheRead?: number
@@ -433,6 +434,7 @@ export function HappyComposer(props: {
         allowSendWhenInactive = false,
         thinking = false,
         agentState,
+        onPendingRequestClick,
         backgroundTaskCount,
         contextSize,
         contextCacheRead,
@@ -2344,6 +2346,7 @@ export function HappyComposer(props: {
                         active={active}
                         thinking={thinking}
                         agentState={agentState}
+                        onPendingRequestClick={onPendingRequestClick}
                         backgroundTaskCount={backgroundTaskCount}
                         contextSize={contextSize}
                         contextCacheRead={contextCacheRead}

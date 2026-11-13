@@ -564,6 +564,7 @@ function ToolCardInner(props: ToolCardProps) {
 
     return (
         <Card
+            data-hapi-source-message-id={`tool-call:${props.block.id}`}
             data-pending-request={permission?.status === 'pending' ? 'true' : undefined}
             className="overflow-hidden rounded-[20px] bg-[var(--app-tool-card-bg)] shadow-none"
         >

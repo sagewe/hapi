@@ -1347,6 +1347,8 @@ export default {
   'misc.typeAMessageWithMentions': '输入想让智能体做的事，或用 @ 提及另一个会话以提供上下文或移交',
   'misc.offline': 'offline',
   'misc.permissionRequired': '需要权限',
+  'misc.pendingRequests': '{count} 项待处理',
+  'misc.moreQuestions': '另有 {count} 个问题',
   'misc.online': 'online',
   'misc.contextDetails': '上下文浮窗',
   'misc.contextCache': '缓存：{value}',

@@ -421,6 +421,87 @@ describe('MessageService message pagination', () => {
         expect(makeService(store).getMessageContext(otherSession.id, target.id)).toBeNull()
     })
 
+    it('resolves a pending tool-call anchor to the stored message that contains it', () => {
+        const store = makeStore()
+        const session = makeSession(store, 'tool-call-context')
+        store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'before' } }, 'before')
+        const target = store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: [{
+                type: 'tool-call',
+                id: 'call-question',
+                name: 'request_user_input',
+                input: { questions: [{ id: 'choice', question: 'Pick one' }] },
+                description: null,
+                uuid: 'agent-message',
+                parentUUID: null,
+            }],
+        }, 'target')
+        store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'after' } }, 'after')
+
+        const context = makeService(store).getMessageContext(session.id, 'tool-call:call-question')
+
+        expect(context?.targetMessageId).toBe(target.id)
+        expect(context?.messages.map(message => message.id)).toContain(target.id)
+    })
+
+    it('resolves a Claude tool_use anchor to its stored message', () => {
+        const store = makeStore()
+        const session = makeSession(store, 'claude-tool-use-context')
+        store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'before' } }, 'before')
+        const target = store.messages.addMessage(session.id, {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'assistant',
+                    message: {
+                        content: [{
+                            type: 'tool_use',
+                            id: 'call-claude-question',
+                            name: 'AskUserQuestion',
+                            input: { questions: [{ id: 'choice', question: 'Pick one' }] }
+                        }]
+                    }
+                }
+            }
+        }, 'target')
+        store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'after' } }, 'after')
+
+        const context = makeService(store).getMessageContext(session.id, 'tool-call:call-claude-question')
+
+        expect(context?.targetMessageId).toBe(target.id)
+        expect(context?.messages.map(message => message.id)).toContain(target.id)
+    })
+    it('ignores forged tool ids nested in unrelated inputs/results and user content', () => {
+        const store = makeStore()
+        const session = makeSession(store, 'tool-call-shadow')
+        const target = store.messages.addMessage(session.id, { role: 'agent', content: {
+            type: AGENT_MESSAGE_PAYLOAD_TYPE,
+            data: { type: 'tool-call', callId: 'quoted:"[]', name: 'Bash', input: {} }
+        } }, 'real-target')
+        const fake = { type: 'tool_use', id: 'quoted:"[]' }
+        for (const content of [
+            { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'tool-call', callId: 'other', input: fake } } },
+            { role: 'agent', content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'tool-result', callId: 'other', output: fake } } },
+            { role: 'user', content: [fake] }
+        ]) store.messages.addMessage(session.id, content)
+        expect(makeService(store).getMessageContext(session.id, 'tool-call:quoted:"[]')?.targetMessageId).toBe(target.id)
+        expect(makeService(store).getMessageContext(session.id, 'tool-call:')).toBeNull()
+        expect(makeService(store).getMessageContext(session.id, 'tool-call:   ')).toBeNull()
+    })
+
+    it('does not resolve an alias belonging to another session or namespace', () => {
+        const store = makeStore()
+        const own = makeSession(store, 'tool-call-own')
+        const other = store.sessions.getOrCreateSession('tool-call-other', { path: '/tmp/other' }, null, 'other')
+        store.messages.addMessage(other.id, { role: 'agent', content: {
+            type: AGENT_MESSAGE_PAYLOAD_TYPE,
+            data: { type: 'tool-call', callId: 'same-call-id', name: 'Bash', input: {} }
+        } })
+        expect(makeService(store).getMessageContext(own.id, 'tool-call:same-call-id')).toBeNull()
+    })
+
     it('includes pending local messages without changing the context pagination cursor', () => {
         const store = makeStore()
         const session = makeSession(store, 'page-context-pending')

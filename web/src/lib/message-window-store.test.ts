@@ -13,6 +13,7 @@ import {
     activateMessageWindow,
     appendOptimisticMessage,
     clearMessageWindow,
+    cancelOlderMessageLoad,
     fetchOlderMessages,
     OLDER_LOAD_WINDOW_SIZE,
     getMessageWindowState,
@@ -2484,6 +2485,25 @@ describe('search-target message context', () => {
         })
     })
 
+    it('does not let an abandoned pending-context response replace a newer selection', async () => {
+        const id = sessionId('pending-context-last-selection')
+        const first = makeAgentMessage({ id: 'first', seq: 20, at: 20_000 })
+        const second = makeAgentMessage({ id: 'second', seq: 40, at: 40_000 })
+        let releaseFirst!: (value: MessageContextResponse) => void
+        const api = createApi(vi.fn(async () => latestResponse([])))
+        api.getMessageContext = vi.fn(async (_sessionId, messageId) => {
+            if (messageId === 'tool-call:first') return await new Promise<MessageContextResponse>(resolve => { releaseFirst = resolve })
+            return contextResponse([second], { targetMessageId: second.id, hasMore: false, nextBeforeAt: 40_000, nextBeforeSeq: 40, snapshotHeadAt: 40_000, snapshotHeadSeq: 40 })
+        })
+        const firstLoad = loadMessageContext(api, id, 'tool-call:first')
+        await vi.waitFor(() => expect(api.getMessageContext).toHaveBeenCalledWith(id, 'tool-call:first'))
+        cancelOlderMessageLoad(id)
+        await expect(loadMessageContext(api, id, 'tool-call:second')).resolves.toBe(true)
+        releaseFirst(contextResponse([first], { targetMessageId: first.id, hasMore: false, nextBeforeAt: 20_000, nextBeforeSeq: 20, snapshotHeadAt: 20_000, snapshotHeadSeq: 20 }))
+        await expect(firstLoad).resolves.toBe(false)
+        expect(getMessageWindowState(id).messages.map(message => message.id)).toEqual(['second'])
+    })
+
     it('preserves acknowledgement and SSE updates received during a context request', async () => {
         const id = sessionId('search-context-concurrent-updates')
         const queued = makeUserMessage({
@@ -2526,6 +2546,26 @@ describe('search-target message context', () => {
             expect.objectContaining({ id: concurrent.id }),
             expect.objectContaining({ id: target.id })
         ]))
+    })
+
+    it('accepts a resolved context target when the request uses a tool-call alias', async () => {
+        const id = sessionId('search-context-tool-alias')
+        const target = makeAgentMessage({ id: 'raw-target', seq: 40, at: 40_000 })
+        const getMessageContext = vi.fn(async () => contextResponse([target], {
+            epoch: 7,
+            hasMore: false,
+            nextBeforeAt: 40_000,
+            nextBeforeSeq: 40,
+            snapshotHeadAt: 40_000,
+            snapshotHeadSeq: 40,
+            targetMessageId: target.id
+        }))
+        const api = createApi(vi.fn(async () => latestResponse([])))
+        api.getMessageContext = getMessageContext
+
+        await expect(loadMessageContext(api, id, 'tool-call:call-1')).resolves.toBe(true)
+        expect(getMessageContext).toHaveBeenCalledWith(id, 'tool-call:call-1')
+        expect(getMessageWindowState(id).messages).toContainEqual(expect.objectContaining({ id: target.id }))
     })
 
     it('does not persist a stale latest-reset boundary for historical contexts', async () => {

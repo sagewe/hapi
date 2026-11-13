@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { SessionListScrollAnchor } from './SessionListScrollAnchor'
 import type { SessionContentSearchResponse, SessionSummary } from '@/types/api'
@@ -1006,7 +1006,7 @@ function CollapsiblePanel(props: { open: boolean; children: ReactNode }) {
 
 const SessionItem = memo(function SessionItem(props: {
     session: SessionSummary
-    onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string) => void
+    onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string, pendingRequestId?: string) => void
     showPath?: boolean
     api: ApiClient | null
     titleSuggestionAvailable?: boolean
@@ -1053,6 +1053,7 @@ const SessionItem = memo(function SessionItem(props: {
     const [deleteOpen, setDeleteOpen] = useState(false)
     const [forkOpen, setForkOpen] = useState(false)
     const [forkPending, setForkPending] = useState(false)
+    const pendingRequestPressedRef = useRef(false)
     const {
         status: cursorChatStoreStatus,
         isApplicable: cursorChatStoreApplicable,
@@ -1183,12 +1184,27 @@ const SessionItem = memo(function SessionItem(props: {
         },
         onClick: () => {
             if (!menuOpen) {
-                onSelect(s.id, targetMessageId, targetMessageQuery)
+                const pendingRequestId = pendingRequestPressedRef.current
+                    ? s.pendingRequests?.[0]?.id
+                    : undefined
+                pendingRequestPressedRef.current = false
+                if (pendingRequestId) {
+                    onSelect(s.id, undefined, undefined, pendingRequestId)
+                } else {
+                    onSelect(s.id, targetMessageId, targetMessageQuery)
+                }
             }
         },
         threshold: 500
     })
 
+    const handleRowKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+        if (event.target !== event.currentTarget || !selected) return
+        const pendingRequestId = s.pendingRequests?.[0]?.id
+        if (!pendingRequestId || (event.key !== 'Enter' && event.key !== ' ')) return
+        event.preventDefault()
+        onSelect(s.id, undefined, undefined, pendingRequestId)
+    }
     const sessionName = getSessionTitle(s)
     const attention = useMemo(
         () => showDetailedStatus
@@ -1216,6 +1232,11 @@ const SessionItem = memo(function SessionItem(props: {
                 <button
                     type="button"
                     {...longPressHandlers}
+                    onKeyDown={handleRowKeyDown}
+                    onPointerDownCapture={(event) => {
+                        pendingRequestPressedRef.current = event.target instanceof Element
+                            && event.target.closest('[data-session-pending-request-id]') !== null
+                    }}
                     data-session-scroll-anchor
                     className={`session-list-item group/session-row relative flex flex-col gap-1 ${hierarchyConnector ? 'py-1.5 min-h-11' : 'py-2'} pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
                     style={{
@@ -1408,7 +1429,7 @@ function PullRefreshIcon(props: { rotation: number }) {
 
 export function SessionList(props: {
     sessions: SessionSummary[]
-    onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string) => void
+    onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string, pendingRequestId?: string) => void
     onNewSession: () => void
     onNewSessionInDirectory?: (args: { machineId: string | null; directory: string }) => void
     onBrowse?: () => void

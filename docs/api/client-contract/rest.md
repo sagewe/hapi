@@ -113,6 +113,14 @@ Source: `hub/src/web/routes/messages.ts`; schemas `MessagesQuerySchema`, `SendMe
 
 The hub stamps `sentFrom: 'webapp'` on REST-sent messages server-side; the request body has no such field.
 
+Message context accepts `tool-call:<toolCallId>` as an alternative target id
+for pending-request navigation. The response `targetMessageId` is the actual
+stored message id, which can differ from the requested alias. The route first
+authorizes the session/namespace; matching is restricted to actual agent
+tool-call envelopes, not user text or nested tool input/results. Alias lookup
+currently scans that session's history on demand; the returned context window
+remains bounded. No cross-session search or new persistent index is added.
+
 ### Permissions
 
 Source: `hub/src/web/routes/permissions.ts`. Pending requests are **not messages**: they live in `session.agentState.requests` (keyed by request id) and move to `agentState.completedRequests` when resolved — schemas `AgentStateRequestSchema` / `AgentStateCompletedRequestSchema` in `shared/src/schemas.ts`.

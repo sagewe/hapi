@@ -1349,6 +1349,8 @@ export default {
   'misc.typeAMessageWithMentions': 'Type what you want the agent to do, or @mention another session for context or handoff',
   'misc.offline': 'offline',
   'misc.permissionRequired': 'permission required',
+  'misc.pendingRequests': '{count} pending requests',
+  'misc.moreQuestions': 'More questions: {count}',
   'misc.online': 'online',
   'misc.contextDetails': 'Context popover',
   'misc.contextCache': 'Cache: {value}',

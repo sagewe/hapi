@@ -58,6 +58,7 @@ See `src/router.tsx` for route definitions.
 - Session title from name, summary, or path.
 - Todo progress display.
 - Pending permission request count.
+- Pending-request status and session-row controls distinguish questions from approvals and locate the correlated inline card, including optional questions.
 - Agent name and model display.
 - Metadata search with relevance ranking, wildcard matching, and date/unread/machine filters.
 - Stable user-input ordering across sessions and machine/project groups; agent output and status updates do not reorder ordinary rows.
@@ -234,3 +235,13 @@ bun run build:web -- --base /<repo>/
 4. Open the static site, click the top-right Hub button on the login screen, and enter the hapi hub origin.
 
 Clear the hub override in the same dialog to return to same-origin behavior.
+
+### Pending request navigation
+
+The existing pending status opens a selector when several blocking requests are
+waiting. Selection uses the request map key for replies and its `toolCallId`
+for navigation. A request outside the loaded window fetches bounded message
+context before scrolling; live-only requests fall back to their inline card.
+Optional questions stay inline without making the session look blocked. New
+targets cancel older context loads, and the selected card briefly keeps its
+scroll position while the message window renders.
