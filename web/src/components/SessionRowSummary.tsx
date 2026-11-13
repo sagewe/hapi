@@ -3,7 +3,7 @@ import type { SessionSummary } from '@/types/api'
 import { AgentFlavorIcon } from '@/components/AgentFlavorIcon'
 import { InfoIcon, ScheduleIcon } from '@/components/icons'
 import { HoverTooltip, SESSION_ROW_TOOLTIP_FOCUS_CLASS, useSessionRowTooltipIds } from '@/components/HoverTooltip'
-import { getAttentionLabel, SessionAttentionIndicator, SessionRequestIcon } from '@/components/SessionAttentionIndicator'
+import { getAttentionLabel, SessionAttentionIndicator } from '@/components/SessionAttentionIndicator'
 import { classifySessionAttention, sessionIsUnread } from '@/lib/sessionAttention'
 import { classifySessionRowVisualStatus } from '@/lib/sessionVisualStatus'
 import { getSessionLastSeenAt, getSessionManualUnreadAt } from '@/lib/sessionLastSeen'
@@ -174,40 +174,22 @@ export function SessionRowSummary(props: {
             ? (visualStatus.tier === 'reply' ? 'input' : 'permission')
             : null
 
-    const presenceColorClass = isAttentionTier
-        ? 'bg-amber-500'
-        : isBackgroundOnly
-            ? 'bg-sky-400 animate-pulse'
-            : 'bg-[var(--app-badge-success-text)]'
-
     const agentIcon = (
         <span className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center">
-            {isRunning ? (
-                <span
-                    data-testid="session-running-ring"
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -inset-1 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 border-r-emerald-500/75 animate-spin"
-                />
-            ) : isAttentionTier ? (
-                <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -inset-0.5 rounded-full ring-1 ring-amber-500/55"
-                />
-            ) : null}
             <AgentFlavorIcon
                 flavor={s.metadata?.flavor}
                 className={`h-6 w-6 transition-opacity ${isDisconnected ? 'opacity-50' : ''}`}
             />
-            {s.active ? (
+            {s.active && visualStatus.tier === 'online' ? (
                 <span
                     data-testid="session-presence"
-                    className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--app-bg)] ${presenceColorClass} ${isRunning ? 'animate-pulse' : ''}`}
+                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-[var(--app-bg)] bg-[var(--app-badge-success-text)]"
                 />
             ) : null}
         </span>
     )
 
-    const rawStatusPill = (() => {
+    const rawStatusLabel = (() => {
         if (isAttentionTier && requestKind) {
             const badgeKey = visualStatus.tier === 'approval'
                 ? 'session.badge.approval'
@@ -218,12 +200,8 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier={visualStatus.tier}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/35 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]"
+                    className="inline-flex shrink-0 items-center gap-1 text-[11px] font-normal leading-none text-[var(--app-badge-warning-text)]"
                 >
-                    <SessionRequestIcon
-                        kind={requestKind}
-                        label={attentionLabel ?? t(badgeKey)}
-                    />
                     <span>{t(badgeKey)}</span>
                     {visualStatus.count > 1 ? (
                         <span className="tabular-nums">{visualStatus.count}</span>
@@ -236,12 +214,8 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="running"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
+                    className="inline-flex shrink-0 items-center gap-1 text-[11px] font-normal leading-none text-[var(--app-hint)]"
                 >
-                    <span
-                        aria-hidden="true"
-                        className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
-                    />
                     <span>{t('session.badge.running')}</span>
                 </span>
             )
@@ -251,7 +225,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="background"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-400/30 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
+                    className="inline-flex shrink-0 items-center gap-1 text-[11px] font-normal leading-none text-[var(--app-hint)]"
                 >
                     <span>{t('session.badge.background')}</span>
                     <span className="tabular-nums">{visualStatus.count}</span>
@@ -263,7 +237,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="archived"
-                    className="inline-flex shrink-0 items-center rounded-md bg-[var(--app-subtle-bg)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
+                    className="inline-flex shrink-0 items-center text-[11px] font-normal leading-none text-[var(--app-hint)]"
                 >
                     {t('session.badge.archived')}
                 </span>
@@ -272,7 +246,7 @@ export function SessionRowSummary(props: {
         return null
     })()
 
-    const statusPillNode = rawStatusPill && nestedTooltips && attentionId && (
+    const statusLabelNode = rawStatusLabel && nestedTooltips && attentionId && (
         (urgentAttention && isAttentionTier) || (attention?.kind === 'background' && isBackgroundOnly)
     ) ? (
         <SessionAttentionIndicator
@@ -280,9 +254,9 @@ export function SessionRowSummary(props: {
             summary={s}
             label={attentionLabel ?? ''}
             tooltipId={attentionId}
-            target={rawStatusPill}
+            target={rawStatusLabel}
         />
-    ) : rawStatusPill
+    ) : rawStatusLabel
 
     const parentHintLabel = parentHint?.trim() || null
     const parentHintTooltip = parentHintLabel
@@ -375,7 +349,7 @@ export function SessionRowSummary(props: {
                         ) : null}
                     </div>
                 ) : null}
-                {(secondaryText !== null || parentHintLabel !== null || statusPillNode !== null) ? (
+                {(secondaryText !== null || parentHintLabel !== null || statusLabelNode !== null) ? (
                     <div className="flex min-w-0 items-center justify-between gap-2">
                         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-xs text-[var(--app-hint)]">
                             {parentHintLabel ? (
@@ -394,7 +368,7 @@ export function SessionRowSummary(props: {
                                 </span>
                             ) : null}
                         </div>
-                        {statusPillNode}
+                        {statusLabelNode}
                     </div>
                 ) : null}
             </div>

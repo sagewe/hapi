@@ -181,6 +181,7 @@ final class HomeFilterPresentationTests: XCTestCase {
             row.updatedAt = now - [0, 59 * 60_000, 2 * 3_600_000, 4 * 3_600_000, 2 * 86_400_000, 330 * 86_400_000][sample]
             row.pendingRequestsCount = [1, 2, 7, 0, 0, 1][sample]
             row.pendingRequestKinds = sample == 1 ? [.permission] : (sample == 2 ? [.input, .permission] : [.input])
+            row.backgroundTaskCount = sample == 4 ? 2 : 0
             row.thinking = sample == 0 || sample == 3
             row.active = sample != 5
             if sample == 0 || sample == 3 || sample == 4 {
@@ -221,6 +222,46 @@ final class HomeFilterPresentationTests: XCTestCase {
             XCTAssertLessThanOrEqual(filtered.frame.width, width + 1)
             XCTAssertEqual(model.rows.count, 3)
             try capture(window, name: "\(name)-filtered")
+        }
+    }
+
+    func testQuietStatusComponentSpecimens() async throws {
+        let sessions = HomeFilterTestSessions((0..<4).map { index in
+            var row = HomeFilterTestData.summary("quiet-\(index)", machine: "mac")
+            row.metadata?.name = ["对齐 HAPI Codex 与 Antigra 体验", "家庭模型网关配置", "整理家庭服务文档", "检查部署记录"][index]
+            row.updatedAt = Int(Date.now.timeIntervalSince1970 * 1000) - index * 60_000
+            row.pendingRequestsCount = index == 0 ? 1 : 0
+            row.pendingRequestKinds = index == 0 ? [.input] : []
+            row.thinking = index == 1
+            row.backgroundTaskCount = index == 2 ? 2 : 0
+            return row
+        })
+        let model = HomeFilterTestData.model(sessions: sessions)
+        XCTAssertEqual(model.statusSummaryCounts, SessionStatusSummaryCounts(attention: 1, running: 1, background: 1))
+        for (name, theme) in [("quiet-light", HapiTheme.light), ("quiet-dark", HapiTheme.dark)] {
+            let specimen = VStack(alignment: .leading, spacing: 0) {
+                SessionStatusSummaryBar(counts: model.statusSummaryCounts, activeLens: nil, onToggle: { _ in })
+                ForEach(model.rows) { row in
+                    SessionRowView(row: row)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                    Divider().padding(.leading, 58)
+                }
+            }
+            .frame(width: 390)
+            .padding(.vertical, 8)
+            .background(theme.background)
+            .hapiTypography()
+            .hapiTheme(theme)
+            .environment(\.locale, Locale(identifier: "zh-Hans"))
+            .environment(\.colorScheme, theme.isDark ? .dark : .light)
+            let window = try makeWindow(
+                specimen.frame(maxHeight: .infinity, alignment: .top).background(theme.background),
+                width: 390, height: 420
+            )
+            defer { window.isHidden = true }
+            try await settle()
+            try capture(window, name: name)
         }
     }
 
@@ -268,10 +309,10 @@ final class HomeFilterPresentationTests: XCTestCase {
         }
     }
 
-    private func makeWindow<V: View>(_ view: V, width: CGFloat) throws -> UIWindow {
+    private func makeWindow<V: View>(_ view: V, width: CGFloat, height: CGFloat = 874) throws -> UIWindow {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: width, height: 874)
+        window.frame = CGRect(x: 0, y: 0, width: width, height: height)
         window.rootViewController = UIHostingController(rootView: view)
         window.makeKeyAndVisible()
         window.layoutIfNeeded()

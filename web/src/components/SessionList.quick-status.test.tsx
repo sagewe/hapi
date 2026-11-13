@@ -104,8 +104,8 @@ describe('SessionList quick status summary bar and left status stripes', () => {
         expect(screen.getByTestId('session-quick-status-running')).toHaveTextContent('Running1')
         expect(screen.getByTestId('session-quick-status-background')).toHaveTextContent('Background1')
 
-        // 3 active status stripes (approval, running, background); connected-idle has none
-        expect(container.querySelectorAll('[data-testid="session-status-stripe"]')).toHaveLength(3)
+        // State is conveyed by text rather than repeating it in colored row stripes.
+        expect(container.querySelectorAll('[data-testid="session-status-stripe"]')).toHaveLength(0)
 
         // Preserves existing list order when unfiltered
         const initialTitles = Array.from(container.querySelectorAll('[data-session-scroll-anchor] [title]'))

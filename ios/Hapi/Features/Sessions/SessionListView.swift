@@ -11,10 +11,10 @@ import SwiftUI
 ///   home owns the filter menu and connection notice;
 /// - pinned section first (the sort already puts globalPinned/pinned rows on
 ///   top; a header makes the boundary visible);
-/// - per row: a two-line-tall flavor icon whose presence badge marks
-///   connected sessions (pulsing while running); title with trailing
+/// - per row: a two-line-tall flavor icon with a small presence dot for
+///   connected-idle sessions; title with trailing
 ///   relative `updatedAt` (unread: semibold title + accent time, no dot so
-///   the badge stays the only dot); a quiet second line has project left and an attention symbol right. No preview, task progress,
+///   the presence marker stays the only dot); a quiet second line has project left and quiet status text right. No preview, task progress,
 ///   machine/path details or spinners. Disconnected rows are not dimmed;
 /// - swipe actions: leading pin/mark-read, trailing archive or delete/reopen;
 /// - long-press context menu → rename, pin (none/project/global), then
@@ -292,43 +292,11 @@ struct SessionListView: View {
 
     @ViewBuilder
     private func rowBackground(for row: SessionRowUI, isSelected: Bool) -> some View {
-        let indent = CGFloat(row.hierarchy?.visualDepth ?? 0) * 12
-        #if targetEnvironment(macCatalyst)
         if isSelected {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.accentColor.opacity(0.2))
-                .padding(.leading, indent)
+                .fill(Color.accentColor.opacity(0.12))
+                .padding(.leading, CGFloat(row.hierarchy?.visualDepth ?? 0) * 12)
         }
-        #else
-        let backgroundLead = indent > 0 ? indent + 2 : 0
-        let stripeColor = SessionStatusPalette.stripeColor(for: row.status, theme: theme)
-        let tintFill = SessionStatusPalette.rowTint(for: row.status, theme: theme)
-        if isSelected {
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.2))
-                if let stripeColor {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(stripeColor)
-                        .frame(width: 3)
-                        .padding(.vertical, 6)
-                        .padding(.leading, 4)
-                }
-            }
-            .padding(.leading, backgroundLead)
-        } else if let stripeColor {
-            ZStack(alignment: .leading) {
-                Rectangle()
-                    .fill(tintFill ?? .clear)
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(stripeColor)
-                    .frame(width: 3)
-                    .padding(.vertical, 6)
-                    .padding(.leading, 4)
-            }
-            .padding(.leading, backgroundLead)
-        }
-        #endif
     }
 
     /// Pointer rows on a Mac sidebar are denser than touch rows.
@@ -658,66 +626,12 @@ enum SessionStatusPalette {
         }
     }
 
-    static func lensForeground(for lens: SessionQuickStatusLens, theme: HapiTheme) -> Color {
-        switch lens {
-        case .attention: return attentionForeground(theme: theme)
-        case .running: return runningForeground(theme: theme)
-        case .background: return backgroundForeground(theme: theme)
-        }
-    }
 
-    static func stripeColor(for status: SessionRowStatus?, theme: HapiTheme) -> Color? {
-        guard let status else { return nil }
-        return foreground(for: status, theme: theme)
-    }
-
-    static func rowTint(for status: SessionRowStatus?, theme: HapiTheme) -> Color? {
-        guard let status else { return nil }
-        let base = foreground(for: status, theme: theme)
-        switch status {
-        case .needsReply, .needsApproval, .needsAttention:
-            return base.opacity(theme.isDark ? 0.085 : 0.055)
-        case .running:
-            return base.opacity(theme.isDark ? 0.07 : 0.045)
-        case .background:
-            return base.opacity(theme.isDark ? 0.06 : 0.035)
-        }
-    }
 }
 
-/// GPU-composited orbiting arc around the agent icon while a session turn runs.
-struct SessionOrbitingRing: View {
-    let color: Color
-    var lineWidth: CGFloat = 2
-    @State private var spinning = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(color.opacity(0.18), lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0.08, to: 0.76)
-                .stroke(
-                    AngularGradient(
-                        colors: [color.opacity(0.05), color.opacity(0.55), color],
-                        center: .center
-                    ),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(spinning ? 360 : 0))
-        }
-        .onAppear {
-            guard !spinning else { return }
-            withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
-                spinning = true
-            }
-        }
-    }
-}
-
-/// Option-B top quick status summary bar: non-reordering pills that appear only
-/// when sessions need action or are actively running.
+/// Lightweight text filters; only selection adds an underline.
 struct SessionStatusSummaryBar: View {
+    @ScaledMetric(relativeTo: .footnote) private var controlHeight: CGFloat = 44
     @Environment(\.hapiTheme) private var theme
     let counts: SessionStatusSummaryCounts
     let activeLens: SessionQuickStatusLens?
@@ -725,88 +639,56 @@ struct SessionStatusSummaryBar: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 20) {
                 if counts.attention > 0 || activeLens == .attention {
-                    pill(
+                    filterButton(
                         lens: .attention,
                         count: counts.attention,
-                        symbol: "hand.raised.fill",
                         label: LocalizedStringKey("Needs action")
                     )
                 }
                 if counts.running > 0 || activeLens == .running {
-                    pill(
+                    filterButton(
                         lens: .running,
                         count: counts.running,
-                        symbol: "bolt.fill",
                         label: LocalizedStringKey("Running")
                     )
                 }
                 if counts.background > 0 || activeLens == .background {
-                    pill(
+                    filterButton(
                         lens: .background,
                         count: counts.background,
-                        symbol: "arrow.triangle.2.circlepath",
                         label: LocalizedStringKey("Background")
                     )
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 6)
         }
-        .background(.bar)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.divider.opacity(0.7))
-                .frame(height: 0.5)
-        }
+        .frame(height: max(44, controlHeight))
+        .background(theme.background)
         .accessibilityIdentifier("home.status-summary-bar")
     }
 
-    private func pill(
+    private func filterButton(
         lens: SessionQuickStatusLens,
         count: Int,
-        symbol: String,
         label: LocalizedStringKey
     ) -> some View {
         let selected = activeLens == lens
-        let color = SessionStatusPalette.lensForeground(for: lens, theme: theme)
         return Button {
             onToggle(lens)
         } label: {
             HStack(spacing: 5) {
-                if lens == .running && count > 0 {
-                    ZStack {
-                        SessionOrbitingRing(color: selected ? .white : color, lineWidth: 1.5)
-                            .frame(width: 11, height: 11)
-                    }
-                } else {
-                    Image(systemName: symbol)
-                        .font(.caption2.weight(.bold))
-                }
-                Text(verbatim: "\(count)")
-                    .font(.caption.weight(.bold))
-                    .monospacedDigit()
                 Text(label)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                if selected {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .opacity(0.85)
-                }
+                    .underline(selected)
+                Text(verbatim: "\(count)")
+                    .monospacedDigit()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .foregroundStyle(selected ? Color.white : color)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(selected ? color : color.opacity(theme.isDark ? 0.16 : 0.12))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(color.opacity(selected ? 0 : 0.32), lineWidth: 1)
-            )
+            .font(.footnote.weight(selected ? .medium : .regular))
+            .foregroundStyle(selected ? theme.textPrimary : theme.textSecondary)
+            .lineLimit(1)
+            .frame(minHeight: max(44, controlHeight))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -840,20 +722,6 @@ struct SessionRowView: View {
         .padding(.leading, 11)
         .padding(.trailing, 8)
         .padding(.vertical, 6)
-        .background {
-            let tint = SessionStatusPalette.rowTint(for: row.status, theme: theme)
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.22) : (tint ?? Color.clear))
-        }
-        .overlay(alignment: .leading) {
-            if let stripe = SessionStatusPalette.stripeColor(for: row.status, theme: theme) {
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(stripe)
-                    .frame(width: 3)
-                    .padding(.vertical, 5)
-                    .padding(.leading, 3)
-            }
-        }
         #endif
         // Separators start under the text column, as in Mail and Messages.
         .alignmentGuide(.listRowSeparatorLeading) { _ in iconSize + iconSpacing }
@@ -862,66 +730,21 @@ struct SessionRowView: View {
         .accessibilityIdentifier("home.session.\(row.id)")
     }
 
-    /// Five-tier presence treatment:
-    /// - running: GPU orbiting ring + lightning badge
-    /// - needs action: amber halo + attention dot
-    /// - background: sky badge
-    /// - connected idle: quiet static green dot
-    /// - disconnected: gently softened icon without badge
+    /// Attention is expressed once, in the status text beside the project.
     private var agentIcon: some View {
-        ZStack {
-            if row.status == .running {
-                SessionOrbitingRing(
-                    color: SessionStatusPalette.runningForeground(theme: theme),
-                    lineWidth: 2
-                )
-                .frame(width: iconSize + 4, height: iconSize + 4)
-            } else if let status = row.status, status.isAttention {
-                Circle()
-                    .strokeBorder(
-                        SessionStatusPalette.attentionForeground(theme: theme).opacity(0.55),
-                        lineWidth: 1.75
-                    )
-                    .frame(width: iconSize + 3, height: iconSize + 3)
+        AgentFlavorIconView(flavor: row.flavor, size: iconSize * 0.8)
+            .opacity(isDisconnectedIdle ? 0.48 : 1.0)
+            .frame(width: iconSize, height: iconSize)
+            .overlay(alignment: .bottomTrailing) {
+                if row.status == nil && row.summary.active {
+                    connectedIdleBadge
+                }
             }
-            AgentFlavorIconView(flavor: row.flavor, size: iconSize * 0.8)
-                .opacity(isDisconnectedIdle ? 0.48 : 1.0)
-        }
-        .frame(width: iconSize, height: iconSize)
-        .overlay(alignment: .bottomTrailing) {
-            if let status = row.status {
-                statusCornerBadge(for: status)
-            } else if row.summary.active {
-                connectedIdleBadge
-            }
-        }
-    }
-
-    private func statusCornerBadge(for status: SessionRowStatus) -> some View {
-        let color = SessionStatusPalette.foreground(for: status, theme: theme)
-        let symbol: String = {
-            switch status {
-            case .running: return "bolt.circle.fill"
-            case .needsApproval, .needsReply, .needsAttention: return "exclamationmark.circle.fill"
-            case .background: return "circle.fill"
-            }
-        }()
-        let isBackground: Bool = {
-            if case .background = status { return true }
-            return false
-        }()
-        return Image(systemName: symbol)
-            .font(.system(size: isBackground ? iconSize * 0.3 : iconSize * 0.36))
-            .foregroundStyle(color)
-            .padding(1.5)
-            .background(Circle().fill(theme.background))
-            .offset(x: 2, y: 2)
-            .accessibilityHidden(true)
     }
 
     private var connectedIdleBadge: some View {
         Image(systemName: "circle.fill")
-            .font(.system(size: iconSize * 0.3))
+            .font(.system(size: iconSize * 0.2))
             .foregroundStyle(theme.success)
             .padding(2)
             .background(Circle().fill(theme.background))
@@ -995,7 +818,7 @@ struct SessionRowView: View {
             }
             Spacer(minLength: 6)
             if let status = row.status {
-                statusPill(for: status)
+                statusText(for: status)
             } else if row.isArchived {
                 archivedPill
             }
@@ -1004,27 +827,18 @@ struct SessionRowView: View {
         .foregroundStyle(theme.textSecondary)
     }
 
-    private func statusPill(for status: SessionRowStatus) -> some View {
-        let color = SessionStatusPalette.foreground(for: status, theme: theme)
-        return HStack(spacing: 3.5) {
-            if let symbol = status.symbolName {
-                Image(systemName: symbol)
-                    .font(.system(size: statusSlotSize * 0.58, weight: .bold))
-            }
+    private func statusText(for status: SessionRowStatus) -> some View {
+        HStack(spacing: 4) {
             Text(LocalizedStringKey(status.titleKey))
-                .font(.caption2.weight(.semibold))
                 .lineLimit(1)
             if let count = status.count, (status.isAttention ? count > 1 : count > 0) {
                 Text(verbatim: "\(count)")
-                    .font(.caption2.weight(.bold))
                     .monospacedDigit()
             }
         }
-        .foregroundStyle(color)
-        .padding(.horizontal, 6)
+        .font(.caption2)
+        .foregroundStyle(status.isAttention ? SessionStatusPalette.attentionForeground(theme: theme) : theme.textSecondary)
         .frame(height: statusSlotSize)
-        .background(color.opacity(theme.isDark ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(color.opacity(0.28), lineWidth: 0.75))
         .fixedSize()
         .layoutPriority(1)
         .accessibilityElement(children: .ignore)
@@ -1034,11 +848,9 @@ struct SessionRowView: View {
 
     private var archivedPill: some View {
         Text("Archived")
-            .font(.caption2.weight(.medium))
+            .font(.caption2)
             .foregroundStyle(theme.textSecondary)
-            .padding(.horizontal, 6)
             .frame(height: statusSlotSize)
-            .background(theme.textSecondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .fixedSize()
             .layoutPriority(1)
             .accessibilityLabel(Text("Archived"))

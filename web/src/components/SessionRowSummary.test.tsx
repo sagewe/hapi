@@ -49,10 +49,10 @@ describe('SessionRowSummary background status', () => {
         localStorage.clear()
     })
 
-    it('renders explicit 5-tier status pills and orbiting ring while keeping connected-idle quiet', () => {
+    it('renders status text without duplicate avatar signals while keeping connected-idle quiet', () => {
         const background = renderSummary(false).container
         const backgroundBadge = background.querySelector('[data-testid="session-presence"]')
-        expect(backgroundBadge).toHaveClass('bg-sky-400', 'animate-pulse')
+        expect(backgroundBadge).toBeNull()
         expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'background')
         expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Background2')
         cleanup()
@@ -62,9 +62,8 @@ describe('SessionRowSummary background status', () => {
                 <SessionRowSummary session={makeSummary({ thinking: true, backgroundTaskCount: 0 })} />
             </I18nProvider>
         ).container
-        expect(thinking.querySelector('[data-testid="session-running-ring"]')).toBeInTheDocument()
-        expect(thinking.querySelector('[data-testid="session-presence"]'))
-            .toHaveClass('bg-[var(--app-badge-success-text)]', 'animate-pulse')
+        expect(thinking.querySelector('[data-testid="session-running-ring"]')).toBeNull()
+        expect(thinking.querySelector('[data-testid="session-presence"]')).toBeNull()
         expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'running')
         expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Running')
         cleanup()
@@ -182,7 +181,7 @@ describe('SessionRowSummary background status', () => {
         expectUnread()
     })
 
-    it('shows the unread dot separately from the pulsing presence badge', () => {
+    it('keeps unread separate from running status text', () => {
         const session = makeSummary({
             id: 'selected-thinking-unread',
             thinking: true,
@@ -204,8 +203,8 @@ describe('SessionRowSummary background status', () => {
 
         expectUnread()
         expect(container.querySelector('[data-testid="session-unread"]')).toBeInTheDocument()
-        expect(container.querySelector('[data-testid="session-running-ring"]')).toBeInTheDocument()
-        expect(container.querySelector('[data-testid="session-presence"]')).toHaveClass('animate-pulse')
+        expect(container.querySelector('[data-testid="session-running-ring"]')).toBeNull()
+        expect(container.querySelector('[data-testid="session-presence"]')).toBeNull()
     })
 
     it('shows unseen output from a running session', () => {
@@ -219,7 +218,7 @@ describe('SessionRowSummary background status', () => {
         )
 
         expectUnread()
-        expect(container.querySelector('[data-testid="session-presence"]')).toHaveClass('bg-sky-400', 'animate-pulse')
+        expect(container.querySelector('[data-testid="session-presence"]')).toBeNull()
     })
 
     it('shows and clears the unread dot in standard session rows', () => {
@@ -231,7 +230,7 @@ describe('SessionRowSummary background status', () => {
         expect(screen.queryByTestId('session-unread')).toBeNull()
     })
 
-    it('shows pending requests as an amber status pill with symbol and tooltip', () => {
+    it('shows pending requests as quiet text with the detailed tooltip retained', () => {
         const { container } = render(
             <I18nProvider>
                 <SessionRowSummary
@@ -247,7 +246,7 @@ describe('SessionRowSummary background status', () => {
         )
 
         expect(screen.getByRole('tooltip', { hidden: true })).toHaveTextContent('Bash')
-        expect(container.querySelector('.text-\\[var\\(--app-badge-warning-text\\)\\] svg')).not.toBeNull()
+        expect(container.querySelector('.text-\\[var\\(--app-badge-warning-text\\)\\] svg')).toBeNull()
         expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'approval')
         expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Needs approval')
     })

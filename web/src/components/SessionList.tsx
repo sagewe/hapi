@@ -21,7 +21,7 @@ import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { ArchiveSessionDialog } from '@/components/ArchiveSessionDialog'
 import { DeleteSessionDialog } from '@/components/DeleteSessionDialog'
-import { ArchiveIcon, CheckIcon, CopyIcon, HandIcon, InfoIcon, LoaderIcon, MarkAllReadIcon, RefreshIcon } from '@/components/icons'
+import { ArchiveIcon, CheckIcon, CopyIcon, InfoIcon, LoaderIcon, MarkAllReadIcon } from '@/components/icons'
 
 function PinnedSectionIcon(props: { className?: string }) {
     return (
@@ -126,7 +126,7 @@ import { useSessionListMachineFilter } from '@/hooks/useSessionListMachineFilter
 import { useTransientScrollbar } from '@/hooks/useTransientScrollbar'
 import { useCursorChatStoreStatus } from '@/hooks/queries/useCursorChatStoreStatus'
 import { SessionRowSummary } from '@/components/SessionRowSummary'
-import { classifySessionRowVisualStatus, getSessionRowQuickLens, type SessionQuickStatusLens } from '@/lib/sessionVisualStatus'
+import { getSessionRowQuickLens, type SessionQuickStatusLens } from '@/lib/sessionVisualStatus'
 import { Spinner } from '@/components/Spinner'
 import { transferComposerDraftThenNavigate } from '@/lib/composer-draft-transfer'
 import { useToast } from '@/lib/toast-context'
@@ -1252,26 +1252,7 @@ const SessionItem = memo(function SessionItem(props: {
         Boolean(attention),
         hasScheduleTooltip
     )
-    const visualStatus = classifySessionRowVisualStatus(s)
-    const isAttentionRow = visualStatus.tier === 'approval' || visualStatus.tier === 'reply' || visualStatus.tier === 'attention'
-    const isRunningRow = visualStatus.tier === 'running'
-    const isBackgroundRow = visualStatus.tier === 'background'
-    const stripeClass = isAttentionRow
-        ? 'bg-amber-500'
-        : isRunningRow
-            ? 'bg-emerald-500'
-            : isBackgroundRow
-                ? 'bg-sky-400'
-                : null
-    const rowSurfaceClass = selected
-        ? 'bg-[var(--app-secondary-bg)]'
-        : isAttentionRow
-            ? 'bg-amber-500/[0.06] hover:bg-amber-500/[0.1]'
-            : isRunningRow
-                ? 'bg-emerald-500/[0.05] hover:bg-emerald-500/[0.09]'
-                : isBackgroundRow
-                    ? 'bg-sky-500/[0.04] hover:bg-sky-500/[0.08]'
-                    : ''
+    const rowSurfaceClass = selected ? 'bg-[var(--app-secondary-bg)]' : ''
     const indentPx = hierarchyConnector ? hierarchyConnector.visualDepth * 12 : 0
     return (
         <>
@@ -1286,7 +1267,7 @@ const SessionItem = memo(function SessionItem(props: {
                     type="button"
                     {...longPressHandlers}
                     data-session-scroll-anchor
-                    className={`session-list-item group/session-row relative flex flex-col gap-1 py-2 ${stripeClass ? 'pl-3.5' : 'pl-2.5'} pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
+                    className={`session-list-item group/session-row relative flex flex-col gap-1 py-2 pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
                     style={{
                         WebkitTouchCallout: 'none',
                         ...(indentPx > 0 ? { marginLeft: `${indentPx}px`, width: `calc(100% - ${indentPx}px)` } : {}),
@@ -1294,13 +1275,6 @@ const SessionItem = memo(function SessionItem(props: {
                     aria-current={selected ? 'page' : undefined}
                     aria-describedby={describedBy}
                 >
-                    {stripeClass ? (
-                        <span
-                            data-testid="session-status-stripe"
-                            aria-hidden="true"
-                            className={`pointer-events-none absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full ${stripeClass}`}
-                        />
-                    ) : null}
                     <SessionRowSummary
                         session={s}
                         showPath={showPath}
@@ -2741,7 +2715,7 @@ export function SessionList(props: {
                 <div
                     data-testid="session-quick-status-bar"
                     role="group"
-                    className="flex items-center gap-1.5 overflow-x-auto px-2 pb-2 scrollbar-none"
+                    className="flex items-center gap-5 overflow-x-auto px-2 scrollbar-none"
                 >
                     {(quickStatusCounts.attention > 0 || quickStatusLens === 'attention') ? (
                         <button
@@ -2750,13 +2724,12 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'attention'}
                             onClick={() => toggleQuickStatusLens('attention')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex min-h-[44px] shrink-0 items-center gap-1.5 text-xs font-normal leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'attention'
-                                    ? 'border-amber-500 bg-amber-500 text-white shadow-xs'
-                                    : 'border-amber-500/35 bg-amber-500/12 text-[var(--app-badge-warning-text)] hover:bg-amber-500/20'
+                                    ? 'text-[var(--app-fg)] underline decoration-1 underline-offset-4'
+                                    : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
                             )}
                         >
-                            <HandIcon className="h-3 w-3 shrink-0" />
                             <span>{t('session.quickFilter.needsAction')}</span>
                             <span className="tabular-nums opacity-90">{quickStatusCounts.attention}</span>
                         </button>
@@ -2768,16 +2741,12 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'running'}
                             onClick={() => toggleQuickStatusLens('running')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex min-h-[44px] shrink-0 items-center gap-1.5 text-xs font-normal leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'running'
-                                    ? 'border-emerald-500 bg-emerald-500 text-white shadow-xs'
-                                    : 'border-emerald-500/30 bg-emerald-500/12 text-[var(--app-badge-success-text)] hover:bg-emerald-500/20'
+                                    ? 'text-[var(--app-fg)] underline decoration-1 underline-offset-4'
+                                    : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
                             )}
                         >
-                            <span
-                                aria-hidden="true"
-                                className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
-                            />
                             <span>{t('session.badge.running')}</span>
                             <span className="tabular-nums opacity-90">{quickStatusCounts.running}</span>
                         </button>
@@ -2789,13 +2758,12 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'background'}
                             onClick={() => toggleQuickStatusLens('background')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex min-h-[44px] shrink-0 items-center gap-1.5 text-xs font-normal leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'background'
-                                    ? 'border-sky-500 bg-sky-500 text-white shadow-xs'
-                                    : 'border-sky-400/30 bg-sky-500/12 text-sky-600 hover:bg-sky-500/20 dark:text-sky-400'
+                                    ? 'text-[var(--app-fg)] underline decoration-1 underline-offset-4'
+                                    : 'text-[var(--app-hint)] hover:text-[var(--app-fg)]'
                             )}
                         >
-                            <RefreshIcon className="h-3 w-3 shrink-0" />
                             <span>{t('session.badge.background')}</span>
                             <span className="tabular-nums opacity-90">{quickStatusCounts.background}</span>
                         </button>
