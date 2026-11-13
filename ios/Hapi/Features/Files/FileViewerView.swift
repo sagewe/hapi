@@ -236,7 +236,7 @@ private struct ModeChip: View {
                 .foregroundStyle(selected ? Color.white : Color.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: Capsule())
+                .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
     }

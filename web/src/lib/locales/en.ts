@@ -252,6 +252,7 @@ export default {
   'session.badge.running': 'Running',
   'session.badge.background': 'Background',
   'session.badge.archived': 'Archived',
+  'session.header.details': 'Session details',
   'session.header.status.online': 'Online',
   'session.header.status.offline': 'Offline',
   'session.header.parentSession': 'Open parent session: {title}',

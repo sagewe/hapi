@@ -79,7 +79,7 @@ export function TeamPanel(props: { teamState: TeamState }) {
                                 {members.map((member) => (
                                     <div
                                         key={member.name}
-                                        className="flex items-center gap-1.5 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs"
+                                        className="flex items-center gap-1.5 rounded-md bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs"
                                     >
                                         <span className={`inline-block h-1.5 w-1.5 rounded-full ${memberStatusDot(member.status)}`} />
                                         <span className="text-[var(--app-fg)]">{member.name}</span>

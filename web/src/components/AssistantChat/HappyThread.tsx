@@ -2537,7 +2537,7 @@ export function HappyThread(props: {
                         aria-label={t('misc.searchMatchNavigation')}
                         className="pointer-events-auto absolute left-3 right-3 top-3 z-20 flex justify-center"
                     >
-                        <div className="flex min-w-0 max-w-full items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/95 px-1.5 py-1 text-xs text-[var(--app-fg)] shadow-sm backdrop-blur">
+                        <div className="flex min-w-0 max-w-full items-center gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/95 px-1.5 py-1 text-xs text-[var(--app-fg)] shadow-sm backdrop-blur">
                             <span className="min-w-0 max-w-[10rem] truncate px-1.5 text-[var(--app-hint)]" title={targetSearchQuery}>
                                 “{targetSearchQuery}”
                             </span>
@@ -2581,7 +2581,7 @@ export function HappyThread(props: {
                         data-testid="search-target-status"
                         role="status"
                         aria-live="polite"
-                        className={`pointer-events-none absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur ${hasSearchTarget ? 'top-12' : 'top-3'}`}
+                        className={`pointer-events-none absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur ${hasSearchTarget ? 'top-12' : 'top-3'}`}
                     >
                         <Spinner size="sm" label={null} className="text-current" />
                         <span>{t('misc.locatingMessage')}</span>
@@ -2592,7 +2592,7 @@ export function HappyThread(props: {
                     <div
                         role="status"
                         aria-live="polite"
-                        className={`pointer-events-none absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur ${hasSearchTarget ? 'top-12' : 'top-3'}`}
+                        className={`pointer-events-none absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur ${hasSearchTarget ? 'top-12' : 'top-3'}`}
                     >
                         {props.isLoadingMoreMessages ? (
                             <Spinner size="sm" label={null} className="text-current" />

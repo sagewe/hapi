@@ -385,6 +385,6 @@ struct QuestionOptionLabel: View {
             .foregroundStyle(theme.accent)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(theme.accent.opacity(0.08), in: Capsule())
+            .background(theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }

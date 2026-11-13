@@ -224,6 +224,50 @@ final class HomeFilterPresentationTests: XCTestCase {
         }
     }
 
+    func testChatHeaderTitlesFillTheirAvailableWidth() async throws {
+        XCTAssertFalse(ChatHeaderStatus.online.showsInHeader)
+        XCTAssertFalse(ChatHeaderStatus.running.showsInHeader)
+        XCTAssertFalse(ChatHeaderStatus.background(2).showsInHeader)
+        XCTAssertFalse(ChatHeaderStatus.archived.showsInHeader)
+        XCTAssertTrue(ChatHeaderStatus.offline.showsInHeader)
+        XCTAssertTrue(ChatHeaderStatus.needsApproval(1).showsInHeader)
+        XCTAssertTrue(ChatHeaderStatus.needsReply(1).showsInHeader)
+        for (name, title, flavor, status) in [
+            ("header-online", "接手胶囊 UI 改版", "codex", ChatHeaderStatus.online),
+            ("header-long", "Session Hierarchical Display and Navigation", "agy", .online),
+            ("header-offline", "接手胶囊 UI 改版", "codex", .offline),
+            ("header-approval", "接手胶囊 UI 改版", "codex", .needsApproval(1)),
+        ] {
+            let header = ChatHeaderTitle(title: title, flavor: flavor, status: status, onTapAttention: {})
+            let host = UIHostingController(rootView: header.hapiTheme(.light))
+            let size = host.sizeThatFits(in: CGSize(width: 262, height: 100))
+            XCTAssertEqual(size.width, 262, accuracy: 1, "Short titles must fill the same slot as long titles")
+            XCTAssertLessThanOrEqual(size.height, 60)
+
+            let specimen = HStack(spacing: 12) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 44, height: 44)
+                header
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 20, weight: .medium))
+                    .frame(width: 44, height: 44)
+            }
+            .padding(.horizontal, 12)
+            .frame(width: 390, height: 80)
+            .background(.white)
+            .hapiTheme(.light)
+            .environment(\.colorScheme, .light)
+            let renderer = ImageRenderer(content: specimen)
+            renderer.scale = 3
+            if let directory = ProcessInfo.processInfo.environment["HAPI_HOME_CAPTURE"] {
+                let url = URL(fileURLWithPath: directory, isDirectory: true)
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                try XCTUnwrap(renderer.uiImage?.pngData()).write(to: url.appendingPathComponent("\(name).png"))
+            }
+        }
+    }
+
     private func makeWindow<V: View>(_ view: V, width: CGFloat) throws -> UIWindow {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)

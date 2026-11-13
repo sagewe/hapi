@@ -123,7 +123,7 @@ struct QuickSwitchSheet: View {
                                 .font(.caption2.weight(.medium))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
+                                .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                                 .foregroundStyle(Color.accentColor)
                         }
                         if candidate.isArchived {
@@ -131,7 +131,7 @@ struct QuickSwitchSheet: View {
                                 .font(.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.15), in: Capsule())
+                                .background(Color.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
@@ -155,11 +155,6 @@ struct QuickSwitchSheet: View {
                                 .lineLimit(1)
                         }
                         if let path = candidate.path {
-                            if candidate.machineLabel != nil {
-                                Text("·")
-                                    .font(.caption)
-                                    .foregroundStyle(theme.textHint)
-                            }
                             Text(verbatim: path)
                                 .font(.caption)
                                 .foregroundStyle(theme.textSecondary)
@@ -173,7 +168,7 @@ struct QuickSwitchSheet: View {
                                     .foregroundStyle(theme.accent)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 1)
-                                    .background(theme.accent.opacity(0.12), in: Capsule())
+                                    .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                                     .lineLimit(1)
                             }
                         }

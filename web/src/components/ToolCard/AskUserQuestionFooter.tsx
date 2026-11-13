@@ -23,7 +23,7 @@ import { usePlatform } from '@/hooks/usePlatform'
 import { Spinner } from '@/components/Spinner'
 import { useTranslation } from '@/lib/use-translation'
 
-const questionNavButtonClassName = 'h-8 rounded-full border-[var(--app-border)] bg-[var(--app-tool-card-bg)] px-3.5 text-[var(--app-fg)] hover:border-[var(--app-md-quote-border)] hover:bg-[var(--app-subtle-bg)]'
+const questionNavButtonClassName = 'h-8 rounded-md border-[var(--app-border)] bg-[var(--app-tool-card-bg)] px-3.5 text-[var(--app-fg)] hover:border-[var(--app-md-quote-border)] hover:bg-[var(--app-subtle-bg)]'
 
 function OptionRow(props: {
     checked: boolean
@@ -337,7 +337,7 @@ export function AskUserQuestionFooter(props: {
                         <Badge variant="default">
                             {t('tool.question')}
                         </Badge>
-                        <span className="rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 font-mono text-[11px] text-[var(--app-hint)]">
+                        <span className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 font-mono text-[11px] text-[var(--app-hint)]">
                             [{clampedStep + 1}/{total}]
                         </span>
                     </div>

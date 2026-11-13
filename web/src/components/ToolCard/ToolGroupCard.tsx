@@ -51,7 +51,7 @@ function DetailsIcon(props: { open: boolean }) {
 
 function SummaryBadge(props: { className: string; text: string }) {
     return (
-        <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium', props.className)}>
+        <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-medium', props.className)}>
             {props.text}
         </span>
     )

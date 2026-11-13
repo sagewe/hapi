@@ -14,7 +14,7 @@ export type MachineFilterItem = {
     healthPresentation: MachineHealthPresentation | null
 }
 
-const chipBaseClass = 'flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors'
+const chipBaseClass = 'flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors'
 const chipSelectedClass = 'border-[var(--app-link)] bg-[var(--app-subtle-bg)] text-[var(--app-link)] font-medium'
 const chipIdleClass = 'border-[var(--app-border)] text-[var(--app-hint)] hover:bg-[var(--app-subtle-bg)] hover:text-[var(--app-fg)]'
 
@@ -55,7 +55,7 @@ function MachineFilterChip(props: {
             aria-pressed={selected}
             aria-describedby={hasHealth ? tooltipId : undefined}
             title={machine.label}
-            className="flex h-7 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+            className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
         >
             <span className="max-w-32 truncate">{machine.label}</span>
             <span className="tabular-nums opacity-70">({machine.sessionCount})</span>
@@ -86,7 +86,7 @@ function MachineFilterChip(props: {
             target={button}
             side="bottom"
             align="start"
-            className={cn('shrink-0 rounded-full border transition-colors', selected ? chipSelectedClass : chipIdleClass)}
+            className={cn('shrink-0 rounded-md border transition-colors', selected ? chipSelectedClass : chipIdleClass)}
             tooltipClassName="pointer-events-auto before:absolute before:inset-x-0 before:-top-1 before:h-1 before:content-[''] px-3 py-2 min-w-[16rem] max-md:hidden"
         >
             <MachineHealthTooltipBody presentation={machine.healthPresentation!} />

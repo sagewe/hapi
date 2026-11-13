@@ -459,7 +459,7 @@ function renderReadTextResult(text: string, path: string | null, surface: ToolVi
 
 function ResultMetaPill(props: { children: ReactNode }) {
     return (
-        <span className="inline-flex w-fit items-center rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 font-mono text-[11px] leading-5 text-[var(--app-hint)]">
+        <span className="inline-flex w-fit items-center rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 font-mono text-[11px] leading-5 text-[var(--app-hint)]">
             {props.children}
         </span>
     )

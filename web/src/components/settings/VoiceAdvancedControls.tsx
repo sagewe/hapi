@@ -182,7 +182,7 @@ export function VoicePersonaControls(props: {
                 <span className="flex items-center gap-2 text-sm font-medium text-[var(--app-fg)]">
                     {props.t('settings.voice.character.title')}
                     {!usingDefaults && (
-                        <span className="rounded-full bg-[var(--app-link)]/15 px-2 py-0.5 text-[10px] text-[var(--app-link)]">
+                        <span className="rounded-md bg-[var(--app-link)]/15 px-2 py-0.5 text-[10px] text-[var(--app-link)]">
                             {props.t('settings.voice.advanced.customizedBadge')}
                         </span>
                     )}

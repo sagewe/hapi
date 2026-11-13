@@ -524,7 +524,7 @@ function ToolCardInner(props: ToolCardProps) {
             )}>
                 {subagentModel ? (
                     <span
-                        className="inline-block max-w-28 truncate rounded-full bg-[var(--app-subtle-bg)] px-1.5 py-px font-mono text-[10px] leading-tight text-[var(--app-hint)] sm:max-w-40"
+                        className="inline-block max-w-28 truncate rounded-md bg-[var(--app-subtle-bg)] px-1.5 py-px font-mono text-[10px] leading-tight text-[var(--app-hint)] sm:max-w-40"
                         title={subagentModel}
                     >
                         {subagentModel}

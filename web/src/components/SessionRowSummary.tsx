@@ -218,7 +218,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier={visualStatus.tier}
-                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/35 bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]"
                 >
                     <SessionRequestIcon
                         kind={requestKind}
@@ -226,7 +226,7 @@ export function SessionRowSummary(props: {
                     />
                     <span>{t(badgeKey)}</span>
                     {visualStatus.count > 1 ? (
-                        <span className="tabular-nums">· {visualStatus.count}</span>
+                        <span className="tabular-nums">{visualStatus.count}</span>
                     ) : null}
                 </span>
             )
@@ -236,7 +236,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="running"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
                 >
                     <span
                         aria-hidden="true"
@@ -251,10 +251,10 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="background"
-                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-400/30 bg-sky-500/15 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
                 >
                     <span>{t('session.badge.background')}</span>
-                    <span className="tabular-nums">· {visualStatus.count}</span>
+                    <span className="tabular-nums">{visualStatus.count}</span>
                 </span>
             )
         }
@@ -263,7 +263,7 @@ export function SessionRowSummary(props: {
                 <span
                     data-testid="session-status-pill"
                     data-status-tier="archived"
-                    className="inline-flex shrink-0 items-center rounded-full bg-[var(--app-subtle-bg)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
+                    className="inline-flex shrink-0 items-center rounded-md bg-[var(--app-subtle-bg)] px-1.5 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
                 >
                     {t('session.badge.archived')}
                 </span>
@@ -290,12 +290,12 @@ export function SessionRowSummary(props: {
         : undefined
 
     const secondaryText = projectLabel || machineLabel
-        ? [projectLabel, machineLabel].filter(Boolean).join(' · ')
+        ? [projectLabel, machineLabel].filter(Boolean).join('\u2002')
         : (showPath || worktreeLabel)
             ? (worktreeLabel ?? s.metadata?.path ?? s.id)
             : null
     const secondaryTitle = projectLabel || machineLabel
-        ? [projectLabel, machineLabel].filter(Boolean).join(' · ')
+        ? [projectLabel, machineLabel].filter(Boolean).join('\u2002')
         : worktreeLabel
             ? (s.metadata?.worktree?.worktreePath ?? s.metadata?.path)
             : undefined
@@ -387,9 +387,6 @@ export function SessionRowSummary(props: {
                                     <span aria-hidden="true" className="shrink-0 opacity-75">↳</span>
                                     <span className="truncate">{parentHintLabel}</span>
                                 </span>
-                            ) : null}
-                            {parentHintLabel && secondaryText !== null ? (
-                                <span aria-hidden="true" className="shrink-0 opacity-60">·</span>
                             ) : null}
                             {secondaryText !== null ? (
                                 <span className="min-w-0 flex-1 truncate" title={secondaryTitle}>

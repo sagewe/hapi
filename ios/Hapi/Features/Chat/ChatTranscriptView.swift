@@ -183,7 +183,7 @@ private struct JumpToLatestOverlay: View {
                 .font(.footnote.weight(.medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .background(.regularMaterial, in: Capsule())
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .disabled(model.isJumpingToLatest)
             .accessibilityIdentifier("chat-latest")
@@ -683,7 +683,7 @@ struct MessageJumpSheet: View {
                         .padding(.vertical, 2)
                         .background(
                             isCurrentTurn ? Color.accentColor : Color.accentColor.opacity(0.14),
-                            in: Capsule()
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                         )
 
                     if isCurrentTurn {

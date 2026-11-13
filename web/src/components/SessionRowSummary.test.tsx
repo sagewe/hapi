@@ -54,7 +54,7 @@ describe('SessionRowSummary background status', () => {
         const backgroundBadge = background.querySelector('[data-testid="session-presence"]')
         expect(backgroundBadge).toHaveClass('bg-sky-400', 'animate-pulse')
         expect(screen.getByTestId('session-status-pill')).toHaveAttribute('data-status-tier', 'background')
-        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Background· 2')
+        expect(screen.getByTestId('session-status-pill')).toHaveTextContent('Background2')
         cleanup()
 
         const thinking = render(

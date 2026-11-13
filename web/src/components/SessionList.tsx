@@ -2750,7 +2750,7 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'attention'}
                             onClick={() => toggleQuickStatusLens('attention')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'attention'
                                     ? 'border-amber-500 bg-amber-500 text-white shadow-xs'
                                     : 'border-amber-500/35 bg-amber-500/12 text-[var(--app-badge-warning-text)] hover:bg-amber-500/20'
@@ -2768,7 +2768,7 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'running'}
                             onClick={() => toggleQuickStatusLens('running')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'running'
                                     ? 'border-emerald-500 bg-emerald-500 text-white shadow-xs'
                                     : 'border-emerald-500/30 bg-emerald-500/12 text-[var(--app-badge-success-text)] hover:bg-emerald-500/20'
@@ -2789,7 +2789,7 @@ export function SessionList(props: {
                             aria-pressed={quickStatusLens === 'background'}
                             onClick={() => toggleQuickStatusLens('background')}
                             className={cn(
-                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
+                                'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]',
                                 quickStatusLens === 'background'
                                     ? 'border-sky-500 bg-sky-500 text-white shadow-xs'
                                     : 'border-sky-400/30 bg-sky-500/12 text-sky-600 hover:bg-sky-500/20 dark:text-sky-400'
@@ -2809,7 +2809,7 @@ export function SessionList(props: {
                 <div
                     role="status"
                     aria-live="polite"
-                    className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur"
+                    className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/90 px-2.5 py-1 text-xs text-[var(--app-hint)] shadow-sm backdrop-blur"
                 >
                     {isRefreshing || props.isLoading
                         ? <Spinner size="sm" label={null} className="text-current" />

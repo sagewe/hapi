@@ -37,7 +37,7 @@ function DiffStatBadge(props: { tone: 'added' | 'removed'; value: number }) {
         : 'bg-[var(--app-diff-removed-bg)] text-[var(--app-diff-removed-text)]'
 
     return (
-        <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium', className)}>
+        <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium', className)}>
             {props.tone === 'added' ? '+' : '-'}{props.value}
         </span>
     )

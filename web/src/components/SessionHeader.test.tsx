@@ -95,6 +95,28 @@ describe('resolveSessionHeaderMachineLabel', () => {
 })
 
 describe('SessionHeader', () => {
+    it('hides routine status and metadata until details are requested', () => {
+        renderHeader(baseSession())
+        expect(screen.queryByTestId('session-header-status')).toBeNull()
+        expect(screen.queryByTestId('session-header-machine')).toBeNull()
+        expect(screen.queryByTestId('session-header-details')).toBeNull()
+        const toggle = screen.getByTestId('session-header-details-toggle')
+        fireEvent.click(toggle)
+        expect(screen.getByTestId('session-header-details')).toBeInTheDocument()
+        fireEvent.keyDown(document, { key: 'Escape' })
+        expect(screen.queryByTestId('session-header-details')).toBeNull()
+        expect(toggle).toHaveFocus()
+        fireEvent.click(toggle)
+        fireEvent.pointerDown(document.body)
+        expect(screen.queryByTestId('session-header-details')).toBeNull()
+    })
+
+    it('shows offline as plain text', () => {
+        renderHeader(baseSession({ active: false }))
+        expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'offline')
+        expect(screen.getByTestId('session-header-status')).toHaveTextContent('Offline')
+    })
+
     it('does not offer manual Codex sync while the HAPI session is active', () => {
         const api = {
             getMachines: vi.fn().mockResolvedValue({ machines: [] }),
@@ -251,6 +273,7 @@ describe('SessionHeader', () => {
 
     it('shows an inherited catalog-default Fast tier', () => {
         renderHeader(baseSession(), { serviceTier: 'priority' })
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.getByText('fast')).toBeInTheDocument()
         expect(screen.queryByText('effort default')).not.toBeInTheDocument()
     })
@@ -262,6 +285,7 @@ describe('SessionHeader', () => {
             effort: 'max'
         }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.getByTestId('session-header-reasoning')).toHaveTextContent('effort max')
     })
 
@@ -271,6 +295,7 @@ describe('SessionHeader', () => {
             effort: 'max'
         }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.getByTestId('session-header-reasoning')).toHaveTextContent('effort xhigh')
 
         rerender(
@@ -301,6 +326,7 @@ describe('SessionHeader', () => {
             effort: 'max'
         }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.queryByTestId('session-header-reasoning')).not.toBeInTheDocument()
     })
 
@@ -317,6 +343,7 @@ describe('SessionHeader', () => {
             }
         }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.getByTestId('session-header-machine')).toHaveTextContent(/oos-linux/)
         expect(screen.getByTestId('session-header-age')).toHaveTextContent(/5m ago|5分钟前/)
     })
@@ -336,6 +363,7 @@ describe('SessionHeader', () => {
             }
         }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.getByTestId('session-header-project')).toHaveTextContent('project: coding/hapi')
         expect(screen.getByText('worktree: fix/resume')).toBeInTheDocument()
     })
@@ -344,6 +372,7 @@ describe('SessionHeader', () => {
         localStorage.setItem('hapi-session-header-metadata', JSON.stringify({ project: false }))
         renderHeader(baseSession({ metadata: { flavor: 'cursor', path: '/home/user/coding/hapi', host: 'machine' } }))
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         expect(screen.queryByTestId('session-header-project')).not.toBeInTheDocument()
     })
 
@@ -359,6 +388,7 @@ describe('SessionHeader', () => {
                 metadata: { flavor: 'cursor', path: '/r', host: 'host.local' }
             }))
 
+            fireEvent.click(screen.getByTestId('session-header-details-toggle'))
             expect(screen.getByTestId('session-header-age')).toHaveTextContent(/just now|刚刚/)
 
             act(() => {
@@ -507,7 +537,7 @@ describe('SessionHeader', () => {
                 </ToastProvider>
             </QueryClientProvider>
         )
-        expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'running')
+        expect(screen.queryByTestId('session-header-status')).toBeNull()
 
         rerender(
             <QueryClientProvider client={new QueryClient()}>
@@ -522,7 +552,7 @@ describe('SessionHeader', () => {
                 </ToastProvider>
             </QueryClientProvider>
         )
-        expect(screen.getByTestId('session-header-status')).toHaveAttribute('data-status-tier', 'archived')
+        expect(screen.queryByTestId('session-header-status')).toBeNull()
     })
 
     it('renders clickable parent session chip and navigates to parent session on click', () => {
@@ -572,6 +602,7 @@ describe('SessionHeader', () => {
             </QueryClientProvider>
         )
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         const parentBtn = screen.getByTestId('session-header-parent')
         expect(parentBtn.tagName).toBe('BUTTON')
         expect(parentBtn).toHaveTextContent('Main Orchestrator')
@@ -608,6 +639,7 @@ describe('SessionHeader', () => {
             </QueryClientProvider>
         )
 
+        fireEvent.click(screen.getByTestId('session-header-details-toggle'))
         const parentBadge = screen.getByTestId('session-header-parent')
         expect(parentBadge.tagName).toBe('SPAN')
         expect(parentBadge).toHaveTextContent('deadbeef')

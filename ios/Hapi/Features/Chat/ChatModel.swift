@@ -25,6 +25,10 @@ enum ChatHeaderStatus: Equatable {
         }
     }
 
+    var showsInHeader: Bool {
+        isAttention || self == .offline
+    }
+
     var titleKey: String {
         switch self {
         case .needsReply: return "Needs reply"
@@ -91,7 +95,7 @@ enum ChatHeaderStatus: Equatable {
 /// Chat top-bar state: title cascade + status + meta line.
 struct ChatHeaderUI: Equatable {
     var title: String
-    /// "Flavor · machine · worktree" meta line; nil when nothing is known.
+    /// Plain-text metadata for consumers outside the compact title row.
     var subtitle: String?
     /// Raw `metadata.flavor` — drives the brand icon next to the meta line.
     var flavor: String?
@@ -1255,7 +1259,7 @@ final class ChatModel {
 
         return ChatHeaderUI(
             title: title,
-            subtitle: parts.isEmpty ? nil : parts.joined(separator: " · "),
+            subtitle: parts.isEmpty ? nil : parts.joined(separator: "  "),
             flavor: flavor,
             active: active,
             thinking: thinking,

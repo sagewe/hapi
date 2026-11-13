@@ -176,7 +176,7 @@ export function CodeBlock(props: {
             </div>
             {isCollapsed ? (
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-[var(--app-code-bg)] via-[var(--app-code-bg)]/94 to-transparent px-2 pb-2 pt-10">
-                    <span className="rounded-full bg-[var(--app-chat-user-chip-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)] shadow-none">
+                    <span className="rounded-md bg-[var(--app-chat-user-chip-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)] shadow-none">
                         {t('code.truncated')}
                     </span>
                 </div>

@@ -174,8 +174,7 @@ struct ChatView: View {
         .modifier(FoldedTitleMinimization(isActive: isFoldedOuterScreen))
         .modifier(FoldedSystemTitle(
             isActive: usesSystemTitle,
-            title: model.header.title,
-            subtitle: systemHeaderSubtitle
+            title: model.header.title
         ))
         .toolbar {
             // Folded Duo: Back and the actions live in the side bar, so a
@@ -186,23 +185,10 @@ struct ChatView: View {
                     headerTitle
                 }
             } else {
-                if let parentId = model.header.parentSessionId,
-                   let parentTitle = model.header.parentTitle {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        parentSessionChip(
-                            parentId: parentId,
-                            parentTitle: parentTitle,
-                            isNavigable: model.header.isParentNavigable,
-                            prominent: true,
-                            action: onOpenParentSession
-                        )
-                    }
-                }
                 if showsProminentSystemToolbarStatus {
                     ToolbarItem(placement: .topBarTrailing) {
                         ChatHeaderStatusBadge(
                             status: model.header.status,
-                            prominent: true,
                             onTapAttention: { model.jumpToPendingRequestOrLatest() }
                         )
                     }
@@ -414,7 +400,7 @@ struct ChatView: View {
                 .font(.headline)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .background(.regularMaterial, in: Capsule())
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .shadow(radius: 6, y: 2)
         }
         .padding(12)
@@ -520,7 +506,7 @@ struct ChatView: View {
                 .disabled(model.interactor.sessionOpPending)
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
         .accessibilityLabel("More actions")
         .help("More actions")
@@ -567,120 +553,17 @@ struct ChatView: View {
         )
     }
 
-    private var systemHeaderSubtitle: String {
-        let prefix = model.header.status.systemSubtitlePrefix
-        if let subtitle = model.header.subtitle, !subtitle.isEmpty {
-            return "\(prefix) · \(subtitle)"
-        }
-        return prefix
-    }
-
     private var showsProminentSystemToolbarStatus: Bool {
-        switch model.header.status {
-        case .needsReply, .needsApproval, .needsAttention, .running, .background:
-            return true
-        case .online, .archived, .offline:
-            return false
-        }
+        model.header.status.showsInHeader
     }
 
     private var headerTitle: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(model.header.title)
-                .font(.headline)
-                .lineLimit(1)
-            let tags = model.sessionTags
-            HStack(spacing: 5) {
-                ChatHeaderStatusBadge(
-                    status: model.header.status,
-                    prominent: false,
-                    onTapAttention: { model.jumpToPendingRequestOrLatest() }
-                )
-                if let parentId = model.header.parentSessionId,
-                   let parentTitle = model.header.parentTitle {
-                    parentSessionChip(
-                        parentId: parentId,
-                        parentTitle: parentTitle,
-                        isNavigable: model.header.isParentNavigable,
-                        prominent: false,
-                        action: onOpenParentSession
-                    )
-                }
-                if let subtitle = model.header.subtitle {
-                    if model.header.flavor != nil {
-                        AgentFlavorIconView(flavor: model.header.flavor, size: 12)
-                    }
-                    Text(subtitle)
-                        .font(.caption2)
-                        .lineLimit(1)
-                }
-                ForEach(Array(tags.prefix(3)), id: \.self) { tag in
-                    Text(verbatim: "#\(tag)")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 0.5)
-                        .background(Color.accentColor.opacity(0.12), in: Capsule())
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func parentSessionChip(
-        parentId: String,
-        parentTitle: String,
-        isNavigable: Bool,
-        prominent: Bool,
-        action: ((String) -> Void)?
-    ) -> some View {
-        let label = String(format: String(localized: "Parent: %@"), parentTitle)
-        let displayTitle: String = {
-            if prominent, parentTitle.count > 22 {
-                return String(parentTitle.prefix(20)) + "…"
-            }
-            return parentTitle
-        }()
-        let pillContent = HStack(spacing: prominent ? 3.5 : 2.5) {
-            Text(verbatim: "↳")
-                .font(prominent ? .caption.weight(.semibold) : .caption2.weight(.semibold))
-            Text(verbatim: displayTitle)
-                .font(prominent ? .caption.weight(.medium) : .caption2.weight(.medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-        }
-        .foregroundStyle(theme.textSecondary.opacity(isNavigable && action != nil ? 1 : 0.8))
-        .padding(.horizontal, prominent ? 8 : 5.5)
-        .padding(.vertical, prominent ? 3.5 : 1.5)
-        .background {
-            Capsule()
-                .fill(theme.textSecondary.opacity(theme.isDark ? 0.16 : 0.10))
-        }
-        .overlay {
-            Capsule()
-                .strokeBorder(theme.textSecondary.opacity(isNavigable && action != nil ? 0.24 : 0.16), lineWidth: 0.75)
-        }
-
-        if isNavigable, let action {
-            Button {
-                action(parentId)
-            } label: {
-                pillContent
-            }
-            .buttonStyle(.plain)
-            .layoutPriority(0.6)
-            .accessibilityLabel(Text(verbatim: label))
-            .accessibilityIdentifier("chat.header.parent")
-            .help(label)
-        } else {
-            pillContent
-                .layoutPriority(0.6)
-                .accessibilityLabel(Text(verbatim: label))
-                .accessibilityIdentifier("chat.header.parent")
-                .help(label)
-        }
+        ChatHeaderTitle(
+            title: model.header.title,
+            flavor: model.header.flavor,
+            status: model.header.status,
+            onTapAttention: { model.jumpToPendingRequestOrLatest() }
+        )
     }
 
     @ViewBuilder
@@ -755,94 +638,68 @@ struct ChatView: View {
     }
 }
 
+/// One stable leading-aligned row; routine connection/activity states stay quiet.
+struct ChatHeaderTitle: View {
+    let title: String
+    var flavor: String?
+    var status: ChatHeaderStatus = .online
+    var onTapAttention: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let flavor {
+                AgentFlavorIconView(flavor: flavor, size: 18)
+                    .accessibilityHidden(false)
+                    .accessibilityLabel(Text(verbatim: flavorLabel(forFlavor: flavor)))
+                    .help(flavorLabel(forFlavor: flavor))
+            }
+            Text(verbatim: title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(title)
+            ChatHeaderStatusBadge(status: status, onTapAttention: onTapAttention)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 struct ChatHeaderStatusBadge: View {
     @Environment(\.hapiTheme) private var theme
     let status: ChatHeaderStatus
-    var prominent = false
     var onTapAttention: (() -> Void)?
 
-    private var foregroundColor: Color {
-        switch status {
-        case .needsReply, .needsApproval, .needsAttention:
-            return SessionStatusPalette.attentionForeground(theme: theme)
-        case .running:
-            return SessionStatusPalette.runningForeground(theme: theme)
-        case .background:
-            return SessionStatusPalette.backgroundForeground(theme: theme)
-        case .online:
-            return theme.success
-        case .archived, .offline:
-            return theme.textSecondary
-        }
-    }
-
-    private var usesCapsuleChrome: Bool {
-        switch status {
-        case .needsReply, .needsApproval, .needsAttention, .running, .background:
-            return true
-        case .online, .archived, .offline:
-            return prominent
-        }
-    }
-
     var body: some View {
-        Group {
-            if status.isAttention, let onTapAttention {
-                Button(action: onTapAttention) {
-                    badgeContent
+        if status.showsInHeader {
+            Group {
+                if status.isAttention, let onTapAttention {
+                    Button(action: onTapAttention) {
+                        label.frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    label
                 }
-                .buttonStyle(.plain)
-            } else {
-                badgeContent
             }
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityIdentifier("chat.header.status")
         }
-        .fixedSize()
-        .accessibilityIdentifier("chat.header.status")
     }
 
-    private var badgeContent: some View {
-        let color = foregroundColor
-        let font: Font = prominent ? .caption.weight(.semibold) : .caption2.weight(.semibold)
-        return HStack(spacing: prominent ? 4.5 : 3.5) {
-            if status == .running {
-                SessionOrbitingRing(color: color, lineWidth: 1.5)
-                    .frame(width: prominent ? 10 : 8.5, height: prominent ? 10 : 8.5)
-            } else if status == .online {
-                Circle()
-                    .fill(color)
-                    .frame(width: 6, height: 6)
-            } else if status == .offline {
-                Circle()
-                    .strokeBorder(color.opacity(0.75), lineWidth: 1.2)
-                    .frame(width: 6, height: 6)
-            } else {
-                Image(systemName: status.symbolName)
-                    .font(.system(size: prominent ? 10 : 8.5, weight: .bold))
-            }
+    private var label: some View {
+        HStack(spacing: 4) {
             Text(LocalizedStringKey(status.titleKey))
-                .font(font)
-                .lineLimit(1)
-            if let count = status.count, (status.isAttention ? count > 1 : count > 0) {
-                Text(verbatim: "· \(count)")
-                    .font(font)
-                    .monospacedDigit()
+            if let count = status.count, count > 1 {
+                Text(verbatim: "\(count)").monospacedDigit()
             }
         }
-        .foregroundStyle(status == .online ? theme.textSecondary : color)
-        .padding(.horizontal, usesCapsuleChrome ? (prominent ? 8 : 5.5) : 0)
-        .padding(.vertical, usesCapsuleChrome ? (prominent ? 3.5 : 1.5) : 0)
-        .background {
-            if usesCapsuleChrome {
-                Capsule()
-                    .fill(color.opacity(theme.isDark ? 0.16 : 0.12))
-            }
-        }
-        .overlay {
-            if usesCapsuleChrome {
-                Capsule()
-                    .strokeBorder(color.opacity(0.28), lineWidth: 0.75)
-            }
-        }
+        .font(.caption2.weight(status.isAttention ? .medium : .regular))
+        .foregroundStyle(status.isAttention
+            ? SessionStatusPalette.attentionForeground(theme: theme)
+            : theme.textSecondary)
+        .lineLimit(1)
     }
 }
 
@@ -866,18 +723,16 @@ private struct FoldedTitleMinimization: ViewModifier {
 
 /// Folded iPhone Duo and Mac: the system inline title is leading-aligned,
 /// unlike the fixed centered `.principal` slot (a leading item becomes a glass
-/// button). The subtitle is plain text, so the agent icon is omitted here;
-/// before iOS 26 (macOS 14/15) only the title is shown.
+/// button). Keep this platform fallback title-only; actionable status lives
+/// in a separate trailing toolbar item.
 private struct FoldedSystemTitle: ViewModifier {
     let isActive: Bool
     let title: String
-    let subtitle: String?
 
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *), isActive {
             content
                 .navigationTitle(Text(verbatim: title))
-                .navigationSubtitle(Text(verbatim: subtitle ?? ""))
         } else if isActive {
             content.navigationTitle(Text(verbatim: title))
         } else {
@@ -992,7 +847,7 @@ private struct ConversationHistorySheet: View {
                     }
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "ellipsis")
                     .frame(minWidth: 44, minHeight: 44)
             }
             .accessibilityLabel("History actions")

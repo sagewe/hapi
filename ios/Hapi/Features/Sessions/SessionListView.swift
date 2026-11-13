@@ -384,7 +384,7 @@ struct SessionListView: View {
                     .foregroundStyle(theme.textSecondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(theme.textSecondary.opacity(0.12), in: Capsule())
+                    .background(theme.textSecondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .font(.footnote.weight(.semibold))
             .foregroundStyle(theme.textSecondary)
@@ -800,11 +800,11 @@ struct SessionStatusSummaryBar: View {
             .padding(.vertical, 5)
             .foregroundStyle(selected ? Color.white : color)
             .background(
-                Capsule()
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(selected ? color : color.opacity(theme.isDark ? 0.16 : 0.12))
             )
             .overlay(
-                Capsule()
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(color.opacity(selected ? 0 : 0.32), lineWidth: 1)
             )
         }
@@ -957,7 +957,7 @@ struct SessionRowView: View {
     private var detailLine: some View {
         HStack(alignment: .center, spacing: 6) {
             if let parentHint = row.parentHint {
-                HStack(spacing: 4) {
+                HStack(spacing: 10) {
                     Text(verbatim: "↳ \(parentHint)")
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -965,9 +965,6 @@ struct SessionRowView: View {
                         .layoutPriority(0.5)
                         .help(parentHint)
                     if let project = row.project {
-                        Text(verbatim: "·")
-                            .foregroundStyle(theme.textSecondary.opacity(0.55))
-                            .accessibilityHidden(true)
                         Text(verbatim: project)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -986,7 +983,7 @@ struct SessionRowView: View {
                             .foregroundStyle(theme.accent)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(theme.accent.opacity(0.12), in: Capsule())
+                            .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                             .lineLimit(1)
                     }
                     if row.tags.count > 3 {
@@ -1018,7 +1015,7 @@ struct SessionRowView: View {
                 .font(.caption2.weight(.semibold))
                 .lineLimit(1)
             if let count = status.count, (status.isAttention ? count > 1 : count > 0) {
-                Text(verbatim: "· \(count)")
+                Text(verbatim: "\(count)")
                     .font(.caption2.weight(.bold))
                     .monospacedDigit()
             }
@@ -1026,8 +1023,8 @@ struct SessionRowView: View {
         .foregroundStyle(color)
         .padding(.horizontal, 6)
         .frame(height: statusSlotSize)
-        .background(color.opacity(theme.isDark ? 0.16 : 0.12), in: Capsule())
-        .overlay(Capsule().strokeBorder(color.opacity(0.28), lineWidth: 0.75))
+        .background(color.opacity(theme.isDark ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(color.opacity(0.28), lineWidth: 0.75))
         .fixedSize()
         .layoutPriority(1)
         .accessibilityElement(children: .ignore)
@@ -1041,7 +1038,7 @@ struct SessionRowView: View {
             .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 6)
             .frame(height: statusSlotSize)
-            .background(theme.textSecondary.opacity(0.12), in: Capsule())
+            .background(theme.textSecondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .fixedSize()
             .layoutPriority(1)
             .accessibilityLabel(Text("Archived"))
@@ -1051,9 +1048,9 @@ struct SessionRowView: View {
         let title = Text(LocalizedStringKey(status.titleKey))
         if let count = status.count, count > 1 {
             if case .background = status {
-                return Text("\(title) · \(count)")
+                return Text("\(title)  \(count)")
             }
-            return Text("\(title) · \(count) requests")
+            return Text("\(title)  \(count) requests")
         }
         return title
     }
@@ -1090,7 +1087,7 @@ struct FilterChip: View {
                     selected
                         ? AnyShapeStyle(.tint.opacity(0.18))
                         : AnyShapeStyle(Color.secondary.opacity(0.12)),
-                    in: Capsule()
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                 )
                 .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
         }
@@ -1186,7 +1183,7 @@ struct SessionTitleEditor: View {
                                         .font(.footnote.weight(.medium))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 5)
-                                        .background(Color.accentColor.opacity(0.16), in: Capsule())
+                                        .background(Color.accentColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                                         .foregroundStyle(Color.accentColor)
                                     }
                                     .buttonStyle(.plain)
@@ -1233,7 +1230,7 @@ struct SessionTitleEditor: View {
                                             }
                                             .padding(.horizontal, 9)
                                             .padding(.vertical, 4)
-                                            .background(Color.secondary.opacity(0.12), in: Capsule())
+                                            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                                             .foregroundStyle(.primary)
                                         }
                                         .buttonStyle(.plain)

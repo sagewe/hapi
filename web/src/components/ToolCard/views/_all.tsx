@@ -61,7 +61,7 @@ const CodexAgentView: ToolViewComponent = ({ block, surface }: ToolViewProps) =>
                     {rows.map((row) => (
                         <span
                             key={`${row.label}:${row.value}`}
-                            className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs text-[var(--app-hint)]"
+                            className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-xs text-[var(--app-hint)]"
                         >
                             <span className="font-medium text-[var(--app-fg)]">{row.label}:</span>
                             <span className="truncate font-mono">{row.value}</span>

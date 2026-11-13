@@ -379,22 +379,22 @@ export function CodexSessionSyncDialog(props: {
                                                         {session.title}
                                                     </div>
                                                     {isOriginal ? (
-                                                        <span className="shrink-0 rounded-full bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
+                                                        <span className="shrink-0 rounded-md bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
                                                             {t('codexSync.confirm.original')}
                                                         </span>
                                                     ) : null}
                                                     {isForked ? (
-                                                        <span className="shrink-0 rounded-full bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
+                                                        <span className="shrink-0 rounded-md bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
                                                             {t('codexSync.confirm.fork')}
                                                         </span>
                                                     ) : null}
                                                     {session.id === currentCodexSessionId ? (
-                                                        <span className="shrink-0 rounded-full bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
+                                                        <span className="shrink-0 rounded-md bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
                                                             {t('codexSync.confirm.current')}
                                                         </span>
                                                     ) : null}
                                                     {isImported ? (
-                                                        <span className="shrink-0 rounded-full bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
+                                                        <span className="shrink-0 rounded-md bg-[var(--app-secondary-bg)] px-2 py-0.5 text-[10px] text-[var(--app-hint)]">
                                                             {t('codexSync.confirm.imported')}
                                                         </span>
                                                     ) : null}

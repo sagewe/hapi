@@ -109,13 +109,13 @@ describe('MachineFilterBar', () => {
         const teemo = screen.getByRole('button', { name: /Teemo \(2\)/ })
         expect(teemo.className).toContain('px-2.5')
         const pill = teemo.parentElement!.parentElement!
-        expect(pill.className).toContain('rounded-full')
+        expect(pill.className).toContain('rounded-md')
         expect(pill.className).toContain('border')
         expect(pill.className).not.toContain('px-2.5')
 
         // Chip without health: the button is the pill itself.
         const mint = screen.getByRole('button', { name: /Mint \(3\)/ })
-        expect(mint.className).toContain('rounded-full')
+        expect(mint.className).toContain('rounded-md')
         expect(mint.className).toContain('border')
     })
 

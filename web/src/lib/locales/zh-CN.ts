@@ -252,6 +252,7 @@ export default {
   'session.badge.running': '运行中',
   'session.badge.background': '后台',
   'session.badge.archived': '已归档',
+  'session.header.details': '会话详情',
   'session.header.status.online': '在线',
   'session.header.status.offline': '离线',
   'session.header.parentSession': '打开父会话：{title}',

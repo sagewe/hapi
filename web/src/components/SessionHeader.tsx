@@ -33,7 +33,6 @@ import { selectMobileSessionHeaderSecondary } from '@/lib/sessionHeaderMobileMet
 import { useMinuteTick } from '@/hooks/useMinuteTick'
 import { markSessionUnread } from '@/lib/sessionLastSeen'
 import { classifySessionDetailVisualStatus, type SessionVisualStatus } from '@/lib/sessionVisualStatus'
-import { HandIcon, MessageIcon } from '@/components/icons'
 
 /** Same preference order as session-list chips: display label → host → short id. */
 export function resolveSessionHeaderMachineLabel(
@@ -176,13 +175,11 @@ function SessionHeaderStatusBadge(props: {
             : status.tier === 'reply'
                 ? 'session.badge.reply'
                 : 'session.badge.attention'
-        const Icon = status.tier === 'reply' ? MessageIcon : HandIcon
-        const className = 'inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-warning-text)]'
+        const className = 'inline-flex min-h-11 shrink-0 items-center gap-1 text-[11px] font-medium text-[var(--app-badge-warning-text)]'
         const content = (
             <>
-                <Icon className="h-3 w-3 shrink-0" />
                 <span>{t(badgeKey)}</span>
-                {status.count > 1 ? <span className="tabular-nums">· {status.count}</span> : null}
+                {status.count > 1 ? <span className="tabular-nums">{status.count}</span> : null}
             </>
         )
         if (onJumpToPendingRequest) {
@@ -192,7 +189,7 @@ function SessionHeaderStatusBadge(props: {
                     data-testid="session-header-status"
                     data-status-tier={status.tier}
                     onClick={onJumpToPendingRequest}
-                    className={`${className} cursor-pointer transition-colors hover:bg-amber-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]`}
+                    className={`${className} cursor-pointer transition-colors hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]`}
                 >
                     {content}
                 </button>
@@ -209,68 +206,15 @@ function SessionHeaderStatusBadge(props: {
         )
     }
 
-    if (status.tier === 'running') {
-        return (
-            <span
-                data-testid="session-header-status"
-                data-status-tier="running"
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-[var(--app-badge-success-text)]"
-            >
-                <span
-                    aria-hidden="true"
-                    className="h-2.5 w-2.5 shrink-0 rounded-full border-[1.5px] border-current border-r-transparent animate-spin"
-                />
-                <span>{t('session.badge.running')}</span>
-            </span>
-        )
-    }
-
-    if (status.tier === 'background') {
-        return (
-            <span
-                data-testid="session-header-status"
-                data-status-tier="background"
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/15 px-2 py-0.5 text-[11px] font-semibold leading-none text-sky-600 dark:text-sky-400"
-            >
-                <span>{t('session.badge.background')}</span>
-                <span className="tabular-nums">· {status.count}</span>
-            </span>
-        )
-    }
-
-    if (status.tier === 'archived') {
-        return (
-            <span
-                data-testid="session-header-status"
-                data-status-tier="archived"
-                className="inline-flex shrink-0 items-center rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
-            >
-                {t('session.badge.archived')}
-            </span>
-        )
-    }
-
-    if (status.tier === 'online') {
-        return (
-            <span
-                data-testid="session-header-status"
-                data-status-tier="online"
-                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]"
-            >
-                <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-badge-success-text)]" />
-                <span>{t('session.header.status.online')}</span>
-            </span>
-        )
-    }
+    if (status.tier !== 'offline') return null
 
     return (
         <span
             data-testid="session-header-status"
             data-status-tier="offline"
-            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-none text-[var(--app-hint)]/80"
+            className="shrink-0 text-[11px] font-normal text-[var(--app-hint)]"
         >
-            <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--app-hint)]/60" />
-            <span>{t('session.header.status.offline')}</span>
+            {t('session.header.status.offline')}
         </span>
     )
 }
@@ -380,6 +324,28 @@ export function SessionHeader(props: {
     const showParentBadge = Boolean(parentSessionId && parentTitle)
     const showMobileMetadata = showParentBadge || (headerMetadata.agent && agentLabel !== null) || mobileSecondary !== null
 
+    const [detailsOpen, setDetailsOpen] = useState(false)
+    const detailsRef = useRef<HTMLDivElement>(null)
+    const detailsToggleRef = useRef<HTMLButtonElement>(null)
+    useEffect(() => { setDetailsOpen(false) }, [session.id])
+    useEffect(() => {
+        if (!detailsOpen) return
+        const outside = (event: PointerEvent) => {
+            if (event.target instanceof Node && !detailsRef.current?.contains(event.target)) setDetailsOpen(false)
+        }
+        const escape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setDetailsOpen(false)
+                detailsToggleRef.current?.focus()
+            }
+        }
+        document.addEventListener('pointerdown', outside)
+        document.addEventListener('keydown', escape)
+        return () => {
+            document.removeEventListener('pointerdown', outside)
+            document.removeEventListener('keydown', escape)
+        }
+    }, [detailsOpen])
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
     const menuId = useId()
@@ -561,17 +527,28 @@ export function SessionHeader(props: {
                         </svg>
                     </button>
 
-                    {/* Session info - two lines: title and path */}
-                    <div className="min-w-0 flex-1">
+                    {/* Single-line title; metadata is available on demand. */}
+                    <div ref={detailsRef} className="relative min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
-                            <div className="min-w-0 truncate font-semibold">
-                                {title}
-                            </div>
+                            <button
+                                type="button"
+                                data-testid="session-header-details-toggle"
+                                ref={detailsToggleRef}
+                                aria-label={t('session.header.details')}
+                                aria-expanded={detailsOpen}
+                                onClick={() => setDetailsOpen((open) => !open)}
+                                className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                title={title}
+                            >
+                                <AgentFlavorIcon flavor={session.metadata?.flavor} className="h-[18px] w-[18px] shrink-0" />
+                                <span className="min-w-0 truncate text-[15px] font-semibold">{title}</span>
+                            </button>
                             <SessionHeaderStatusBadge
                                 status={visualStatus}
                                 onJumpToPendingRequest={props.onJumpToPendingRequest}
                             />
                         </div>
+                        {detailsOpen ? <div data-testid="session-header-details" className="absolute left-0 right-0 top-full z-30 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 shadow-lg">
                         {showMobileMetadata ? (
                             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs text-[var(--app-hint)] sm:hidden">
                                 {showParentBadge && parentSessionId && parentTitle ? (
@@ -582,7 +559,7 @@ export function SessionHeader(props: {
                                             onClick={() => onOpenParentSession?.(parentSessionId)}
                                             title={t('session.header.parentSession', { title: parentTitle })}
                                             aria-label={t('session.header.parentSession', { title: parentTitle })}
-                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                                         >
                                             <span aria-hidden="true" className="shrink-0 opacity-80">↳</span>
                                             <span className="truncate">{parentTitle}</span>
@@ -591,7 +568,7 @@ export function SessionHeader(props: {
                                         <span
                                             data-testid="session-header-parent-mobile"
                                             title={t('session.header.parentSession', { title: parentTitle })}
-                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-full border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
+                                            className="inline-flex max-w-[10rem] min-w-0 shrink items-center gap-1 rounded-md border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
                                         >
                                             <span aria-hidden="true" className="shrink-0 opacity-70">↳</span>
                                             <span className="truncate">{parentTitle}</span>
@@ -624,7 +601,7 @@ export function SessionHeader(props: {
                                         onClick={() => onOpenParentSession?.(parentSessionId)}
                                         title={t('session.header.parentSession', { title: parentTitle })}
                                         aria-label={t('session.header.parentSession', { title: parentTitle })}
-                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-full border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
+                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                                     >
                                         <span aria-hidden="true" className="shrink-0 opacity-80">↳</span>
                                         <span className="truncate">{parentTitle}</span>
@@ -633,7 +610,7 @@ export function SessionHeader(props: {
                                     <span
                                         data-testid="session-header-parent"
                                         title={t('session.header.parentSession', { title: parentTitle })}
-                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-full border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
+                                        className="inline-flex max-w-[14rem] min-w-0 items-center gap-1 rounded-md border border-[var(--app-border)]/70 bg-[var(--app-subtle-bg)]/70 px-2 py-0.5 text-[11px] font-medium leading-tight text-[var(--app-hint)]/80"
                                     >
                                         <span aria-hidden="true" className="shrink-0 opacity-70">↳</span>
                                         <span className="truncate">{parentTitle}</span>
@@ -683,6 +660,7 @@ export function SessionHeader(props: {
                                 <span>{headerMetadata.showLabels ? `${t('session.item.worktree')}: ` : ''}{worktreeBranch}</span>
                             ) : null}
                         </div>
+                        </div> : null}
                     </div>
 
                     {props.onToggleFiles ? (

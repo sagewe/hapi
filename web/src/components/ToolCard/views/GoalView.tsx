@@ -45,7 +45,7 @@ export function GoalSummary({ result, surface }: { result: GoalResult; surface?:
     return (
         <div className="flex min-w-0 flex-col gap-2.5 text-sm" data-goal-status={goal.status}>
             <div className="flex min-w-0 items-start gap-2.5">
-                <span className={`max-w-[45%] shrink-0 break-words rounded-full px-2 py-0.5 text-[11px] font-medium [overflow-wrap:anywhere] ${tone ?? 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'}`}>
+                <span className={`max-w-[45%] shrink-0 break-words rounded-md px-2 py-0.5 text-[11px] font-medium [overflow-wrap:anywhere] ${tone ?? 'bg-[var(--app-subtle-bg)] text-[var(--app-hint)]'}`}>
                     {tone ? t(`session.status.goal.${goal.status}`) : goal.status}
                 </span>
                 <div className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[var(--app-fg)]">{goal.objective}</div>

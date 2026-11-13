@@ -741,7 +741,7 @@ struct ChatComposerView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .frame(minWidth: 16, minHeight: 16)
-                        .background(scratchlistMode ? AnyShapeStyle(.orange) : AnyShapeStyle(.gray), in: Capsule())
+                        .background(scratchlistMode ? AnyShapeStyle(.orange) : AnyShapeStyle(.gray), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .offset(x: -2, y: 4)
                 }
             }
@@ -768,7 +768,7 @@ struct ChatComposerView: View {
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 38)
-            .background(.orange.opacity(0.16), in: Capsule())
+            .background(.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
@@ -1036,7 +1036,7 @@ struct ChatComposerView: View {
 
     // MARK: - Buttons
 
-    /// iOS collapses to a single-row Liquid Glass capsule while unfocused with
+    /// iOS collapses to a single-row Liquid Glass field while unfocused with
     /// an empty draft, and morphs into the two-row card on focus or draft input.
     /// Mac Catalyst always keeps the desktop action bar visible.
     private func isCollapsed(_ composer: ComposerState, attachments: [ComposerAttachmentUI]) -> Bool {
@@ -1124,7 +1124,7 @@ struct ChatComposerView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.06), in: Capsule())
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .transition(.opacity)
             }
             if interactor.hasUndoableVoiceEdit {
@@ -1144,7 +1144,7 @@ struct ChatComposerView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.07), in: Capsule())
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("撤销语音文字")
@@ -1998,7 +1998,7 @@ private struct ComposerQuotaPopoverView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(.fill.tertiary, in: Capsule())
+                        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 Spacer(minLength: 8)
                 if case .loaded(let result) = model.quotaState, result.stale {
@@ -2148,7 +2148,7 @@ private struct ComposerCardSurface: ViewModifier {
                 .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         }
         #else
-        let cornerRadius: CGFloat = isCollapsed ? 25 : 24
+        let cornerRadius: CGFloat = 16
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         let isDark = colorScheme == .dark
         let specularRim = LinearGradient(
@@ -2470,7 +2470,7 @@ private struct ScheduledSendChip: View {
         .font(.footnote)
         .foregroundStyle(.tint)
         .padding(.leading, 10)
-        .background(.tint.opacity(0.1), in: Capsule())
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.scheduled-send")
     }

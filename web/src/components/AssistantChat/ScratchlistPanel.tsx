@@ -538,7 +538,7 @@ export function ScratchlistDrawer({
                         {t('scratchlist.title')}
                     </span>
                     <span
-                        className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--app-hint)]"
+                        className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--app-hint)]"
                         aria-hidden="true"
                     >
                         {t('scratchlist.heldLabel')}
@@ -741,7 +741,7 @@ export function ScratchlistPanel({
                         {t('scratchlist.title')}
                     </span>
                     <span
-                        className="rounded-full border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--app-hint)]"
+                        className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)]/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--app-hint)]"
                         aria-hidden="true"
                     >
                         {t('scratchlist.heldLabel')}

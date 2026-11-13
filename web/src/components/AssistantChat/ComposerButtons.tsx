@@ -418,7 +418,7 @@ export function ComposerToolbarItemPreview(props: { item: ComposerToolbarItemId;
     const isTextControl = props.item === 'model' || props.item === 'effort' || props.item === 'fast'
     return (
         <span
-            className={`flex h-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 ${isTextControl ? 'gap-1 px-3' : 'w-8'}`}
+            className={`flex h-8 items-center justify-center text-[var(--app-fg)]/60 ${isTextControl ? 'gap-1 rounded-md px-3' : 'w-8 rounded-full'}`}
             aria-hidden="true"
         >
             {icon}
@@ -947,7 +947,7 @@ export function ComposerButtons(props: {
                         title={t('misc.fastMode')}
                         disabled={props.controlsDisabled}
                         onClick={props.onFastModeToggle}
-                        className={`flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        className={`flex h-8 items-center rounded-md px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                             props.fastModeEnabled
                                 ? 'bg-[var(--app-button)] text-[var(--app-button-text)]'
                                 : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
@@ -965,7 +965,7 @@ export function ComposerButtons(props: {
                         type="button"
                         aria-label={props.modelValueLabel}
                         title={props.modelValueLabel}
-                        className={`flex h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors ${
+                        className={`flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium transition-colors ${
                             props.modelValueOpen
                                 ? 'bg-[var(--app-secondary-bg)] text-[var(--app-link)]'
                                 : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
@@ -986,7 +986,7 @@ export function ComposerButtons(props: {
                         type="button"
                         aria-label={props.effortValueLabel}
                         title={props.effortValueLabel}
-                        className={`flex h-8 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors ${
+                        className={`flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium transition-colors ${
                             props.effortValueOpen
                                 ? 'bg-[var(--app-secondary-bg)] text-[var(--app-link)]'
                                 : 'text-[var(--app-fg)]/60 hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]'
