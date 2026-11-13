@@ -66,6 +66,8 @@ public struct ToolGroupBlock: Equatable, Sendable {
     public var lastToolId: String
     public var tools: [ToolCallBlock]
     public var processBlocks: [ChatBlock]? = nil
+    public var processRole: String? = nil
+    public var processRoundId: String? = nil
     public var processTiming: ExecutionProcessTiming? = nil
     public var defaultOpen: Bool
     public var historyState: HistoryState

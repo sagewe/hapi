@@ -2129,6 +2129,7 @@ function SessionChatInner(props: SessionChatProps) {
 
 
     const runtime = useHappyRuntime({
+        completedRounds: completedExecutionRounds(normalizedMessages),
         session: props.session,
         blocks: visibleBlocks,
         messagesVersion: props.messagesVersion,

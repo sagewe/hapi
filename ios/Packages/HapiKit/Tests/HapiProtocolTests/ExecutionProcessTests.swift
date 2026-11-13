@@ -21,7 +21,7 @@ struct ExecutionProcessTests {
             hasMoreMessages: more, keepVisibleIds: held, previousGroups: previous)
     }
     private func groups(_ blocks: [VisibleChatBlock]) -> [ToolGroupBlock] {
-        blocks.compactMap { if case .toolGroup(let group) = $0 { return group }; return nil }
+        blocks.compactMap { if case .toolGroup(let group) = $0, group.processRole != "header" { return group }; return nil }
     }
     @Test(arguments: ["CodexBash", "run_command", "Bash", "Shell"])
     func allProvidersUseTheSamePresentation(_ name: String) {
@@ -43,9 +43,9 @@ struct ExecutionProcessTests {
     @Test func currentActivityMovesIntoStableProcessAfterFinalAnswer() {
         let input = [user, tool("earlier"), text("progress", phase: "progress"), tool("tool")]
         let before = project(input, running: true)
-        #expect(before.last?.testID == "progress")
-        #expect(before.count == 3)
-        #expect(groups(before).first?.tools.map(\.id) == ["earlier", "tool"])
+        #expect(before.contains { $0.testID == "progress" })
+        #expect(before.count == 5)
+        #expect(groups(before).flatMap { $0.tools.map(\.id) } == ["earlier", "tool"])
         let after = project(input + [text("answer", phase: "final")], previous: groups(before))
         #expect(groups(before).first?.id == groups(after).first?.id)
         #expect(groups(after).first?.processBlocks?.map(\.id) == ["earlier", "progress", "tool"])
@@ -59,7 +59,8 @@ struct ExecutionProcessTests {
                 #expect(live.contains { $0.testID == "intro" })
                 #expect(live.contains { $0.testID == "detail" })
                 let updated = project(steps + [text("update", phase: phase), tool("third")], running: true)
-                #expect(!updated.contains { $0.testID == "intro" || $0.testID == "detail" })
+                #expect(updated.contains { $0.testID == "intro" })
+                #expect(updated.contains { $0.testID == "detail" })
                 #expect(updated.contains { $0.testID == "update" })
                 let final = project(steps + [text("answer", phase: "final")], running: true)
                 #expect(!final.contains { $0.testID == "intro" || $0.testID == "detail" })
@@ -72,9 +73,11 @@ struct ExecutionProcessTests {
         let input = [user, text("progress", phase: "progress"), tool("a", state: .running), tool("b", state: .running)]
         let timed = buildExecutionProcessBlocks(input.map { .block($0) }, completedRounds: [], isRunning: true,
             hasMoreMessages: false, roundTimings: ["u": .init(startedAt: 1000, endedAt: 41000)])
-        #expect(timed.count == 3)
-        #expect(timed[1].testID == groups(timed).first?.id)
-        #expect(groups(timed).first?.processTiming == .init(startedAt: 1000, endedAt: 41000, running: true))
+        #expect(timed.count == 4)
+        #expect(timed[1].testID == "execution-timer:u")
+        if case .toolGroup(let header) = timed[1] {
+            #expect(header.processTiming == .init(startedAt: 1000, endedAt: 41000, running: true))
+        }
         let partial = project(Array(input.dropFirst()), more: true)
         #expect(groups(partial).first?.processTiming?.startedAt == nil)
         let prompt = NormalizedMessage(id: "u", createdAt: 0, content: .user(text: "request", attachments: nil), invokedAt: 1000)
@@ -87,14 +90,26 @@ struct ExecutionProcessTests {
             source: .init(ingress: .toolResult, toolName: "view_image"), meta: nil)
         let input = [user, text("progress", phase: "progress"), tool("read")]
         let result = project(input + [.generatedImage(image)], running: true)
-        #expect(result.count == 3)
-        #expect(result.last?.testID == "progress")
+        #expect(result.count == 4)
+        #expect(result.contains { $0.testID == "progress" })
         #expect(groups(result).first?.processBlocks?.contains(.generatedImage(image)) == true)
         var displayed = image
         displayed.source = .init(ingress: .mcp, toolName: "display_image")
         #expect(project(input + [.generatedImage(displayed)], running: true).contains { $0.testID == "image" })
         displayed.source = nil
         #expect(project(input + [.generatedImage(displayed)], running: true).contains { $0.testID == "image" })
+    }
+    @Test func liveTimelinePreservesAllProseAndProtectsReadingOnCompletion() {
+        let input = [user, text("first", phase: "progress"), tool("a"), text("second", phase: "progress"), tool("b")]
+        let live = project(input, running: true)
+        #expect(live.map(\.testID) == ["u", "execution-timer:u", "first", "execution-tools:a", "second", "execution-tools:b"])
+        let held = project(input + [text("answer", phase: "final")], held: ["first"], previous: groups(live))
+        #expect(held.contains { $0.testID == "first" })
+        #expect(held.contains { $0.testID == "second" })
+        #expect(groups(held).map(\.id) == groups(live).map(\.id))
+        let settled = project(input + [text("answer", phase: "final")], previous: groups(live))
+        #expect(settled.count == 3)
+        #expect(groups(settled).count == 1)
     }
     @Test func exceptionsAndUserReadingRemainVisible() {
         let error = tool("error", state: .error)

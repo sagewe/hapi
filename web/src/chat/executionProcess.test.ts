@@ -10,7 +10,7 @@ function tool(id: string, name = 'Bash', state: ToolCallBlock['tool']['state'] =
         tool: { id, name, state, input: {}, createdAt: 1, startedAt: 1, completedAt: 2, execStartedAt: null, execCompletedAt: null, description: null, result: 'ok' } }
 }
 const options = { isRunning: false, completedRounds: new Set(['u']), hasMoreMessages: false }
-const process = (blocks: ReturnType<typeof buildExecutionProcessBlocks>) => blocks.filter((b): b is ToolGroupBlock => b.kind === 'tool-group')
+const process = (blocks: ReturnType<typeof buildExecutionProcessBlocks>) => blocks.filter((b): b is ToolGroupBlock => b.kind === 'tool-group' && b.processRole !== 'header')
 
 describe('execution process projection', () => {
     it.each(['CodexBash', 'run_command', 'Bash', 'Shell'])('uses the same outer grouping for %s', (name) => {
@@ -34,9 +34,9 @@ describe('execution process projection', () => {
     it('keeps current activity visible, then folds it under the same identity on completion', () => {
         const input = [user(), tool('earlier'), text('progress', 'progress'), tool('tool')]
         const first = buildExecutionProcessBlocks(input, { ...options, isRunning: true, completedRounds: new Set() })
-        expect(first.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
-        expect(first.at(-1)?.id).toBe('progress')
-        expect(process(first)[0].tools.map(b => b.id)).toEqual(['earlier', 'tool'])
+        expect(first.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'tool-group', 'agent-text', 'tool-group'])
+        expect(first.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['progress'])
+        expect(process(first).flatMap(group => group.tools.map(b => b.id))).toEqual(['earlier', 'tool'])
         expect(input.at(-1)).not.toHaveProperty('executionActivity')
         const next = buildExecutionProcessBlocks([...input, text('answer', 'final')], { ...options, previousGroups: process(first) })
         expect(process(next)[0].id).toBe(process(first)[0].id)
@@ -50,7 +50,7 @@ describe('execution process projection', () => {
             const live = buildExecutionProcessBlocks(steps, { ...options, isRunning: true })
             expect(live.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['intro', 'detail'])
             const updated = buildExecutionProcessBlocks([...steps, text('update', phase), tool('third')], { ...options, isRunning: true })
-            expect(updated.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['update'])
+            expect(updated.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['intro', 'detail', 'update'])
             const final = buildExecutionProcessBlocks([...steps, text('answer', 'final')], { ...options, isRunning: true })
             expect(final.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['answer'])
             expect(process(final)).toHaveLength(1)
@@ -60,8 +60,8 @@ describe('execution process projection', () => {
         const input = [user(), { ...text('progress', 'progress'), createdAt: 1000 }, tool('a', 'Bash', 'running'), tool('b', 'Bash', 'running')]
         const roundTimings = new Map([['u', { startedAt: 1000, endedAt: 41000 }]])
         const live = buildExecutionProcessBlocks(input, { ...options, isRunning: true, roundTimings })
-        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
-        expect(process(live)[0].processTiming).toEqual({ startedAt: 1000, endedAt: 41000, running: true })
+        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text', 'tool-group'])
+        expect((live[1] as ToolGroupBlock).processTiming).toEqual({ startedAt: 1000, endedAt: 41000, running: true })
         const settled = buildExecutionProcessBlocks([...input, text('answer', 'final')], { ...options, roundTimings, previousGroups: process(live) })
         expect(process(settled)[0].processTiming?.running).toBe(false)
         expect(process(settled)[0]).not.toBe(process(live)[0])
@@ -85,12 +85,22 @@ describe('execution process projection', () => {
             imageId: 'image', fileName: 'input.png', mimeType: 'image/png',
             source: { ingress: 'tool_result', toolName: 'view_image' } }
         const live = buildExecutionProcessBlocks([user(), text('progress', 'progress'), tool('read'), inspected], { ...options, isRunning: true })
-        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
+        expect(live.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text', 'tool-group'])
         expect(process(live)[0].processBlocks).toContain(inspected)
         for (const source of [undefined, { ingress: 'mcp' as const, toolName: 'display_image' }, { ingress: 'tool_result' as const, toolName: 'hapi_display_image' }]) {
             const displayed = { ...inspected, source }
             expect(buildExecutionProcessBlocks([user(), tool('read'), displayed], { ...options, isRunning: true })).toContain(displayed)
         }
+    })
+    it('keeps all live prose in order and protects the timeline while it is being read', () => {
+        const input = [user(), text('first', 'progress'), tool('a'), text('second', 'progress'), tool('b')]
+        const live = buildExecutionProcessBlocks(input, { ...options, isRunning: true })
+        expect(live.map(b => b.kind === 'tool-group' ? b.processRole : b.id)).toEqual(['u', 'header', 'first', 'tools', 'second', 'tools'])
+        const held = buildExecutionProcessBlocks([...input, text('final', 'final')], { ...options, previousGroups: process(live), keepVisibleIds: new Set(['first']) })
+        expect(held.filter(b => b.kind === 'agent-text').map(b => b.id)).toEqual(['first', 'second', 'final'])
+        expect(process(held).map(b => b.id)).toEqual(process(live).map(b => b.id))
+        const settled = buildExecutionProcessBlocks([...input, text('final', 'final')], { ...options, previousGroups: process(live) })
+        expect(settled.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-text'])
     })
     it('keeps pending requests, questions, plans and user shell commands outside', () => {
         const permission = tool('permission'); permission.tool.permission = { id: 'p', status: 'pending' }

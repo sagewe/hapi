@@ -129,6 +129,37 @@ public func buildExecutionProcessBlocks(
             if case .agentText(let text) = block { return text.meta?["assistantPhase"]?.stringValue == "final" }
             return false
         }
+        let readingTimeline = previousGroups.contains { $0.processRoundId == roundID }
+            && round.contains { ($0.kind == "agent-text" || $0.kind == "agent-reasoning") && keepVisibleIds.contains($0.id) }
+        if (tail && isRunning && !hasFinal) || readingTimeline {
+            func makeGroup(_ members: [ChatBlock], role: String) -> ToolGroupBlock {
+                let first = members.first ?? round[0]
+                let tools = members.compactMap(\.asToolCall)
+                let id = role == "header" ? "execution-timer:\(roundID)" : "execution-tools:\(first.id)"
+                var group = ToolGroupBlock(id: id, createdAt: first.createdAt, invokedAt: first.invokedAt,
+                    firstToolId: first.id, lastToolId: members.last?.id ?? first.id, tools: tools,
+                    defaultOpen: false, historyState: .complete, needsOlderHistory: false,
+                    activityTitle: nil, presentationMode: .default, summary: summarizeToolGroup(tools))
+                group.processBlocks = members
+                group.processRole = role
+                group.processRoundId = roundID
+                group.processTiming = role == "header" ? timing : nil
+                return group
+            }
+            output.append(.toolGroup(makeGroup([], role: "header")))
+            var segment: [ChatBlock] = []
+            func flushSegment() {
+                if !segment.isEmpty { output.append(.toolGroup(makeGroup(segment, role: "tools"))) }
+                segment = []
+            }
+            for block in round {
+                if (block.kind == "tool-call" || block.kind == "generated-image") && canFoldExecutionBlock(block) { segment.append(block) }
+                else { flushSegment(); output.append(.block(block)) }
+            }
+            flushSegment()
+            round = []
+            return
+        }
         if !completed && !hasFinal, let lastExplanation = round.lastIndex(where: { block in
             switch block { case .agentText, .agentReasoning: return true; default: return false }
         }) {

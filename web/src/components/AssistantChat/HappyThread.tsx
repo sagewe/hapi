@@ -1,3 +1,4 @@
+import { InitialResponseFeedback } from './InitialResponseFeedback'
 import { useSelectedSessionSeen } from '@/hooks/useSelectedSessionSeen'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThreadPrimitive, unstable_useThreadMessageIds, useAuiState } from '@assistant-ui/react'
@@ -2641,6 +2642,7 @@ export function HappyThread(props: {
                             )}
                             <div className="happy-thread-messages flex flex-col gap-3">
                                 <ThreadMessagesById components={THREAD_MESSAGE_COMPONENTS} />
+                                <InitialResponseFeedback state={runtimeExtras?.initialResponseState ?? null} />
                             </div>
                         </div>
                     </div>

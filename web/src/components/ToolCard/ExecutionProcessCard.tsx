@@ -5,6 +5,7 @@ import { type ToolGroupBlock } from '@/chat/toolGroups'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { ToolCard } from './ToolCard'
+import { formatGroupedHeaderSubtitle } from './groupedPresentation'
 import { useTranslation } from '@/lib/use-translation'
 
 /** Preserve the visible step, not just the enclosing assistant card, when an
@@ -56,13 +57,18 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
     // Keep each inspected step mounted as its state changes; regrouping completed
     // tools would discard an open detail dialog and move the reading position.
     const members = block.processBlocks ?? []
-    return <section data-testid="execution-process" className="min-w-0">
+    if (block.processRole === 'header') return <div data-testid="execution-timing" className="flex min-h-11 items-center text-xs text-[var(--app-hint)]">
+        <ExecutionTimingLabel timing={block.processTiming} />
+    </div>
+    return <section data-testid={block.processRole === 'tools' ? 'execution-tools' : 'execution-process'} className="min-w-0">
         <button type="button" aria-expanded={open} className="flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
             onClick={() => {
                 ctx.setExecutionProcessOpen?.(block.id, !open)
                 if (!open) ctx.onNestedScrollFollowChange?.(false)
             }}>
-            <span><ExecutionTimingLabel timing={block.processTiming} /></span>
+            <span>{block.processRole === 'tools'
+                ? (block.tools.length === 0 ? t('chat.execution.media') : formatGroupedHeaderSubtitle(block, t) ?? t('chat.execution.tools', { n: block.tools.length }))
+                : <ExecutionTimingLabel timing={block.processTiming} />}</span>
             <span aria-hidden="true">{open ? '⌄' : '›'}</span>
         </button>
         {open ? <div className="space-y-3 border-l border-[var(--app-border)] pl-3">

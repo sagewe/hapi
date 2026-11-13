@@ -25,6 +25,8 @@ const MESSAGE_PART_COMPONENTS = {
 
 export function HappyAssistantMessage() {
     const ctx = useHappyChatContext()
+    const hasVisibleContent = useAuiState((s) => s.message.content.some(part =>
+        (part.type !== 'text' && part.type !== 'reasoning') || part.text.trim().length > 0))
     const showSessionSummaryInChat = useSessionSummaryInChat()
     const messageId = useAuiState((s) => s.message.id)
     const elementId = getConversationMessageAnchorId(messageId)
@@ -78,6 +80,10 @@ export function HappyAssistantMessage() {
     const rootClass = toolOnly && !hasExecutionPresentation
         ? 'py-1 min-w-0 max-w-full overflow-x-hidden'
         : 'px-1 min-w-0 max-w-full overflow-x-hidden'
+
+    // assistant-ui creates an empty running message before the first real part.
+    // Its timestamp/actions must not add a second row above initial feedback.
+    if (!hasVisibleContent) return null
 
     return (
         <MessagePrimitive.Root

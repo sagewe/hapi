@@ -12,6 +12,7 @@ struct TranscriptRow: Identifiable, Equatable {
         case history(ChatHistoryPagingState.Phase, Bool, Bool)
         case message(VisibleChatBlock, Bool)
         case group(ToolGroupPresentation)
+        case responseFeedback(InitialResponseState)
     }
 
     final class Box: Equatable {
@@ -75,6 +76,9 @@ struct ChatTranscriptView: View {
         var result: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore, isHistoryDisabled)]
         result.reserveCapacity(model.messageRows.count + 1)
         result.append(contentsOf: model.messageRows)
+        if let state = model.responseFeedback {
+            result.append(TranscriptRow(id: "chat-response-feedback", role: .content, box: .init(.responseFeedback(state))))
+        }
         return result
     }
 
@@ -148,6 +152,8 @@ struct ChatTranscriptView: View {
             ChatBlockCard(block: block, basePath: basePath, isHighlighted: isHighlighted)
         case .group(let presentation):
             ToolGroupBlockView(presentation: presentation)
+        case .responseFeedback(let state):
+            InitialResponseFeedbackView(state: state)
         }
     }
 }
@@ -836,5 +842,34 @@ struct MessageJumpSheet: View {
             return date.formatted(date: .omitted, time: .shortened)
         }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct InitialResponseFeedbackView: View {
+    let state: InitialResponseState
+    @Environment(\.hapiTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var label: String {
+        switch state {
+        case .sending: String(localized: "Sending…")
+        case .waiting: String(localized: "Waiting to start…")
+        case .thinking: String(localized: "Thinking…")
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if reduceMotion {
+                Circle().fill(theme.textSecondary).frame(width: 5, height: 5)
+            } else { ProgressView().controlSize(.small).accessibilityHidden(true) }
+            Text(label)
+        }
+        .font(.subheadline)
+        .foregroundStyle(theme.textSecondary)
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("chat-response-feedback")
     }
 }

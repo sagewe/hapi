@@ -1,4 +1,10 @@
 export default {
+  'chat.execution.media': 'Viewed images',
+  'chat.execution.tools': '{n} tool calls',
+  'chat.response.sending': 'Sending…',
+  'chat.response.waiting': 'Waiting to start…',
+  'chat.response.thinking': 'Thinking…',
+
   'chat.execution.running': 'Running for {duration}',
   'chat.execution.elapsed': 'Took {duration}',
   'chat.execution.unknown': 'Time unavailable',

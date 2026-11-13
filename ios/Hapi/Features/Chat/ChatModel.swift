@@ -171,6 +171,11 @@ final class ChatModel {
     @ObservationIgnored private var heldExecutionIDs = Set<String>()
     @ObservationIgnored private var executionGroups: [ToolGroupBlock] = []
 
+    private var responseFeedbackBase: InitialResponseState?
+    var responseFeedback: InitialResponseState? {
+        guard !hasTrimmedTail else { return nil }
+        return interactor.isSending ? .sending : responseFeedbackBase
+    }
     private(set) var header: ChatHeaderUI
     /// Workspace root, for path display in tool cards.
     private(set) var basePath: String?
@@ -520,6 +525,7 @@ final class ChatModel {
         hub.scratchlist.open(sessionId)
         let chat = chat
         chat.onSessionRemoved = { [weak self] in
+            self?.responseFeedbackBase = nil
             self?.toolInspection.invalidate()
             self?.blocks = []
             self?.messageRows = []
@@ -1093,6 +1099,10 @@ final class ChatModel {
     ) {
         guard !chat.isRemoved else { return }
         let running = detail?.thinking ?? summary?.thinking ?? false
+        responseFeedbackBase = initialResponseState(visible, isSending: false, isRunning: running,
+            isActive: detail?.active ?? summary?.active ?? false,
+            activeTurnStartedAt: detail?.activeTurnStartedAt,
+            completedRounds: completionEvidence, isHydrating: window.isSyncingTail)
         let processChanged = executionTimings != timingEvidence || executionCompletedRounds != completionEvidence || executionIsRunning != running || hasMore != window.hasMore
         executionCompletedRounds = completionEvidence
         executionTimings = timingEvidence

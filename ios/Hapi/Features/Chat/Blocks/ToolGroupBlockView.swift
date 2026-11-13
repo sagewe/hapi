@@ -13,10 +13,12 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     let errorCount: Int
     let isExecutionProcess: Bool
     let processTiming: ExecutionProcessTiming?
+    let processRole: String?
 
     init(_ block: ToolGroupBlock) {
         id = block.id
         processTiming = block.processTiming
+        processRole = block.processRole
         isExecutionProcess = block.processBlocks != nil
         activityTitle = block.activityTitle
         totalTools = block.summary.totalTools
@@ -26,14 +28,15 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     }
 
     var title: String {
-        if isExecutionProcess { return String(localized: "Elapsed time") }
+        if processRole == "tools" && totalTools == 0 { return String(localized: "Viewed images") }
+        if isExecutionProcess && processRole != "tools" { return String(localized: "Elapsed time") }
         let title = totalTools == 1 ? String(localized: "1 tool call")
             : String(format: String(localized: "%lld tool calls"), Int64(totalTools))
         return activityTitle.map { "\($0) · \(title)" } ?? title
     }
 
     var categorySummary: String {
-        if isExecutionProcess { return "" }
+        if isExecutionProcess && processRole != "tools" { return "" }
         let parts = ToolGroupActionKind.allCases.compactMap { kind -> String? in
             let count = countsByKind[kind] ?? 0
             guard count > 0 else { return nil }
@@ -68,7 +71,27 @@ struct ToolGroupBlockView: View {
     @Environment(\.hapiTypography) private var typography
 
     var body: some View {
-        if presentation.isExecutionProcess {
+        if presentation.processRole == "header" {
+            Group {
+                if presentation.processTiming?.running == true {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in Text(timingLabel(now: context.date)) }
+                } else { Text(timingLabel(now: .now)) }
+            }
+            .font(.caption).foregroundStyle(theme.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        } else if presentation.processRole == "tools" {
+            Button { openGroup?(presentation.id) } label: {
+                HStack(spacing: 8) {
+                    Text(presentation.categorySummary.isEmpty ? presentation.title : presentation.categorySummary)
+                    Image(systemName: "chevron.right")
+                }
+                .font(.caption).foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("tool-group-\(presentation.id)")
+        } else if presentation.isExecutionProcess {
             Button { openGroup?(presentation.id) } label: {
                 Group {
                     if presentation.processTiming?.running == true {

@@ -1,4 +1,10 @@
 export default {
+  'chat.execution.media': '查看的图片',
+  'chat.execution.tools': '{n} 次工具调用',
+  'chat.response.sending': '发送中…',
+  'chat.response.waiting': '等待处理…',
+  'chat.response.thinking': '正在思考…',
+
   'chat.execution.running': '已运行 {duration}',
   'chat.execution.elapsed': '用时 {duration}',
   'chat.execution.unknown': '用时未知',

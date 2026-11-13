@@ -134,6 +134,35 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         // Keep consecutive prose/reasoning until a new explanation or answer arrives.
         const explanation = new Set<string>()
         const hasFinal = round.some(block => block.kind === 'agent-text' && isObject(block.meta) && block.meta.assistantPhase === 'final')
+        const readingTimeline = options.previousGroups?.some(group => group.processRoundId === roundId)
+            && round.some(block => (block.kind === 'agent-text' || block.kind === 'agent-reasoning') && options.keepVisibleIds?.has(block.id))
+        if ((tail && options.isRunning && !hasFinal) || readingTimeline) {
+            const makeGroup = (members: ChatBlock[], role: 'header' | 'tools'): ToolGroupBlock => {
+                const first = members[0] ?? round[0]
+                const tools = members.filter((block): block is ToolCallBlock => block.kind === 'tool-call')
+                const id = role === 'header' ? `execution-timer:${roundId}` : `execution-tools:${first.id}`
+                return { kind: 'tool-group', id, createdAt: first.createdAt, invokedAt: first.invokedAt,
+                    firstToolId: first.id, lastToolId: members.at(-1)?.id ?? first.id, tools,
+                    processBlocks: members, processRole: role, processRoundId: roundId,
+                    processTiming: role === 'header' ? processTiming : undefined,
+                    defaultOpen: false, historyState: 'complete', needsOlderHistory: false,
+                    summary: summarizeToolGroup(tools) }
+            }
+            output.push(makeGroup([], 'header'))
+            let segment: ChatBlock[] = []
+            const flushSegment = () => {
+                if (segment.length) output.push(makeGroup(segment, 'tools'))
+                segment = []
+            }
+            for (const block of round) {
+                if ((block.kind === 'tool-call' || block.kind === 'generated-image') && foldable(block)) segment.push(block)
+                else { flushSegment(); output.push(block) }
+            }
+            flushSegment()
+            round = []
+            return
+        }
+
         if (!completed && !hasFinal) {
             let cursor = round.findLastIndex(block => block.kind === 'agent-text' || block.kind === 'agent-reasoning')
             for (; cursor >= 0; cursor -= 1) {

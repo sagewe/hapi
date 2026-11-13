@@ -1,3 +1,4 @@
+import { initialResponseState, type InitialResponseState } from '@/chat/initialResponse'
 import { useCallback, useMemo, useRef } from 'react'
 import type React from 'react'
 import type { AppendMessage, AttachmentAdapter, ThreadMessageLike } from '@assistant-ui/react'
@@ -60,6 +61,7 @@ export type HappyChatMessageMetadata = {
 export type HappyRuntimeExtras = Readonly<{
     messagesVersion: number
     historyVersion: number
+    initialResponseState?: InitialResponseState | null
 }>
 
 function formatCodexReviewText(review: CodexReview): string {
@@ -880,6 +882,7 @@ export function useHappyRuntime(props: {
     viewMode?: 'tail' | 'history'
     isSyncingTail?: boolean
     isLoadingMore?: boolean
+    completedRounds?: ReadonlySet<string>
     isSending: boolean
     isRunning?: boolean
     onSendMessage: (
@@ -1095,10 +1098,17 @@ export function useHappyRuntime(props: {
         await props.onAbort()
     }, [props.onAbort])
 
+    const responseState = initialResponseState(props.blocks, {
+        isSending: props.isSending, isRunning: props.session.thinking, isActive: props.session.active,
+        activeTurnStartedAt, completedRounds: props.completedRounds,
+        awaitingOutput: waitingForAssistantOutput, isHistory: props.viewMode === 'history',
+        isHydrating: props.isSyncingTail
+    })
     const extras = useMemo<HappyRuntimeExtras>(() => ({
         messagesVersion: props.messagesVersion,
-        historyVersion: props.historyVersion
-    }), [props.messagesVersion, props.historyVersion])
+        historyVersion: props.historyVersion,
+        initialResponseState: responseState
+    }), [props.messagesVersion, props.historyVersion, responseState])
 
     // Memoize the adapter to avoid recreating on every render
     // useExternalStoreRuntime may use adapter identity for subscriptions
