@@ -235,6 +235,12 @@ struct SessionListView: View {
             rowCell(row, isSelected: isSelected, useSelectionLink: selection != nil)
         }
         .equatable()
+        .listRowInsets(EdgeInsets(top: row.hierarchy == nil ? Self.rowVerticalInset : 6, leading: 16, bottom: row.hierarchy == nil ? Self.rowVerticalInset : 6, trailing: 16))
+        .listRowSeparator(.hidden, edges: .bottom)
+        .listRowSeparator(row.hierarchy == nil ? .visible : .hidden, edges: .top)
+        // Default separator color reads heavy against these rows; the theme
+        // divider is the WeChat-style faint hairline.
+        .listRowSeparatorTint(theme.divider)
         .tag(row.id)
         .id(row.id)
     }
@@ -245,6 +251,12 @@ struct SessionListView: View {
             rowCell(row, isSelected: isSelected, useSelectionLink: false)
         }
         .equatable()
+        .listRowInsets(EdgeInsets(top: row.hierarchy == nil ? Self.rowVerticalInset : 6, leading: 16, bottom: row.hierarchy == nil ? Self.rowVerticalInset : 6, trailing: 16))
+        .listRowSeparator(.hidden, edges: .bottom)
+        .listRowSeparator(row.hierarchy == nil ? .visible : .hidden, edges: .top)
+        // Default separator color reads heavy against these rows; the theme
+        // divider is the WeChat-style faint hairline.
+        .listRowSeparatorTint(theme.divider)
         .id(compositeId)
     }
 
@@ -275,10 +287,6 @@ struct SessionListView: View {
             }
         }
         .listRowBackground(rowBackground(for: row, isSelected: isSelected))
-        .listRowInsets(EdgeInsets(top: Self.rowVerticalInset, leading: 16, bottom: Self.rowVerticalInset, trailing: 16))
-        // Default separator color reads heavy against these rows; the theme
-        // divider is the WeChat-style faint hairline.
-        .listRowSeparatorTint(theme.divider)
         .swipeActions(edge: .leading) {
             leadingSwipeActions(row)
         }
@@ -295,7 +303,7 @@ struct SessionListView: View {
         if isSelected {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.accentColor.opacity(0.12))
-                .padding(.leading, CGFloat(row.hierarchy?.visualDepth ?? 0) * 12)
+                .padding(.leading, CGFloat(row.hierarchy?.visualDepth ?? 0) * 24)
         }
     }
 
@@ -416,21 +424,10 @@ struct SessionListView: View {
     }
 
     private func rowLabel(_ row: SessionRowUI, isSelected: Bool = false) -> some View {
-        let indent = CGFloat(row.hierarchy?.visualDepth ?? 0) * 12
+        let indent = CGFloat(row.hierarchy?.visualDepth ?? 0) * 24
         return SessionRowView(row: row, isSelected: isSelected)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, indent)
-            .overlay(alignment: .leading) {
-                if let connector = row.hierarchy {
-                    SessionTreeConnectorView(connector: connector)
-                        .frame(width: indent)
-                        .padding(.vertical, -Self.rowVerticalInset)
-                        #if !targetEnvironment(macCatalyst)
-                        .offset(x: -12)
-                        #endif
-                        .allowsHitTesting(false)
-                }
-            }
             .contentShape(Rectangle())
     }
 
@@ -705,6 +702,7 @@ struct SessionRowView: View {
     var isSelected = false
 
     private let iconSpacing: CGFloat = 12
+    private var displayIconSize: CGFloat { row.hierarchy == nil ? iconSize : iconSize * 0.8 }
 
     private var isDisconnectedIdle: Bool {
         !row.summary.active && row.status == nil
@@ -724,7 +722,7 @@ struct SessionRowView: View {
         .padding(.vertical, 6)
         #endif
         // Separators start under the text column, as in Mail and Messages.
-        .alignmentGuide(.listRowSeparatorLeading) { _ in iconSize + iconSpacing }
+        .alignmentGuide(.listRowSeparatorLeading) { _ in displayIconSize + iconSpacing }
         .accessibilityElement(children: .combine)
         .accessibilityValue(row.unread ? Text("Unread") : Text(verbatim: ""))
         .accessibilityIdentifier("home.session.\(row.id)")
@@ -732,9 +730,9 @@ struct SessionRowView: View {
 
     /// Attention is expressed once, in the status text beside the project.
     private var agentIcon: some View {
-        AgentFlavorIconView(flavor: row.flavor, size: iconSize * 0.8)
+        AgentFlavorIconView(flavor: row.flavor, size: displayIconSize * 0.8)
             .opacity(isDisconnectedIdle ? 0.48 : 1.0)
-            .frame(width: iconSize, height: iconSize)
+            .frame(width: displayIconSize, height: displayIconSize)
             .overlay(alignment: .bottomTrailing) {
                 if row.status == nil && row.summary.active {
                     connectedIdleBadge
@@ -744,7 +742,7 @@ struct SessionRowView: View {
 
     private var connectedIdleBadge: some View {
         Image(systemName: "circle.fill")
-            .font(.system(size: iconSize * 0.2))
+            .font(.system(size: displayIconSize * 0.2))
             .foregroundStyle(theme.success)
             .padding(2)
             .background(Circle().fill(theme.background))
@@ -769,7 +767,7 @@ struct SessionRowView: View {
             }
             .font(.footnote)
             .fontWeight(row.unread ? .semibold : .regular)
-            .foregroundStyle(row.unread ? theme.accent : theme.textSecondary)
+            .foregroundStyle(row.unread ? theme.accent : theme.textSecondary.opacity(0.75))
             .monospacedDigit()
             .fixedSize()
         }
@@ -1091,79 +1089,6 @@ struct SessionTitleEditor: View {
             }
             .interactiveDismissDisabled(busy)
         }
-    }
-}
-
-/// Neutral hairline tree guide rendered in the outer indentation gutter.
-private struct SessionTreeConnectorView: View {
-    @Environment(\.hapiTheme) private var theme
-    let connector: SessionTreeConnector
-
-    var body: some View {
-        let strokeColor = theme.textSecondary.opacity(theme.isDark ? 0.30 : 0.24)
-        Canvas { context, size in
-            let midY = floor(size.height * 0.5) + 0.5
-            let radius: CGFloat = 5
-            let style = StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round)
-
-            if connector.visualDepth == 1 {
-                let x: CGFloat = 3.5
-                let endX: CGFloat = 9.5
-                var path = Path()
-                if connector.isLastChild {
-                    let bendStart = max(0, midY - radius)
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: bendStart))
-                    path.addQuadCurve(
-                        to: CGPoint(x: x + radius, y: midY),
-                        control: CGPoint(x: x, y: midY)
-                    )
-                    path.addLine(to: CGPoint(x: endX, y: midY))
-                } else {
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: size.height))
-                    path.move(to: CGPoint(x: x, y: midY))
-                    path.addLine(to: CGPoint(x: endX, y: midY))
-                }
-                context.stroke(path, with: .color(strokeColor), style: style)
-            } else {
-                var path = Path()
-                if connector.continuesAtLevel1 {
-                    path.move(to: CGPoint(x: 3.5, y: 0))
-                    path.addLine(to: CGPoint(x: 3.5, y: size.height))
-                }
-                let x: CGFloat = 15.5
-                let endX: CGFloat = 21.5
-                if connector.isDepthCapped {
-                    let topStub = max(4, midY - 8)
-                    let bendStart = max(topStub, midY - 4)
-                    path.move(to: CGPoint(x: x, y: topStub))
-                    path.addLine(to: CGPoint(x: x, y: bendStart))
-                    path.addQuadCurve(
-                        to: CGPoint(x: x + 4, y: midY),
-                        control: CGPoint(x: x, y: midY)
-                    )
-                    path.addLine(to: CGPoint(x: endX, y: midY))
-                } else if connector.isLastChild {
-                    let bendStart = max(0, midY - radius)
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: bendStart))
-                    path.addQuadCurve(
-                        to: CGPoint(x: x + radius, y: midY),
-                        control: CGPoint(x: x, y: midY)
-                    )
-                    path.addLine(to: CGPoint(x: endX, y: midY))
-                } else {
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: size.height))
-                    path.move(to: CGPoint(x: x, y: midY))
-                    path.addLine(to: CGPoint(x: x, y: midY))
-                    path.addLine(to: CGPoint(x: endX, y: midY))
-                }
-                context.stroke(path, with: .color(strokeColor), style: style)
-            }
-        }
-        .accessibilityHidden(true)
     }
 }
 

@@ -1004,54 +1004,6 @@ function CollapsiblePanel(props: { open: boolean; children: ReactNode }) {
     )
 }
 
-function SessionTreeConnectorGutter(props: { connector: SessionTreeConnector }) {
-    const { visualDepth, continuesAtLevel1, isLastChild, isDepthCapped } = props.connector
-    const gutterWidth = visualDepth * 12
-    const activeSlotLeft = visualDepth === 1 ? 5 : 17
-    const railToneClass = 'bg-[var(--app-hint)]/30'
-    const cornerToneClass = 'border-[var(--app-hint)]/30'
-
-    return (
-        <div
-            data-testid="session-tree-connector"
-            data-visual-depth={visualDepth}
-            data-depth-capped={isDepthCapped ? 'true' : undefined}
-            aria-hidden="true"
-            className="pointer-events-none absolute -top-0.5 -bottom-0.5 left-0"
-            style={{ width: `${gutterWidth}px` }}
-        >
-            {visualDepth === 2 && continuesAtLevel1 ? (
-                <span
-                    className={`absolute top-0 bottom-0 w-px ${railToneClass}`}
-                    style={{ left: '5px' }}
-                />
-            ) : null}
-            {isDepthCapped ? (
-                <span
-                    className={`absolute w-[6px] h-[7px] rounded-bl-[3.5px] border-l border-b ${cornerToneClass}`}
-                    style={{ left: `${activeSlotLeft}px`, top: 'calc(50% - 4px)' }}
-                />
-            ) : isLastChild ? (
-                <span
-                    className={`absolute top-0 w-[6px] rounded-bl-[5px] border-l border-b ${cornerToneClass}`}
-                    style={{ left: `${activeSlotLeft}px`, height: 'calc(50% + 1px)' }}
-                />
-            ) : (
-                <>
-                    <span
-                        className={`absolute top-0 bottom-0 w-px ${railToneClass}`}
-                        style={{ left: `${activeSlotLeft}px` }}
-                    />
-                    <span
-                        className={`absolute h-px w-[6px] ${railToneClass}`}
-                        style={{ left: `${activeSlotLeft}px`, top: '50%' }}
-                    />
-                </>
-            )}
-        </div>
-    )
-}
-
 const SessionItem = memo(function SessionItem(props: {
     session: SessionSummary
     onSelect: (sessionId: string, targetMessageId?: string, targetMessageQuery?: string) => void
@@ -1253,21 +1205,18 @@ const SessionItem = memo(function SessionItem(props: {
         hasScheduleTooltip
     )
     const rowSurfaceClass = selected ? 'bg-[var(--app-secondary-bg)]' : ''
-    const indentPx = hierarchyConnector ? hierarchyConnector.visualDepth * 12 : 0
+    const indentPx = hierarchyConnector ? hierarchyConnector.visualDepth * 24 : 0
     return (
         <>
             <div
                 className="session-list-row relative"
                 data-quick-action-pending={quickArchivePending ? '' : undefined}
             >
-                {hierarchyConnector ? (
-                    <SessionTreeConnectorGutter connector={hierarchyConnector} />
-                ) : null}
                 <button
                     type="button"
                     {...longPressHandlers}
                     data-session-scroll-anchor
-                    className={`session-list-item group/session-row relative flex flex-col gap-1 py-2 pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
+                    className={`session-list-item group/session-row relative flex flex-col gap-1 ${hierarchyConnector ? 'py-1.5 min-h-11' : 'py-2'} pl-2.5 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)] select-none rounded-lg ${indentPx === 0 ? 'w-full' : ''} ${rowSurfaceClass}`}
                     style={{
                         WebkitTouchCallout: 'none',
                         ...(indentPx > 0 ? { marginLeft: `${indentPx}px`, width: `calc(100% - ${indentPx}px)` } : {}),
@@ -1277,6 +1226,7 @@ const SessionItem = memo(function SessionItem(props: {
                 >
                     <SessionRowSummary
                         session={s}
+                        compact={Boolean(hierarchyConnector)}
                         showPath={showPath}
                         showDetailedStatus={showDetailedStatus}
                         selected={selected}

@@ -79,6 +79,7 @@ function getSessionTimeLabel(
  */
 export function SessionRowSummary(props: {
     session: SessionSummary
+    compact?: boolean
     showPath?: boolean
     showDetailedStatus?: boolean
     selected?: boolean
@@ -110,6 +111,7 @@ export function SessionRowSummary(props: {
 }) {
     const {
         session: s,
+        compact = false,
         showPath = true,
         showDetailedStatus = true,
         selected = false,
@@ -175,15 +177,15 @@ export function SessionRowSummary(props: {
             : null
 
     const agentIcon = (
-        <span className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center">
+        <span className={`relative inline-flex shrink-0 items-center justify-center ${compact ? 'h-5 w-5' : 'h-6 w-6'}`}>
             <AgentFlavorIcon
                 flavor={s.metadata?.flavor}
-                className={`h-6 w-6 transition-opacity ${isDisconnected ? 'opacity-50' : ''}`}
+                className={`${compact ? 'h-5 w-5' : 'h-6 w-6'} transition-opacity ${isDisconnected ? 'opacity-50' : ''}`}
             />
             {s.active && visualStatus.tier === 'online' ? (
                 <span
                     data-testid="session-presence"
-                    className="absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-[var(--app-bg)] bg-[var(--app-badge-success-text)]"
+                    className={`absolute -bottom-0.5 -right-0.5 ${compact ? 'h-1 w-1' : 'h-1.5 w-1.5'} rounded-full ring-2 ring-[var(--app-bg)] bg-[var(--app-badge-success-text)]`}
                 />
             ) : null}
         </span>

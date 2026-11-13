@@ -161,11 +161,13 @@ final class HomeFilterPresentationTests: XCTestCase {
         let heights = try (0..<4).map { index in
             try XCTUnwrap(list.layoutAttributesForItem(at: IndexPath(item: index, section: 0))).size.height
         }
-        for height in heights {
-            XCTAssertGreaterThanOrEqual(height, 60)
-            XCTAssertLessThanOrEqual(height, 70, "Nested subsession rows must stay two lines")
-            XCTAssertEqual(height, heights[0], accuracy: 1)
+        XCTAssertGreaterThanOrEqual(heights[0], 60)
+        for height in heights.dropFirst() {
+            XCTAssertGreaterThanOrEqual(height, 44, "Keep an accessible row hit target")
+            XCTAssertLessThan(height, heights[0], "Children use less vertical space than the parent")
+            XCTAssertEqual(height, heights[1], accuracy: 1)
         }
+        try capture(window, name: "nested-sessions")
     }
 
     func testHomeLayoutSpecimens() async throws {
