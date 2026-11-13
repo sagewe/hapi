@@ -550,6 +550,13 @@
         }
       }
     },
+    "%lld running tools" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld running" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "运行中 %lld" } }
+      }
+    },
     "%lld failed tools" : {
       "extractionState" : "manual",
       "localizations" : {

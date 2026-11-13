@@ -30,6 +30,16 @@ struct ExecutionProcessTests {
         #expect(groups(result).first?.processBlocks?.map(\.id) == ["progress", "tool"])
         #expect(result.last?.testID == "answer")
     }
+    @Test func concurrentToolsAndFailuresStayInOneProcess() {
+        let input = [user, text("progress", phase: "progress"), tool("failed", state: .error),
+            tool("parallel-a", state: .running), text("update", phase: "progress"), tool("finished"),
+            tool("parallel-b", state: .running), text("answer", phase: "final")]
+        let result = project(input, running: true)
+        #expect(groups(result).count == 1)
+        #expect(groups(result).first?.summary.runningCount == 2)
+        #expect(groups(result).first?.summary.errorCount == 1)
+        #expect(groups(result).first?.processBlocks?.map(\.id) == Array(input.dropFirst().dropLast()).map(\.id))
+    }
     @Test func currentActivityMovesIntoStableProcessAfterFinalAnswer() {
         let input = [user, text("progress", phase: "progress"), tool("tool")]
         let before = project(input, running: true)
@@ -42,8 +52,10 @@ struct ExecutionProcessTests {
         let error = tool("error", state: .error)
         let question = tool("question", name: "request_user_input")
         let plan = tool("plan", name: "ExitPlanMode")
-        let result = project([user, text("reading", phase: "progress"), tool("work"), error, question, plan, text("answer")], held: ["reading"])
-        for id in ["reading", "error", "question", "plan", "answer"] { #expect(result.contains { $0.testID == id }) }
+        let result = project([user, text("reading", phase: "progress"), tool("work"), error, question, plan, tool("later-work"), text("answer")], held: ["reading"])
+        for id in ["reading", "question", "plan", "answer"] { #expect(result.contains { $0.testID == id }) }
+        #expect(groups(result).count == 1)
+        #expect(groups(result).first?.tools.map(\.id) == ["work", "error", "later-work"])
     }
     @Test func resolvedQuestionsCanJoinTheProcess() {
         var answered = tool("answered", name: "request_user_input").asToolCall!
@@ -67,7 +79,7 @@ struct ExecutionProcessTests {
         let grown = project([user, tool("a"), tool("b"), tool("c"), tool("d"), text("answer")], previous: groups(first))
         #expect(groups(grown).first?.id == groups(first).first?.id)
         let split = project([user, tool("a"), tool("b"), tool("error", state: .error), tool("c"), tool("d"), text("answer")], previous: groups(grown))
-        #expect(groups(split).count == 2)
+        #expect(groups(split).count == 1)
         #expect(Set(split.map(\.testID)).count == split.count)
     }
     @Test(arguments: ["progress", "final"])

@@ -2,6 +2,23 @@ import { expect, test } from '@playwright/test'
 
 
 for (const agent of ['codex', 'agy']) {
+    test(`${agent}: interleaved errors and running tools share one process`, async ({ page }) => {
+        await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}&concurrent=1`)
+        const process = page.getByTestId('execution-process')
+        await expect(process).toHaveCount(1)
+        await expect(process.getByText('2 running', { exact: true })).toBeVisible()
+        await expect(process.getByText('1 error', { exact: true })).toBeVisible()
+        await expect(page.getByTestId('execution-activity')).toHaveCount(1)
+        await page.getByRole('button', { name: 'Complete turn' }).click()
+        await expect(process).toHaveCount(1)
+        await expect(process.getByText('2 running', { exact: true })).toHaveCount(0)
+        await expect(process.getByText('1 error', { exact: true })).toBeVisible()
+        await expect(page.getByTestId('execution-activity')).toHaveCount(0)
+        await process.getByRole('button', { name: /Execution process/ }).click()
+        await process.getByRole('button', { name: /1 error/ }).filter({ has: page.getByRole('heading') }).click()
+        await expect(process.getByRole('button', { name: /echo failed-check/ })).toBeVisible()
+        await expect(page.getByText('Final answer stays visible.', { exact: true })).toBeVisible()
+    })
     test(`${agent}: completed process folds while all answer paragraphs remain visible`, async ({ page }) => {
         await page.goto(`/e2e-fixtures/execution-process-fixture.html?agent=${agent}`)
         const process = page.getByTestId('execution-process')

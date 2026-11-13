@@ -281,10 +281,12 @@ The golden fixtures in `shared/fixtures/chat/` are the executable form of this s
 
 The normal Web and iOS/Mac conversation view uses a provider-neutral execution
 process projection above the canonical transcript and tool-specific renderers.
-Older progress, reasoning and settled tools are available behind **Execution
-process**. The current ordinary step stays visible as a compact inspection
+Older progress, reasoning and tools share one **Execution process** entry per
+user turn, even when failures or concurrently running tools are interleaved.
+Running and failure counts remain visible on that entry. The current ordinary step stays visible as a compact inspection
 entry; final text, generated media, user shell input, plan proposals, unresolved
-questions/approvals and errors stay outside the process. Explicitly handled
+questions/approvals stay outside the process. Ordinary tool errors remain
+inspectable within the process rather than splitting it into multiple entries. Explicitly handled
 question records can join the process without losing their recorded answers.
 
 Generic agent text payloads may carry `data.phase: "progress" | "final"`. Codex

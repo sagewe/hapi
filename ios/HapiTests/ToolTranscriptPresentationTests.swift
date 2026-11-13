@@ -35,12 +35,12 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         }
     }
 
-    func testCompletedExecutionProcessPreview() async throws {
+    func testConcurrentExecutionProcessPreview() async throws {
         let credentials = InMemoryCredentialStore()
         let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
         try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
         let hub = try XCTUnwrap(HubSession(hubUrl: "http://127.0.0.1:1/process-preview-\(UUID().uuidString)",
-            credentialStore: credentials, performer: ToolTranscriptHTTP(errorFirstTool: false)))
+            credentialStore: credentials, performer: ToolTranscriptHTTP(errorFirstTool: true, pendingTools: true)))
         let model = ChatModel(session: hub, sessionId: "process-preview")
         defer { model.stop(); hub.shutdown() }
         model.start()
@@ -50,6 +50,11 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(processIDs.count, 1)
+        let process = try XCTUnwrap(model.messageRows.compactMap { row -> ToolGroupPresentation? in
+            if case .group(let presentation) = row.kind { return presentation }; return nil
+        }.first)
+        XCTAssertEqual(process.runningCount, 2)
+        XCTAssertEqual(process.errorCount, 1)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 520)
@@ -62,7 +67,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
         try await Task.sleep(for: .milliseconds(500))
-        try capture(window, name: "execution-completed")
+        try capture(window, name: "execution-concurrent")
     }
 
     func testGroupBrowserNeverExpandsTranscriptAndDismissalPreservesAnchor() async throws {
@@ -106,9 +111,9 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             defer { window.isHidden = true }
             host.view.layoutIfNeeded()
             let collection = try XCTUnwrap(findCollection(host.view))
-            try await eventually { collection.numberOfItems(inSection: 0) == 5 }
+            try await eventually { collection.numberOfItems(inSection: 0) == 3 }
             try await Task.sleep(for: .milliseconds(250))
-            for index in [1, 3] {
+            for index in [1] {
                 let summary = try XCTUnwrap(collection.layoutAttributesForItem(at: IndexPath(item: index, section: 0)))
                 XCTAssertGreaterThanOrEqual(summary.frame.height, 44)
                 if size == .large { XCTAssertLessThanOrEqual(summary.frame.height, 100) }
@@ -126,7 +131,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             XCTAssertTrue(model.isInspectingContent)
             XCTAssertFalse(model.showsJumpToLatest, "Opening a sheet is not a departure from the bottom")
             XCTAssertNil(model.toolInspection.selection, "Group root must pause following without a selected tool")
-            XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
+            XCTAssertEqual(collection.numberOfItems(inSection: 0), 3)
             let presented = try XCTUnwrap(host.presentedViewController)
             let transcript = try XCTUnwrap(findTranscriptController(host))
             #if DEBUG
@@ -144,7 +149,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
                 await controller.onMessageEvent(.messageReceived(namespace: nil, sessionId: "tool-transcript", message: message))
                 try await eventually { model.toolInspection.tools[tool.id]?.tool.result == .string(result) }
                 XCTAssertTrue(host.presentedViewController === presented)
-                XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
+                XCTAssertEqual(collection.numberOfItems(inSection: 0), 3)
             }
             #if DEBUG
             XCTAssertEqual(transcript.cellConfigurationCount, configurations,
@@ -163,7 +168,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
             XCTAssertEqual(restored.frame.minY - collection.contentOffset.y, anchorY, accuracy: 1)
             XCTAssertFalse(model.followsTail)
             XCTAssertFalse(model.showsJumpToLatest, "Output-only updates must not create a latest action at bottom")
-            XCTAssertEqual(collection.numberOfItems(inSection: 0), 5)
+            XCTAssertEqual(collection.numberOfItems(inSection: 0), 3)
         }
     }
 
@@ -193,7 +198,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
         defer { window.isHidden = true }
         host.view.layoutIfNeeded()
         let collection = try XCTUnwrap(findCollection(host.view))
-        try await eventually { collection.numberOfItems(inSection: 0) == 5 }
+        try await eventually { collection.numberOfItems(inSection: 0) == 3 }
         try await Task.sleep(for: .milliseconds(250))
         let bottomOffset = max(-collection.adjustedContentInset.top,
                                collection.contentSize.height - collection.bounds.height + collection.adjustedContentInset.bottom)
@@ -229,7 +234,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
                 "type": "message", "message": .string(String(repeating: "New visible tail content.\n\n", count: 20)),
             ]]], createdAt: seq * 1000, invokedAt: seq * 1000)
         await controller.onMessageEvent(.messageReceived(namespace: nil, sessionId: model.sessionId, message: message))
-        try await eventually { collection.numberOfItems(inSection: 0) == 6 && model.showsJumpToLatest }
+        try await eventually { collection.numberOfItems(inSection: 0) == 4 && model.showsJumpToLatest }
         model.toolInspection.dismiss(owner: "chat")
         try await eventually { host.presentedViewController == nil && !model.isInspectingContent }
         XCTAssertEqual(collection.contentOffset.y, offset, accuracy: 1)
@@ -347,6 +352,7 @@ final class ToolTranscriptPresentationTests: XCTestCase {
 
 private struct ToolTranscriptHTTP: HTTPPerforming {
     var errorFirstTool = true
+    var pendingTools = false
     var proposedPlan: String? = nil
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -374,10 +380,14 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
                 content: ["role": "agent", "content": ["type": "codex", "data": data]],
                 createdAt: seq * 1000, invokedAt: seq * 1000))
         }
+        var toolIndex = 0
         func tool(_ name: String, input: JSONValue, error: Bool = false) {
+            toolIndex += 1
             let id = "tool-\(rows.count)"
             append(["type": "tool-call", "callId": .string(id), "name": .string(name), "input": input])
-            append(["type": "tool-call-result", "callId": .string(id), "output": "Done", "is_error": .bool(error)])
+            if !pendingTools || ![8, 16].contains(toolIndex) {
+                append(["type": "tool-call-result", "callId": .string(id), "output": "Done", "is_error": .bool(error)])
+            }
         }
         append(["type": "message", "message": "工具详情独立阅读；关闭后保留聊天位置。"])
         for index in 0..<42 {
@@ -405,7 +415,7 @@ private struct ToolTranscriptHTTP: HTTPPerforming {
                 append(["type": "message", "id": .string("after-plan-\(index)"), "message": .string("Later message \(index)\n\nKeeps the plan away from the live tail for recycling tests.")])
             }
         }
-        append(["type": "message", "message": "检查完成，可以继续对话。"])
+        append(["type": "message", "message": .string(pendingTools ? "正在核对剩余任务的结果。" : "检查完成，可以继续对话。")])
         return rows
     }
 }

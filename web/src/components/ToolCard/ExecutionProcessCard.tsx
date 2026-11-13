@@ -57,6 +57,8 @@ export function ExecutionProcessCard({ block }: { block: ToolGroupBlock }) {
             }}>
             <span aria-hidden="true">{open ? '⌄' : '›'}</span>
             <span>{t('chat.executionProcess')}</span>
+            {block.summary.runningCount > 0 ? <span>{t('toolGroup.badge.running', { n: block.summary.runningCount })}</span> : null}
+            {block.summary.errorCount > 0 ? <span className="text-red-600">{t('toolGroup.badge.error', { n: block.summary.errorCount })}</span> : null}
         </button>
         {open ? <div className="space-y-3 border-l border-[var(--app-border)] pl-3">
             {block.needsOlderHistory ? <p className="text-xs text-[var(--app-hint)]">{t('chat.executionProcess.partial')}</p> : null}

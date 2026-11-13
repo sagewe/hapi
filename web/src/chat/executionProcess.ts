@@ -21,7 +21,7 @@ export function completedExecutionRounds(messages: readonly NormalizedMessage[])
 function protectedTool(block: ToolCallBlock): boolean {
     const permission = block.tool.permission
     const handled = permission && ['approved', 'resolved', 'canceled'].includes(permission.status) && !permission.reason
-    if (block.tool.state !== 'completed' || (isInteractiveToolBlock(block) && !handled)) return true
+    if (isInteractiveToolBlock(block) && !handled) return true
     const name = block.tool.name.toLowerCase().replace(/[^a-z0-9]/g, '')
     if (['exitplanmode', 'cursorcreateplan'].includes(name)) return true
     const input = block.tool.input
@@ -122,14 +122,21 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
                 roundSummary: members.flatMap(block => 'roundSummary' in block && block.roundSummary ? [block.roundSummary] : [])[0] })
             members = []
         }
+        let insertionIndex: number | null = null
         for (const block of round) {
             if (!foldable(block) || replies.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
                 || ((!completed || replies.size === 0) && block.id === latest)) {
-                emit()
                 output.push(activityPresentation(block, Boolean(options.keepVisibleIds?.has(block.id) && options.previousActivityIds?.has(block.id))))
-            } else members.push(block)
+            } else {
+                insertionIndex ??= output.length
+                members.push(block)
+            }
         }
         emit()
+        if (insertionIndex !== null) {
+            const group = output.pop()!
+            output.splice(insertionIndex, 0, group)
+        }
         round = []
     }
     for (const block of blocks) {

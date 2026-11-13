@@ -68,11 +68,20 @@ struct ToolGroupBlockView: View {
     var body: some View {
         if presentation.isExecutionProcess {
             Button { openGroup?(presentation.id) } label: {
-                Label("Execution process", systemImage: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(theme.textSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(spacing: 8) {
+                    Label("Execution process", systemImage: "chevron.right")
+                    if presentation.runningCount > 0 {
+                        Text("\(presentation.runningCount) running tools")
+                    }
+                    if presentation.errorCount > 0 {
+                        Text("\(presentation.errorCount) failed tools")
+                            .foregroundStyle(.red)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("tool-group-\(presentation.id)")

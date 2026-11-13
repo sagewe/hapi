@@ -13,6 +13,7 @@ import type { Session } from '../src/types/api'
 import '../src/index.css'
 
 const flavor = new URLSearchParams(location.search).get('agent') ?? 'codex'
+const concurrent = new URLSearchParams(location.search).has('concurrent')
 const api = { getSubscriptionUsage: async () => ({ providers: [] }) } as unknown as ApiClient
 const text = (id: string, value: string, phase: string): ChatBlock => ({ kind: 'agent-text', id, createdAt: 1, localId: null, text: value, meta: flavor === 'codex' ? { assistantPhase: phase } : undefined })
 function tool(id: string, running = false, failed = false): ToolCallBlock {
@@ -35,6 +36,8 @@ function Fixture() {
         const canonical: ChatBlock[] = [
             { kind: 'user-text', id: 'user', localId: null, createdAt: 0, text: 'Inspect and report' },
             text('progress', 'Inspecting the fixture.', 'progress'), tool('first-check'),
+            ...(concurrent ? [tool('failed-check', false, true), tool('background-a', !done),
+                text('parallel-progress', 'Checking parallel results.', 'progress'), tool('background-b', !done)] : []),
             text('progress-2', 'Checking the result.', 'progress'), tool('current-check', !done, failed),
             ...(done ? [text('final', 'Final answer stays visible.', 'final')] : []),
             ...(extra ? [text('extra', 'Additional final paragraph.', 'final')] : [])

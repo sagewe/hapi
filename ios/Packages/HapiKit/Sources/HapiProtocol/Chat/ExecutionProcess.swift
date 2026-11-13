@@ -24,7 +24,7 @@ private func isProtectedExecutionTool(_ block: ToolCallBlock) -> Bool {
         default: break
         }
     }
-    if block.tool.state != .completed || (isInteractiveToolBlock(block) && !handled) { return true }
+    if isInteractiveToolBlock(block) && !handled { return true }
     let name = block.tool.name.lowercased().filter { $0.isLetter || $0.isNumber }
     if ["exitplanmode", "cursorcreateplan"].contains(name) { return true }
     if getInputStringAny(block.tool.input, ["command_source", "commandSource"])?.lowercased() == "usershell" { return true }
@@ -114,14 +114,21 @@ public func buildExecutionProcessBlocks(
             output.append(.toolGroup(group))
             members = []
         }
+        var insertionIndex: Int?
         for block in round {
             if !canFoldExecutionBlock(block) || replies.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
                 || ((!completed || replies.isEmpty) && block.id == latest) {
-                emit()
                 output.append(.block(block))
-            } else { members.append(block) }
+            } else {
+                if insertionIndex == nil { insertionIndex = output.count }
+                members.append(block)
+            }
         }
         emit()
+        if let insertionIndex {
+            let group = output.removeLast()
+            output.insert(group, at: insertionIndex)
+        }
         round = []
     }
     for block in blocks {

@@ -21,6 +21,16 @@ describe('execution process projection', () => {
         expect(process(output)[0].defaultOpen).toBe(false)
         expect(input).toHaveLength(4)
     })
+    it('keeps interleaved failures and concurrent tools in one process per turn', () => {
+        const input = [user(), text('progress', 'progress'), tool('failed', 'Bash', 'error'),
+            tool('parallel-a', 'Bash', 'running'), text('update', 'progress'), tool('finished'),
+            tool('parallel-b', 'Bash', 'running'), text('answer', 'final')]
+        const output = buildExecutionProcessBlocks(input, { ...options, isRunning: true })
+        expect(process(output)).toHaveLength(1)
+        expect(output.filter(b => b.kind === 'tool-call')).toHaveLength(0)
+        expect(process(output)[0].summary).toMatchObject({ runningCount: 2, errorCount: 1 })
+        expect(process(output)[0].processBlocks?.map(b => b.id)).toEqual(input.slice(1, -1).map(b => b.id))
+    })
     it('keeps current activity visible, then folds it under the same identity on completion', () => {
         const input = [user(), text('progress', 'progress'), tool('tool')]
         const first = buildExecutionProcessBlocks(input, { ...options, isRunning: true, completedRounds: new Set() })
@@ -32,13 +42,15 @@ describe('execution process projection', () => {
         expect(process(next)[0].processBlocks?.map(b => b.id)).toEqual(['progress', 'tool'])
         expect(next.at(-1)?.id).toBe('answer')
     })
-    it('keeps errors, pending requests, questions, plans, media and user shell commands outside', () => {
+    it('keeps pending requests, questions, plans and user shell commands outside', () => {
         const permission = tool('permission'); permission.tool.permission = { id: 'p', status: 'pending' }
         const shell = tool('shell'); shell.tool.input = { command_source: 'userShell' }
-        const protectedBlocks = [tool('error', 'Bash', 'error'), tool('running', 'Bash', 'running'), permission,
+        const protectedBlocks = [permission,
             tool('question', 'request_user_input'), tool('plan', 'ExitPlanMode'), shell]
-        const output = buildExecutionProcessBlocks([user(), tool('work'), ...protectedBlocks, text('answer')], options)
+        const output = buildExecutionProcessBlocks([user(), tool('work'), ...protectedBlocks, tool('later-work'), text('answer')], options)
         for (const block of protectedBlocks) expect(output.some(value => value.id === block.id)).toBe(true)
+        expect(process(output)).toHaveLength(1)
+        expect(process(output)[0].tools.map(tool => tool.id)).toEqual(['work', 'later-work'])
     })
     it('keeps decision context visible with an unanswered question', () => {
         const context = text('decision-context', 'progress')
@@ -80,11 +92,11 @@ describe('execution process projection', () => {
         expect(process(next)[0].id).toBe(process(first)[0].id)
         expect(process(next)[0].needsOlderHistory).toBe(false)
     })
-    it('keeps identities unique when a previously grown process splits around an error', () => {
+    it('keeps identities unique when a previously grown process gains an error', () => {
         const first = buildExecutionProcessBlocks([tool('c'), tool('d'), text('answer')], options)
         const grown = buildExecutionProcessBlocks([tool('a'), tool('b'), tool('c'), tool('d'), text('answer')], { ...options, previousGroups: process(first) })
         const split = buildExecutionProcessBlocks([tool('a'), tool('b'), tool('error', 'Bash', 'error'), tool('c'), tool('d'), text('answer')], { ...options, previousGroups: process(grown) })
-        expect(process(split)).toHaveLength(2)
+        expect(process(split)).toHaveLength(1)
         expect(new Set(split.map(block => block.id)).size).toBe(split.length)
     })
     it('reuses settled process objects across unrelated streaming updates', () => {
