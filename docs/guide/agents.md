@@ -54,6 +54,10 @@ hapi resume <session-id>   # Resume a specific HAPI session
 
 `hapi resume` reopens the conversation on this machine, including active sessions you were using from your phone. Gemini cannot be resumed. DSH resume depends on the configured ACP server: current DSH ACP profiles restore the native session, while a fresh-session-only server starts a new session with a status message. Pi and Antigravity resume with input still controlled from HAPI rather than the terminal.
 
+### Markdown image previews
+
+In Web/PWA, successfully loaded Markdown images open the same zoomable fullscreen viewer as image attachments. Local images continue to use the authenticated session file API and workspace limits; loading, blocked and failed images do not open a viewer. Remote images retain `no-referrer`.
+
 ### Mathematical formulas in HAPI Markdown
 
 HAPI renders LaTeX-style mathematics through KaTeX. When generating or revising Markdown intended for display in HAPI, follow these rules exactly:
