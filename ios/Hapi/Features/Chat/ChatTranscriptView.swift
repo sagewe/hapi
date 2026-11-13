@@ -339,25 +339,6 @@ private struct TurnJumpRailView: View {
             }
             #else
             VStack(alignment: .trailing, spacing: 6) {
-                if let onOpenJumpSheet, isScrubbing || isRecentlyActive || model.showsJumpToLatest {
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        onOpenJumpSheet()
-                    } label: {
-                        Image(systemName: "list.bullet")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.6)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                }
-
                 VStack(alignment: .trailing, spacing: 0) {
                     ForEach(Array(slice.enumerated()), id: \.element.id) { idx, item in
                         let isActive = item.id == activeID
