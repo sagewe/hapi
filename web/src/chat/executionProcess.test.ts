@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripNormalizedAgentSummaries } from './executionProcess'
+import titleChangeFixture from '../../../shared/fixtures/chat/event-title-changed-dedupe.json'
+import { reduceChatBlocks } from './reducer'
+import type { DecryptedMessage } from '@/types/api'
+import { stripChatTitleEvents, buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripNormalizedAgentSummaries } from './executionProcess'
 import { initialResponseState } from './initialResponse'
 import { normalizeDecryptedMessage } from './normalize'
 import { buildSourceMessageIdsByBlock } from '@/lib/assistant-runtime'
@@ -260,5 +263,26 @@ describe('execution process projection', () => {
             endedAt: 3000
         })
         expect(completedExecutionRounds([userRow, readyRow, summaryWire]).has('u')).toBe(true)
+    })
+})
+
+describe('silent session title presentation', () => {
+    it('hides synthesized title changes while preserving other events and the source history', () => {
+        const messages = (titleChangeFixture.input.messages as DecryptedMessage[])
+            .map(normalizeDecryptedMessage).filter((message): message is NormalizedMessage => message !== null)
+        const reduced = reduceChatBlocks(messages, null).blocks
+        expect(reduced.some(block => block.kind === 'agent-event' && block.event.type === 'title-changed')).toBe(true)
+        const visible = stripChatTitleEvents(reduced)
+        expect(visible.map(block => block.id)).toEqual(['msg-user-331', 'msg-event-335'])
+        expect(reduced).toHaveLength(3)
+    })
+    it('hides title changes inside child tool timelines without mutating them', () => {
+        const title: ChatBlock = { kind: 'agent-event', id: 'title', createdAt: 2,
+            event: { type: 'title-changed', title: 'New title' } }
+        const parent = { ...tool('parent'), children: [title, text('reply', 'final')] }
+        const visible = stripChatTitleEvents([parent])
+        expect((visible[0] as ToolCallBlock).children.map(block => block.id)).toEqual(['reply'])
+        expect(parent.children).toHaveLength(2)
+        expect(stripChatTitleEvents([title])).toEqual([])
     })
 })

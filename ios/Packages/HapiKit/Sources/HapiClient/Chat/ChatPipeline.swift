@@ -110,7 +110,7 @@ public actor ChatPipeline {
         roundTimings = executionRoundTimings(normalized)
         let reduced = reduceChatBlocks(normalized, agentState: agentState)
         let visible = buildVisibleChatBlocks(
-            Self.filterEmptyReasoning(reduced.blocks),
+            Self.filterPresentationBlocks(reduced.blocks),
             options: ToolGroupingOptions(
                 hasMoreMessages: hasMoreMessages,
                 previousGroups: previousGroups
@@ -143,13 +143,16 @@ public actor ChatPipeline {
         return message
     }
 
-    private static func filterEmptyReasoning(_ blocks: [ChatBlock]) -> [ChatBlock] {
+    private static func filterPresentationBlocks(_ blocks: [ChatBlock]) -> [ChatBlock] {
         blocks.compactMap { block in
             switch block {
+            // Metadata-only actions must also stay silent when old tool history is replayed.
+            case .agentEvent(let event) where event.event.kind == .titleChanged:
+                return nil
             case .agentReasoning(let reasoning):
                 return reasoning.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : block
             case .toolCall(var tool) where !tool.children.isEmpty:
-                tool.children = filterEmptyReasoning(tool.children)
+                tool.children = filterPresentationBlocks(tool.children)
                 return .toolCall(tool)
             default:
                 return block

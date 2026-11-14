@@ -92,4 +92,41 @@ struct ChatPipelineSummaryTests {
         #expect(timerGroups.isEmpty)
         #expect(timings["u1"] == .init(startedAt: 1000, endedAt: 1000))
     }
+
+    @Test func hidesToolTitleChangesOnLiveAndCachedHistoryWhilePreservingOtherEvents() async throws {
+        struct Fixture: Decodable {
+            struct Input: Decodable { let messages: [DecryptedMessage] }
+            let input: Input
+        }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("../../../shared/fixtures/chat/event-title-changed-dedupe.json")
+            .standardizedFileURL
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        let messages = fixture.input.messages
+        let reduced = reduceChatBlocks(messages.compactMap(normalizeDecryptedMessage), agentState: nil)
+        #expect(reduced.blocks.contains { block in
+            if case .agentEvent(let event) = block { return event.event.kind == .titleChanged }
+            return false
+        })
+        let rows = messages.map { wire in
+            WindowMessage(id: wire.id, seq: wire.seq, localId: wire.localId,
+                          content: wire.content, createdAt: wire.createdAt,
+                          invokedAt: wire.invokedAt.map(InvokedAtField.number) ?? .absent)
+        }
+        let pipeline = ChatPipeline()
+        let visible = await pipeline.run(messages: rows, agentState: nil, hasMoreMessages: false)
+        #expect(visible.count == 2)
+        #expect(visible.contains { block in
+            if case .block(.agentEvent(let event)) = block { return event.event.kind == .message }
+            return false
+        })
+        #expect(!visible.contains { block in
+            if case .block(.agentEvent(let event)) = block { return event.event.kind == .titleChanged }
+            return false
+        })
+        let cached = await pipeline.run(messages: rows, agentState: nil, hasMoreMessages: false)
+        #expect(cached == visible)
+    }
 }

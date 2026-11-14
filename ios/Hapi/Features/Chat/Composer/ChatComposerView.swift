@@ -38,6 +38,7 @@ struct ChatComposerView: View {
     @State private var attachDialogOpen = false
     #else
     @State private var activePopup: ComposerPopupKind?
+    @State private var sessionSettingsOpen = false
     #endif
     @State private var photosPickerOpen = false
     @State private var photoSelection: [PhotosPickerItem] = []
@@ -343,8 +344,12 @@ struct ChatComposerView: View {
                     onScheduleTimePicker: {
                         schedulePickerOpen = true
                     },
-                    onOpenScratchlist: onOpenScratchlist
+                    onOpenScratchlist: onOpenScratchlist,
+                    onOpenSettings: { sessionSettingsOpen = true }
                 )
+            }
+            .sheet(isPresented: $sessionSettingsOpen) {
+                SessionConfigView(model: configModel)
             }
             #endif
         }
@@ -581,7 +586,9 @@ struct ChatComposerView: View {
     #if !targetEnvironment(macCatalyst)
     private func togglePopup(_ kind: ComposerPopupKind) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        activePopup = (activePopup == kind) ? nil : kind
+        let opening = activePopup != kind
+        if opening && kind == .sessionControls { textFocused = false }
+        activePopup = opening ? kind : nil
     }
 
     private func isPopupOpen(_ kind: ComposerPopupKind) -> Bool {
@@ -1084,6 +1091,7 @@ struct ChatComposerView: View {
             return true
         }()
         return !textFocused
+            && activePopup != .sessionControls
             && composer.text.isEmpty
             && attachments.isEmpty
             && !scratchlistMode
@@ -2957,6 +2965,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
     let onSelectSkill: (String) -> Void
     let onScheduleTimePicker: () -> Void
     let onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void
+    let onOpenSettings: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(activePopup: $activePopup)
@@ -2989,7 +2998,8 @@ private struct ComposerPopupHost: UIViewRepresentable {
             onFiles: onFiles,
             onSelectSkill: onSelectSkill,
             onScheduleTimePicker: onScheduleTimePicker,
-            onOpenScratchlist: onOpenScratchlist
+            onOpenScratchlist: onOpenScratchlist,
+            onOpenSettings: onOpenSettings
         )
     }
 
@@ -3019,6 +3029,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
         private var onSelectSkill: (String) -> Void = { _ in }
         private var onScheduleTimePicker: () -> Void = {}
         private var onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void = { _, _ in }
+        private var onOpenSettings: () -> Void = {}
 
         init(activePopup: Binding<ComposerPopupKind?>) {
             self.activePopupBinding = activePopup
@@ -3037,7 +3048,8 @@ private struct ComposerPopupHost: UIViewRepresentable {
             onFiles: @escaping () -> Void,
             onSelectSkill: @escaping (String) -> Void,
             onScheduleTimePicker: @escaping () -> Void,
-            onOpenScratchlist: @escaping (ScratchlistEntry?, Bool) -> Void
+            onOpenScratchlist: @escaping (ScratchlistEntry?, Bool) -> Void,
+            onOpenSettings: @escaping () -> Void
         ) {
             self.activePopupBinding = activePopupBinding
             self.onCamera = onCamera
@@ -3046,6 +3058,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
             self.onSelectSkill = onSelectSkill
             self.onScheduleTimePicker = onScheduleTimePicker
             self.onOpenScratchlist = onOpenScratchlist
+            self.onOpenSettings = onOpenSettings
 
             if let kind = activePopup {
                 guard let window = anchorView.window else { return }
@@ -3117,6 +3130,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
                 onViewAllScratchlist: { [weak self] in
                     self?.runAction { self?.onOpenScratchlist(nil, false) }
                 },
+                onOpenSettings: { [weak self] in self?.runAction { self?.onOpenSettings() } },
                 onDismiss: { [weak self] in self?.dismissFromBackdrop() }
             )
         }
@@ -3167,6 +3181,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
         let onClearSchedule: () -> Void
         let onSaveDraft: () -> Void
         let onViewAllScratchlist: () -> Void
+        let onOpenSettings: () -> Void
         let onDismiss: () -> Void
     }
 
@@ -3289,7 +3304,8 @@ private struct ComposerPopupHost: UIViewRepresentable {
             let maxCardWidth = max(180, bounds.width - 24)
             let cardWidth = min(kind.cardWidth, maxCardWidth)
             let topLimit = safeAreaInsets.top + 8
-            let maxHeight = max(200, composerFrame.maxY - topLimit)
+            let bottomLimit = kind == .sessionControls ? composerFrame.minY - 8 : composerFrame.maxY
+            let maxHeight = max(100, bottomLimit - topLimit)
             let targetSize = cardHostingController.sizeThatFits(in: CGSize(width: cardWidth, height: maxHeight))
             let cardHeight = min(ceil(targetSize.height), maxHeight)
             let cardSize = CGSize(width: cardWidth, height: cardHeight)
@@ -3299,7 +3315,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
             } else {
                 min(max(12, composerFrame.minX), max(12, bounds.width - cardSize.width - 12))
             }
-            let minY = max(topLimit, composerFrame.maxY - cardSize.height)
+            let minY = max(topLimit, bottomLimit - cardSize.height)
             let targetCenter = CGPoint(x: minX + cardSize.width / 2, y: minY + cardSize.height / 2)
 
             if cardContainer.bounds.size != cardSize {
@@ -3411,7 +3427,9 @@ private struct ComposerPopupHost: UIViewRepresentable {
                 return AnyView(ComposerSessionControlsPopupCard(
                     model: configModel,
                     colorScheme: colorScheme,
-                    isBusy: interactor.scratchlistBusy
+                    isBusy: interactor.scratchlistBusy,
+                    onDismiss: actions.onDismiss,
+                    onMore: actions.onOpenSettings
                 ))
             }
         }
@@ -3741,470 +3759,204 @@ struct ComposerSessionControlsPopupCard: View {
     let model: SessionConfigModel
     let colorScheme: ColorScheme
     var isBusy: Bool = false
+    var onDismiss: () -> Void = {}
+    var onMore: () -> Void = {}
+    @State private var page: Page?
 
-    private var isDark: Bool { colorScheme == .dark }
+    private enum Page { case model, effort, permission }
     private var controlsDisabled: Bool { model.isApplying || isBusy }
+    private var title: LocalizedStringKey {
+        switch page {
+        case .model: "Model"
+        case .effort: "Effort"
+        case .permission: "Permission mode"
+        case nil: "Session Settings"
+        }
+    }
 
     var body: some View {
         ViewThatFits(in: .vertical) {
-            contentStack
-            ScrollView {
-                contentStack
-            }
+            content
+            ScrollView { content }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .modifier(ComposerPopupSurface(colorScheme: colorScheme))
-        .onAppear {
-            if model.showsQuota {
-                model.loadQuota()
-            }
-        }
+        .onAppear { if model.showsQuota { model.loadQuota() } }
     }
 
-    private var contentStack: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !model.config.active {
-                statusBanner(String(localized: "Session is offline"))
-            } else if model.config.controlledByUser {
-                statusBanner(String(localized: "Controlled from terminal"))
-            }
-
-            if model.showsQuota {
-                quotaSection
-            }
-
-            if model.showsComposerPermissionMenu {
-                if model.showsQuota { Divider() }
-                permissionSection
-            }
-
-            if model.showsComposerModelMenu {
-                if model.showsQuota || model.showsComposerPermissionMenu { Divider() }
-                modelSection
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func statusBanner(_ message: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "info.circle")
-                .font(.caption)
-                .foregroundStyle(.orange)
-            Text(verbatim: message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private var quotaSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Subscription Quota")
-                    .font(.subheadline.weight(.semibold))
-                if case .loaded(let result) = model.quotaState, let plan = result.planType, !plan.isEmpty {
-                    Text(verbatim: plan.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                Spacer(minLength: 4)
-                if case .loaded(let result) = model.quotaState, result.stale {
-                    Text("Cached")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-                Button {
-                    model.loadQuota(force: true)
-                } label: {
-                    if model.quotaState == .loading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 24, height: 24)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(model.quotaState == .loading)
-                .accessibilityLabel("Refresh Quota")
-            }
-
-            switch model.quotaState {
-            case .idle, .loading:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading quota…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 2)
-            case .disabled:
-                Button {
-                    model.loadQuota(force: true)
-                } label: {
-                    Label("Query Subscription Quota", systemImage: "gauge.with.dots.needle.33percent")
-                        .font(.footnote.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-            case .failed(let error):
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(verbatim: error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    Button("Retry") {
-                        model.loadQuota(force: true)
-                    }
-                    .font(.caption.weight(.semibold))
-                }
-            case .loaded(let result):
-                if result.status != "success", let err = result.error {
-                    Text(verbatim: err)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                if let groups = result.groups, !groups.isEmpty {
-                    ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                        if index > 0 {
-                            Divider()
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(verbatim: group.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            quotaWindowRow(label: "5H", window: group.fiveHour)
-                            if group.sevenDay != nil {
-                                quotaWindowRow(label: "7D", window: group.sevenDay)
-                            }
-                        }
-                    }
-                } else {
-                    quotaWindowRow(label: "5H", window: result.fiveHour)
-                    quotaWindowRow(label: "7D", window: result.sevenDay)
-                }
-            }
-        }
-    }
-
-    private func quotaWindowRow(label: String, window: UsageQueryWindow?) -> some View {
+    private var content: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text(verbatim: label)
-                    .font(.caption.monospaced().weight(.semibold))
-                Spacer(minLength: 4)
-                if let window {
-                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
-                        .font(.caption.monospacedDigit())
-                    if window.resetsAt != nil {
-                        Text(verbatim: "· ↻ \(window.formatResetCountdown())")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+            HStack {
+                if page != nil {
+                    Button { page = nil } label: {
+                        Image(systemName: "chevron.left").frame(width: 32, height: 44)
                     }
-                } else {
-                    Text("—")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .accessibilityLabel("Back")
                 }
-            }
-            if let window {
-                let used = window.usedPercentInt
-                ProgressView(value: Double(used), total: 100)
-                    .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
-            }
-        }
-    }
-
-    private var permissionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !model.config.permissionModes.isEmpty {
-                Text("Permission mode")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                let modes: [(option: PermissionModeOption, selectable: Bool)] = {
-                    var list = model.config.permissionModes.map { ($0, true) }
-                    if !model.config.permissionModes.contains(where: { $0.mode == model.permission }) {
-                        list.insert((PermissionModeOption(mode: model.permission), false), at: 0)
-                    }
-                    return list
-                }()
-
-                LazyVGrid(
-                    columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)],
-                    spacing: 6
-                ) {
-                    ForEach(modes, id: \.option.mode) { item in
-                        let selected = model.permission == item.option.mode
-                        let toneColor = permissionToneColor(item.option.tone)
-                        Button {
-                            model.selectPermission(item.option.mode)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: item.option.tone == .danger || item.option.tone == .warning
-                                      ? "exclamationmark.shield"
-                                      : "checkmark.shield")
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(selected ? toneColor : .secondary)
-                                Text(LocalizedStringKey(item.option.label))
-                                    .font(.footnote.weight(selected ? .semibold : .regular))
-                                    .foregroundStyle(selected ? .primary : .secondary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.85)
-                                Spacer(minLength: 2)
-                                if selected {
-                                    Image(systemName: "checkmark")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(toneColor)
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(minHeight: 36)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(selected ? toneColor.opacity(isDark ? 0.22 : 0.13)
-                                          : (isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.045)))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(selected ? toneColor.opacity(0.42) : .clear, lineWidth: 1)
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!item.selectable)
-                    }
+                Text(title).font(.headline)
+                Spacer()
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.body).foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
                 }
-                .disabled(controlsDisabled)
+                .accessibilityLabel("Close")
             }
-
-            if model.showsCollaborationMode {
-                Text("Collaboration Mode")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 2)
-
-                HStack(spacing: 4) {
-                    ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
-                        let selected = model.collaborationMode == mode
-                        Button {
-                            model.selectCollaborationMode(mode)
-                        } label: {
-                            Text(LocalizedStringKey(mode.label))
-                                .font(.caption.weight(selected ? .semibold : .medium))
-                                .foregroundStyle(selected ? .primary : .secondary)
-                                .frame(maxWidth: .infinity, minHeight: 30)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selected
-                                              ? (isDark ? Color.white.opacity(0.18) : Color.white)
-                                              : Color.clear)
-                                        .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
-                                )
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
-                .disabled(controlsDisabled || !model.config.canChangeCollaborationMode)
+            if !model.config.active {
+                Text("Session is offline").font(.caption).foregroundStyle(.secondary)
+            } else if model.config.controlledByUser {
+                Text("Controlled from terminal").font(.caption).foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func permissionToneColor(_ tone: PermissionModeTone) -> Color {
-        switch tone {
-        case .danger: return .red
-        case .warning: return .orange
-        case .neutral, .info: return .accentColor
-        }
-    }
-
-    private var modelSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.showsEffort {
-                Text("Effort")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 4) {
-                    ForEach(model.effortOptions, id: \.value) { option in
-                        let selected = model.currentEffort == option.value
-                        let allowed = model.canSelectEffort(option.value)
-                        Button {
-                            model.selectEffort(option.value)
-                        } label: {
-                            Text(LocalizedStringKey(option.label))
-                                .font(.caption.weight(selected ? .semibold : .medium))
-                                .foregroundStyle(selected ? .primary : (allowed ? .secondary : .tertiary))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .frame(maxWidth: .infinity, minHeight: 30)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(selected
-                                              ? (isDark ? Color.white.opacity(0.18) : Color.white)
-                                              : Color.clear)
-                                        .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
-                                )
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!allowed)
-                    }
-                }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
-                .disabled(controlsDisabled)
+            if let page {
+                options(for: page)
+            } else {
+                summary
             }
-
-            if model.showsFastMode {
-                Text("Fast Mode")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, model.showsEffort ? 2 : 0)
-
-                HStack(spacing: 4) {
-                    ForEach(ServiceTier.allCases, id: \.self) { tier in
-                        let selected = model.serviceTier == tier
-                        Button {
-                            model.selectServiceTier(tier)
-                        } label: {
-                            HStack(spacing: 4) {
-                                if tier == .fast {
-                                    Image(systemName: "bolt.fill")
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(selected ? .orange : .secondary)
-                                }
-                                Text(LocalizedStringKey(tier.label))
-                            }
-                            .font(.caption.weight(selected ? .semibold : .medium))
-                            .foregroundStyle(selected ? .primary : .secondary)
-                            .frame(maxWidth: .infinity, minHeight: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(selected
-                                          ? (isDark ? Color.white.opacity(0.18) : Color.white)
-                                          : Color.clear)
-                                    .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
-                )
-                .disabled(controlsDisabled || !model.config.canChangeServiceTier)
-                .accessibilityIdentifier("session-config-fast-mode")
-            }
-
-            if model.showsModel || model.canDiscoverModels {
-                Text("Model")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, (model.showsEffort || model.showsFastMode) ? 2 : 0)
-
-                if model.config.modelOptionsLoading {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Loading models…")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                } else if model.modelLoadFailed {
-                    HStack(spacing: 8) {
-                        Text("Failed to load models")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Retry") {
-                            model.loadModels()
-                        }
-                        .font(.caption.weight(.semibold))
-                    }
-                } else if let options = model.config.modelOptions, !options.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        if let current = model.unlistedModelOption {
-                            modelOptionRow(label: current.label, selected: true, selectable: false) {}
-                        }
-                        ForEach(options, id: \.value) { option in
-                            let selected = model.currentModel == option.value
-                            modelOptionRow(label: option.label, selected: selected, selectable: true) {
-                                model.selectModel(option.value)
-                            }
-                        }
-                    }
-                    .disabled(controlsDisabled)
-                } else if model.canDiscoverModels {
-                    Button {
-                        model.loadModels()
-                    } label: {
-                        Label("Load Models", systemImage: "arrow.clockwise")
-                            .font(.footnote.weight(.medium))
-                    }
-                    .buttonStyle(.bordered)
-                } else {
-                    Text("Model list unavailable")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private func modelOptionRow(
-        label: String,
-        selected: Bool,
-        selectable: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Text(verbatim: label)
-                    .font(.subheadline.weight(selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? .primary : .secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tint)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(minHeight: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(selected
-                          ? Color.accentColor.opacity(isDark ? 0.22 : 0.12)
-                          : (isDark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)))
-            )
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!selectable)
+        .foregroundStyle(.primary)
+    }
+
+    private var summary: some View {
+        VStack(spacing: 0) {
+            if model.showsQuota {
+                Button(action: onMore) { quotaSummary }
+                    .accessibilityIdentifier("session-controls-quota")
+                Divider().padding(.vertical, 8)
+            }
+            if model.showsModel || model.canDiscoverModels {
+                Button { page = .model } label: {
+                    row("Model", icon: "cube", value: Text(verbatim: model.modelLabel))
+                }
+                .accessibilityIdentifier("session-controls-model")
+            }
+            if model.showsEffort {
+                Button { page = .effort } label: {
+                    row("Effort", icon: "brain", value: Text(LocalizedStringKey(model.currentEffortLabel)))
+                }
+                .accessibilityIdentifier("session-controls-effort")
+            }
+            if !model.config.permissionModes.isEmpty {
+                Button { page = .permission } label: {
+                    row("Permission mode", icon: "checkmark.shield", value: Text(LocalizedStringKey(model.permission.label)))
+                }
+                .accessibilityIdentifier("session-controls-permission")
+            }
+            Divider().padding(.vertical, 8)
+            Button(action: onMore) {
+                row("More Settings", icon: "slider.horizontal.3", value: Text(""))
+            }
+            .accessibilityIdentifier("session-controls-more")
+        }
+    }
+
+    private func row(_ title: LocalizedStringKey, icon: String, value: Text) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).font(.body).frame(width: 22)
+            Text(title).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            value.foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+        }
+        .font(.subheadline)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    // Use the most constrained reported window; groups are separate allowances,
+    // so this is a minimum remaining balance rather than a combined account total.
+    private var tightestQuotaWindow: UsageQueryWindow? {
+        guard case .loaded(let result) = model.quotaState else { return nil }
+        var windows = [result.fiveHour, result.sevenDay].compactMap { $0 }
+        for group in result.groups ?? [] {
+            windows.append(contentsOf: [group.fiveHour, group.sevenDay].compactMap { $0 })
+        }
+        return windows.max { $0.usedPercentInt < $1.usedPercentInt }
+    }
+
+    private var quotaSummary: some View {
+        HStack(spacing: 8) {
+            if let window = tightestQuotaWindow {
+                let peak = window.usedPercentInt
+                Circle().fill(peak >= 90 ? Color.orange : Color.secondary.opacity(0.5))
+                    .frame(width: 6, height: 6)
+                Text(String(format: String(localized: "Lowest remaining %lld%%"), Int64(max(0, 100 - peak))))
+                    .font(.subheadline.monospacedDigit())
+                Spacer(minLength: 4)
+                VStack(alignment: .trailing, spacing: 2) {
+                    if window.resetsAt != nil {
+                        Text(verbatim: "↻ \(window.formatResetCountdown())")
+                    }
+                    if case .loaded(let result) = model.quotaState, result.stale {
+                        Text("Cached")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("Subscription Quota").font(.subheadline)
+                Spacer()
+                if model.quotaState == .loading { ProgressView().controlSize(.small) }
+                else { Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary) }
+            }
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func options(for page: Page) -> some View {
+        switch page {
+        case .model:
+            if model.config.modelOptionsLoading {
+                ProgressView("Loading models…").padding(.vertical, 12)
+            } else if model.modelLoadFailed {
+                Button("Retry") { model.loadModels() }.frame(minHeight: 44)
+            } else {
+                if let current = model.unlistedModelOption {
+                    choice(Text(verbatim: current.label), selected: true, allowed: false) {}
+                }
+                ForEach(model.config.modelOptions ?? [], id: \.value) { option in
+                    choice(Text(verbatim: option.label), selected: option.value == model.currentModel) {
+                        model.selectModel(option.value)
+                    }
+                }
+                if model.config.modelOptions?.isEmpty != false {
+                    Button("Load Models") { model.loadModels() }.frame(minHeight: 44)
+                        .disabled(!model.canDiscoverModels)
+                }
+            }
+        case .effort:
+            ForEach(model.effortOptions, id: \.value) { option in
+                choice(Text(LocalizedStringKey(option.label)), selected: option.value == model.currentEffort,
+                       allowed: model.canSelectEffort(option.value)) { model.selectEffort(option.value) }
+            }
+        case .permission:
+            ForEach(model.config.permissionModes, id: \.mode) { option in
+                choice(Text(LocalizedStringKey(option.label)), selected: option.mode == model.permission) {
+                    model.selectPermission(option.mode)
+                }
+            }
+        }
+    }
+
+    private func choice(_ label: Text, selected: Bool, allowed: Bool = true,
+                        action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            page = nil
+        } label: {
+            HStack(spacing: 12) {
+                label.fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if selected { Image(systemName: "checkmark").font(.subheadline.weight(.semibold)) }
+            }
+            .font(.subheadline)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .disabled(controlsDisabled || !allowed)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 #endif

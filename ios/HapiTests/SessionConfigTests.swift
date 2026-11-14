@@ -7,6 +7,53 @@ import XCTest
 
 @MainActor
 final class SessionConfigTests: XCTestCase {
+    #if !targetEnvironment(macCatalyst)
+    func testCompactControlsFitNarrowScreenAndLargeText() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        harness.model.loadModels()
+        try await configEventually { harness.model.showsEffort }
+        for width: CGFloat in [296, 369] {
+            let host = UIHostingController(rootView: ComposerSessionControlsPopupCard(
+                model: harness.model, colorScheme: .light
+            ).environment(\.locale, Locale(identifier: "zh-Hans")))
+            let size = host.sizeThatFits(in: CGSize(width: width, height: 700))
+            XCTAssertLessThanOrEqual(size.width, width + 1)
+            XCTAssertLessThan(size.height, 400, "Summary must fit above the composer without a tall settings list")
+        }
+        let largeHost = UIHostingController(rootView: ComposerSessionControlsPopupCard(
+            model: harness.model, colorScheme: .dark
+        ).environment(\.dynamicTypeSize, .accessibility3))
+        let largeSize = largeHost.sizeThatFits(in: CGSize(width: 296, height: 700))
+        XCTAssertLessThanOrEqual(largeSize.width, 297)
+        XCTAssertLessThanOrEqual(largeSize.height, 700)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 500)
+        let host = UIHostingController(rootView: VStack {
+            Spacer()
+            ComposerSessionControlsPopupCard(model: harness.model, colorScheme: .light)
+                .padding(12)
+        }.background(Color(uiColor: .systemBackground))
+            .environment(\.locale, Locale(identifier: "zh-Hans")))
+        host.safeAreaRegions = []
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("session-controls-redesign.png")
+        try XCTUnwrap(image.pngData()).write(to: path)
+        print("Controls screenshot: \(path.path)")
+    }
+    #endif
+
     func testCollaborationMenuUsesLiveStateWithoutDependingOnTheModelCatalog() async throws {
         let harness = try await SessionConfigTestHarness(flavor: "codex")
         let model = harness.model

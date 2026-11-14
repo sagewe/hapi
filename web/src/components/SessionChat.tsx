@@ -1,4 +1,4 @@
-import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripNormalizedAgentSummaries } from '@/chat/executionProcess'
+import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripChatTitleEvents, stripNormalizedAgentSummaries } from '@/chat/executionProcess'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from '@tanstack/react-router'
@@ -1636,7 +1636,7 @@ function SessionChatInner(props: SessionChatProps) {
         [normalizedMessages, normalizedGoalStateMessages, props.session.agentState]
     )
     const reconciled = useMemo(
-        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
+        () => reconcileChatBlocks(stripChatTitleEvents(reduced.blocks), blocksByIdRef.current),
         [reduced.blocks]
     )
     const sessionStatus = useMemo(

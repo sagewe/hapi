@@ -11,6 +11,21 @@ export function stripNormalizedAgentSummaries(message: NormalizedMessage | null)
     return filtered.length > 0 ? { ...message, content: filtered } : null
 }
 
+/** Title changes belong in session metadata, including when replaying old tool calls.
+ * Keep protocol reduction intact and filter before either chat presentation mode. */
+export function stripChatTitleEvents(blocks: readonly ChatBlock[]): ChatBlock[] {
+    return blocks.flatMap((block): ChatBlock[] => {
+        if (block.kind === 'agent-event' && block.event.type === 'title-changed') return []
+        if (block.kind === 'tool-call' && block.children.length > 0) {
+            const children = stripChatTitleEvents(block.children)
+            if (children.some((child, index) => child !== block.children[index]) || children.length !== block.children.length) {
+                return [{ ...block, children }]
+            }
+        }
+        return [block]
+    })
+}
+
 /** Receive timestamps span the root round; parallel tool durations are never summed. */
 export function executionRoundTimings(messages: readonly NormalizedMessage[]): Map<string, { startedAt: number; endedAt: number }> {
     const result = new Map<string, { startedAt: number; endedAt: number }>()
