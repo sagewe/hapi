@@ -106,7 +106,9 @@ const READ_TOOL_NAMES = new Set([
     'notebookread',
     'readfile',
     'viewfile',
-    'fileread'
+    'fileread',
+    'viewfileoutline',
+    'viewcodeitem'
 ])
 
 const SEARCH_TOOL_NAMES = new Set([
@@ -118,7 +120,8 @@ const SEARCH_TOOL_NAMES = new Set([
     'listfiles',
     'searchfiles',
     'grepsearch',
-    'contentsearch'
+    'contentsearch',
+    'findbyname'
 ])
 
 const COMMAND_TOOL_NAMES = new Set([
@@ -142,6 +145,7 @@ const MUTATION_TOOL_NAMES = new Set([
     'editfile',
     'writefile',
     'replacefilecontent',
+    'multireplacefilecontent',
     'writetofile',
     'applypatch',
     'patch'
@@ -152,17 +156,28 @@ const WEB_TOOL_NAMES = new Set([
     'websearch',
     'fetchurl',
     'openurl',
-    'urlfetch'
+    'urlfetch',
+    'searchweb',
+    'readurlcontent'
 ])
 
-const READ_NATIVE_KINDS = new Set(['read', 'readfile', 'fileread', 'view', 'viewfile'])
-const SEARCH_NATIVE_KINDS = new Set(['search', 'grep', 'find', 'glob'])
-const COMMAND_NATIVE_KINDS = new Set(['execute', 'shell', 'bash', 'run', 'runshell', 'runshellcommand', 'cmd', 'terminal', 'command'])
-const MUTATION_NATIVE_KINDS = new Set(['edit', 'write', 'writefile', 'replace', 'fileedit', 'modify', 'patch'])
-const WEB_NATIVE_KINDS = new Set(['web', 'fetch', 'webfetch', 'websearch', 'openurl'])
+const READ_NATIVE_KINDS = new Set(['read', 'readfile', 'fileread', 'view', 'viewfile', 'agynumberedread', 'viewfileoutline', 'viewcodeitem'])
+const SEARCH_NATIVE_KINDS = new Set(['search', 'grep', 'find', 'glob', 'grepsearch', 'findbyname', 'listdir'])
+const COMMAND_NATIVE_KINDS = new Set(['execute', 'shell', 'bash', 'run', 'runshell', 'runshellcommand', 'cmd', 'terminal', 'command', 'runcommand'])
+const MUTATION_NATIVE_KINDS = new Set(['edit', 'write', 'writefile', 'replace', 'fileedit', 'modify', 'patch', 'editfile'])
+const WEB_NATIVE_KINDS = new Set(['web', 'fetch', 'webfetch', 'websearch', 'openurl', 'searchweb', 'readurlcontent'])
 
 function normalizeToolIdentifier(value: string | null | undefined): string {
     return value?.trim().toLowerCase().replace(/[^a-z0-9]+/g, '') ?? ''
+}
+
+function normalizeToolName(value: string): string {
+    const trimmed = value.trim()
+    const colon = trimmed.indexOf(':')
+    if (colon > 0 && !/\s/.test(trimmed.slice(0, colon))) {
+        return normalizeToolIdentifier(trimmed.slice(colon + 1))
+    }
+    return normalizeToolIdentifier(trimmed)
 }
 
 function pushUnique(target: string[], value: string | null): void {
@@ -198,7 +213,7 @@ export function getToolGroupActionKind(block: ToolCallBlock): ToolGroupActionKin
     if (COMMAND_NATIVE_KINDS.has(nativeKind)) return 'command'
     if (MUTATION_NATIVE_KINDS.has(nativeKind)) return 'mutation'
 
-    const name = normalizeToolIdentifier(block.tool.name)
+    const name = normalizeToolName(block.tool.name)
     if (WEB_TOOL_NAMES.has(name)) return 'web'
     if (READ_TOOL_NAMES.has(name)) return 'read'
     if (SEARCH_TOOL_NAMES.has(name)) return 'search'

@@ -10,7 +10,7 @@ import SwiftUI
 struct TranscriptRow: Identifiable, Equatable {
     enum Kind: Equatable {
         case history(ChatHistoryPagingState.Phase, Bool, Bool)
-        case message(VisibleChatBlock, Bool)
+        case message(VisibleChatBlock, Bool, Bool)
         case group(ToolGroupPresentation)
         case responseFeedback(InitialResponseState)
         case executionText(ChatBlock)
@@ -44,7 +44,7 @@ struct TranscriptRow: Identifiable, Equatable {
         )
     }
 
-    static func message(_ block: VisibleChatBlock, _ isHighlighted: Bool) -> TranscriptRow {
+    static func message(_ block: VisibleChatBlock, _ isHighlighted: Bool, isStreamingReasoning: Bool = false) -> TranscriptRow {
         let role: TranscriptRowRole = switch block {
         case .toolGroup: .tool
         case .block(.userText): .user
@@ -54,7 +54,7 @@ struct TranscriptRow: Identifiable, Equatable {
         return TranscriptRow(
             id: block.stableId,
             role: role,
-            box: Box(.message(block, isHighlighted))
+            box: Box(.message(block, isHighlighted, isStreamingReasoning))
         )
     }
 
@@ -188,14 +188,26 @@ struct ChatTranscriptView: View {
             .buttonStyle(.plain)
             .disabled(isDisabled)
             .accessibilityIdentifier("chat-history")
-        case .message(let block, let isHighlighted):
-            ChatBlockCard(block: block, basePath: basePath, isHighlighted: isHighlighted)
+        case .message(let block, let isHighlighted, let isStreamingReasoning):
+            ChatBlockCard(
+                block: block,
+                basePath: basePath,
+                isHighlighted: isHighlighted,
+                isStreamingReasoning: isStreamingReasoning
+            )
         case .group(let presentation):
             if presentation.isExecutionProcess && presentation.processRole != "header" {
                 InlineExecutionGroupView(presentation: presentation, model: model, basePath: basePath)
             } else { ToolGroupBlockView(presentation: presentation) }
         case .executionText(let block):
-            ChatSubBlockView(block: block, basePath: basePath)
+            if case .agentReasoning(let reasoning) = block {
+                CachedMarkdownView(markdown: reasoning.text)
+                    .opacity(0.75)
+                    .padding(.leading, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ChatSubBlockView(block: block, basePath: basePath)
+            }
         case .executionSection(let groupID, let section, let expanded):
             InlineExecutionSectionView(groupID: groupID, section: section, expanded: expanded, model: model)
         case .executionTool(let groupID, let tool, let expanded):

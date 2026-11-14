@@ -217,7 +217,7 @@ final class ChatModel {
     @ObservationIgnored private var blockToUserTurnIndex: [String: Int] = [:]
     @ObservationIgnored private var blockToRailIndex: [String: Int] = [:]
     @ObservationIgnored private var cachedGroupPresentations: [String: (group: ToolGroupBlock, presentation: ToolGroupPresentation, row: TranscriptRow)] = [:]
-    @ObservationIgnored private var cachedMessageRows: [String: (block: VisibleChatBlock, isHighlighted: Bool, row: TranscriptRow)] = [:]
+    @ObservationIgnored private var cachedMessageRows: [String: (block: VisibleChatBlock, isHighlighted: Bool, isStreamingReasoning: Bool, row: TranscriptRow)] = [:]
     var showsJumpToLatest: Bool {
         isJumpingToLatest || hasTrimmedTail || (!followsTail && isAwayFromBottom)
     }
@@ -1218,21 +1218,28 @@ final class ChatModel {
 
     private func holdVisibleExecutionContent() {
         for row in messageRows {
-            if case .message(let block, _) = row.kind { heldExecutionIDs.insert(block.stableId) }
+            if case .message(let block, _, _) = row.kind { heldExecutionIDs.insert(block.stableId) }
         }
     }
 
     private func rebuildMessageRows() {
         if !followsTail { holdVisibleExecutionContent() }
-        var keepVisible = heldExecutionIDs
-        for (key, value) in presentationState.values where (key.field == "expanded" || key.field == "inlineExpanded") && (value as? Bool) == true {
-            keepVisible.insert(key.id)
-        }
         let displayed = highlightedBlockID == nil
             ? buildExecutionProcessBlocks(blocks, completedRounds: executionCompletedRounds,
                 isRunning: executionIsRunning, hasMoreMessages: hasMore, roundTimings: executionTimings,
-                keepVisibleIds: keepVisible, previousGroups: executionGroups)
+                keepVisibleIds: [], previousGroups: executionGroups)
             : blocks
+        let activeReasoningID: String? = {
+            guard executionIsRunning else { return nil }
+            let lastNonEvent = displayed.last { block in
+                if case .block(.agentEvent) = block { return false }
+                return true
+            }
+            if case .block(.agentReasoning(let reasoning)) = lastNonEvent {
+                return reasoning.id
+            }
+            return nil
+        }()
         for group in executionGroups {
             blockIndexByID.removeValue(forKey: group.id)
             blockToUserTurnIndex.removeValue(forKey: group.id)
@@ -1276,13 +1283,15 @@ final class ChatModel {
                 let id = block.stableId
                 activeIDs.insert(id)
                 let isHighlighted = (id == highlightedID)
+                let isStreamingReasoning = (id == activeReasoningID)
                 if let cached = cachedMessageRows[id],
                    cached.isHighlighted == isHighlighted,
+                   cached.isStreamingReasoning == isStreamingReasoning,
                    cached.block == block {
                     nextRows.append(cached.row)
                 } else {
-                    let row = TranscriptRow.message(block, isHighlighted)
-                    cachedMessageRows[id] = (block, isHighlighted, row)
+                    let row = TranscriptRow.message(block, isHighlighted, isStreamingReasoning: isStreamingReasoning)
+                    cachedMessageRows[id] = (block, isHighlighted, isStreamingReasoning, row)
                     nextRows.append(row)
                 }
             }

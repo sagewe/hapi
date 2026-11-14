@@ -65,13 +65,19 @@ struct ChatBlockCard: View {
     let block: VisibleChatBlock
     let basePath: String?
     var isHighlighted: Bool = false
+    var isStreamingReasoning: Bool = false
 
     var body: some View {
         switch block {
         case .toolGroup(let group):
             ToolGroupBlockView(presentation: ToolGroupPresentation(group))
         case .block(let chatBlock):
-            ChatSubBlockView(block: chatBlock, basePath: basePath, isHighlighted: isHighlighted)
+            ChatSubBlockView(
+                block: chatBlock,
+                basePath: basePath,
+                isHighlighted: isHighlighted,
+                isStreamingReasoning: isStreamingReasoning
+            )
         }
     }
 }
@@ -82,6 +88,7 @@ struct ChatSubBlockView: View {
     let block: ChatBlock
     let basePath: String?
     var isHighlighted: Bool = false
+    var isStreamingReasoning: Bool = false
 
     var body: some View {
         switch block {
@@ -90,7 +97,7 @@ struct ChatSubBlockView: View {
         case .agentText(let value):
             AgentTextBlockView(block: value, isHighlighted: isHighlighted)
         case .agentReasoning(let value):
-            AgentReasoningBlockView(block: value)
+            AgentReasoningBlockView(block: value, isStreaming: isStreamingReasoning)
         case .agentEvent(let value):
             AgentEventBlockView(block: value)
         case .cliOutput(let value):

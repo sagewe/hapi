@@ -227,33 +227,76 @@ struct AgentTextBlockView: View {
     }
 }
 
-/// Extended thinking: collapsed to a subdued one-liner, expanding in place to
-/// the full reasoning markdown (still subdued — it is meta-content).
+/// Extended thinking: streams open while active, collapses to a subdued
+/// single-line summary once superseded, and expands in place on tap.
 struct AgentReasoningBlockView: View {
     let block: AgentReasoningBlock
-    @ChatStoredState private var expanded: Bool
+    let isStreaming: Bool
+    @ChatStoredState private var expandedOverride: Bool?
 
-    init(block: AgentReasoningBlock) {
+    init(block: AgentReasoningBlock, isStreaming: Bool = false) {
         self.block = block
-        _expanded = ChatStoredState(wrappedValue: false, id: block.id, field: "expanded")
+        self.isStreaming = isStreaming
+        _expandedOverride = ChatStoredState(wrappedValue: nil, id: block.id, field: "expanded")
+    }
+
+    private var isExpanded: Bool {
+        expandedOverride ?? isStreaming
+    }
+
+    private var headerTitle: String {
+        if isExpanded {
+            return String(localized: "Reasoning")
+        }
+        if let summary = Self.summaryLine(for: block.text) {
+            return "\(String(localized: "Reasoning")) · \(summary)"
+        }
+        return isStreaming ? String(localized: "Reasoning…") : String(localized: "Reasoning")
+    }
+
+    static func summaryLine(for text: String) -> String? {
+        for rawLine in text.components(separatedBy: .newlines) {
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+            while let first = line.first, "#*_>-`".contains(first) {
+                line.removeFirst()
+                line = line.trimmingCharacters(in: .whitespaces)
+            }
+            if let match = line.range(of: #"^\d+[.)]\s+"#, options: .regularExpression) {
+                line.removeSubrange(match)
+            }
+            line = line
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "__", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !line.isEmpty {
+                return line
+            }
+        }
+        return nil
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {
-                    expanded.toggle()
+                    expandedOverride = !isExpanded
                 }
             } label: {
-                Label(
-                    expanded ? String(localized: "Reasoning") : String(localized: "Reasoning…"),
-                    systemImage: expanded ? "chevron.down" : "chevron.right"
-                )
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    Text(headerTitle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if expanded {
+            if isExpanded {
                 CachedMarkdownView(markdown: block.text)
                     .opacity(0.75)
                     .padding(.leading, 8)

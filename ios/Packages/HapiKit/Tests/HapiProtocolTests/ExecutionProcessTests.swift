@@ -162,6 +162,40 @@ struct ExecutionProcessTests {
         let activity = NormalizedMessage(id: "next", createdAt: 2, content: .agent([.text(.init(text: "next", uuid: "next", parentUUID: nil))]))
         #expect(completedExecutionRounds([prompt, ready, activity]).isEmpty)
     }
+
+    @Test func classifiesToolGroupActionKindsByNativeKindAndAgyToolNames() {
+        func toolBlock(_ name: String, nativeKind: String? = nil) -> ToolCallBlock {
+            ToolCallBlock(
+                id: name,
+                localId: nil,
+                createdAt: 1,
+                invokedAt: nil,
+                durationMs: nil,
+                usage: nil,
+                model: nil,
+                tool: ChatToolCall(id: name, name: name, state: .completed, createdAt: 1, nativeKind: nativeKind),
+                children: [],
+                meta: nil
+            )
+        }
+        #expect(getToolGroupActionKind(toolBlock("File README.md", nativeKind: "read")) == .read)
+        #expect(getToolGroupActionKind(toolBlock("File README.md", nativeKind: "agy-numbered-read")) == .read)
+        #expect(getToolGroupActionKind(toolBlock("Search", nativeKind: "search")) == .search)
+        #expect(getToolGroupActionKind(toolBlock("Terminal", nativeKind: "execute")) == .command)
+        #expect(getToolGroupActionKind(toolBlock("Patch", nativeKind: "edit")) == .mutation)
+        #expect(getToolGroupActionKind(toolBlock("Fetch", nativeKind: "web")) == .web)
+
+        #expect(getToolGroupActionKind(toolBlock("read_file")) == .read)
+        #expect(getToolGroupActionKind(toolBlock("default_api:read_file")) == .read)
+        #expect(getToolGroupActionKind(toolBlock("view_file_outline")) == .read)
+        #expect(getToolGroupActionKind(toolBlock("run_command")) == .command)
+        #expect(getToolGroupActionKind(toolBlock("grep_search")) == .search)
+        #expect(getToolGroupActionKind(toolBlock("find_by_name")) == .search)
+        #expect(getToolGroupActionKind(toolBlock("edit_file")) == .mutation)
+        #expect(getToolGroupActionKind(toolBlock("replace_file_content")) == .mutation)
+        #expect(getToolGroupActionKind(toolBlock("search_web")) == .web)
+        #expect(getToolGroupActionKind(toolBlock("read_url_content")) == .web)
+    }
 }
 
 private extension VisibleChatBlock {

@@ -197,18 +197,57 @@ private func normalizeCommandInput(_ input: JSONValue?) -> String? {
     return parts.isEmpty ? nil : parts.joined(separator: " ")
 }
 
+private let nativeKindActionTable: [(Set<String>, ToolGroupActionKind)] = [
+    (["web", "fetch", "webfetch", "websearch", "openurl", "searchweb", "readurlcontent"], .web),
+    (["read", "readfile", "fileread", "view", "viewfile", "agynumberedread", "viewfileoutline", "viewcodeitem"], .read),
+    (["search", "grep", "find", "glob", "grepsearch", "findbyname", "listdir"], .search),
+    (["execute", "shell", "bash", "run", "runshell", "runshellcommand", "cmd", "terminal", "command", "runcommand"], .command),
+    (["edit", "write", "writefile", "replace", "fileedit", "modify", "patch", "editfile"], .mutation),
+]
+
+private let toolNameActionTable: [(Set<String>, ToolGroupActionKind)] = [
+    (["webfetch", "websearch", "fetchurl", "openurl", "urlfetch", "searchweb", "readurlcontent"], .web),
+    (["read", "notebookread", "readfile", "viewfile", "fileread", "viewfileoutline", "viewcodeitem"], .read),
+    (["search", "grep", "glob", "ls", "listdir", "listfiles", "searchfiles", "grepsearch", "contentsearch", "findbyname"], .search),
+    (["bash", "codexbash", "shell", "shellcommand", "runshellcommand", "runcommand", "executecommand", "terminal"], .command),
+    (["edit", "multiedit", "write", "notebookedit", "codexpatch", "codexdiff", "editfile", "writefile", "replacefilecontent", "multireplacefilecontent", "writetofile", "applypatch", "patch"], .mutation),
+]
+
+private func normalizeToolIdentifier(_ value: String?) -> String {
+    guard let value else { return "" }
+    return value
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+}
+
+private func normalizeToolName(_ value: String) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let colonIndex = trimmed.firstIndex(of: ":"),
+       !trimmed[..<colonIndex].contains(where: \.isWhitespace) {
+        return normalizeToolIdentifier(String(trimmed[trimmed.index(after: colonIndex)...]))
+    }
+    return normalizeToolIdentifier(trimmed)
+}
+
 /// Port of `getToolGroupActionKind`.
 public func getToolGroupActionKind(_ block: ToolCallBlock) -> ToolGroupActionKind {
-    let name = block.tool.name
-
-    if name == "Read" || name == "NotebookRead" { return .read }
-    if name == "Grep" || name == "Glob" || name == "LS" { return .search }
-    if name == "Bash" || name == "CodexBash" || name == "shell_command" || name == "run_shell_command" { return .command }
-    if name == "Edit" || name == "MultiEdit" || name == "Write" || name == "NotebookEdit"
-        || name == "CodexPatch" || name == "CodexDiff" {
-        return .mutation
+    let codexActions = getCodexCommandActions(block)
+    if !codexActions.isEmpty {
+        if codexActions.contains(where: { if case .unknown = $0 { return true }; return false }) { return .command }
+        if codexActions.contains(where: { if case .search = $0 { return true }; return false }) { return .search }
+        return .read
     }
-    if name == "WebFetch" || name == "WebSearch" { return .web }
+
+    let nativeKind = normalizeToolIdentifier(block.tool.nativeKind)
+    if !nativeKind.isEmpty, let match = nativeKindActionTable.first(where: { $0.0.contains(nativeKind) }) {
+        return match.1
+    }
+
+    let name = normalizeToolName(block.tool.name)
+    if !name.isEmpty, let match = toolNameActionTable.first(where: { $0.0.contains(name) }) {
+        return match.1
+    }
     return .other
 }
 
