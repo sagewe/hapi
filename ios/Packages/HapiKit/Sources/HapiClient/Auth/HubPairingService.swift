@@ -135,6 +135,7 @@ public struct HubPairingService: Sendable {
         } catch {
             throw PairingFailure.storageFailure
         }
+        HubConnectionRouter.forget(hubURL: normalized)
         registry.register(normalized)
         registry.setActiveHub(normalized)
 
@@ -151,6 +152,7 @@ public struct HubPairingService: Sendable {
     public func unpair(hubUrl: String) -> String? {
         let normalized = HubURLNormalization.normalize(hubUrl) ?? hubUrl
         try? credentialStore.deleteCredentials(forHub: normalized)
+        HubConnectionRouter.forget(hubURL: normalized)
         registry.remove(normalized)
         return registry.activeHub
     }

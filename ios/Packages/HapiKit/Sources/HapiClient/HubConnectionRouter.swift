@@ -39,6 +39,15 @@ public actor HubConnectionRouter {
 
     public func status() -> (mode: HubConnectionMode, isPrivate: Bool) { (mode, selected != canonicalURL) }
 
+    /// A new pairing must not inherit endpoint trust from previous credentials
+    /// at the same public address. The old session is torn down by AppModel.
+    public nonisolated static func forget(hubURL: String) {
+        let origin = HubURLNormalization.normalize(hubURL) ?? hubURL
+        let key = "run.hapi.connection.\(origin)"
+        UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key + ".mode")
+    }
+
     public func setMode(_ value: HubConnectionMode) {
         mode = value
         defaults?.set(value.rawValue, forKey: key + ".mode")

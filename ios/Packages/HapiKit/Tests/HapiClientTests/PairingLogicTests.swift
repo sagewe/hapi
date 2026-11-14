@@ -51,6 +51,25 @@ struct PairingLogicTests {
 
     // MARK: - Success
 
+    @Test func pairingAndUnpairingClearPreviousEndpointTrust() async throws {
+        let world = try makeWorld()
+        defer { world.tearDown() }
+        let origin = "https://route-pair-\(UUID().uuidString.lowercased()).test"
+        let key = "run.hapi.connection.\(origin)"
+        let defaults = UserDefaults.standard
+        defer { defaults.removeObject(forKey: key); defaults.removeObject(forKey: key + ".mode") }
+        defaults.set(Data("old-endpoint-trust".utf8), forKey: key)
+        defaults.set("privateOnly", forKey: key + ".mode")
+        await world.performer.enqueue(status: 200, json: healthJSON())
+        await world.performer.enqueue(status: 200, json: authResponseJSON(token: freshJWT()))
+        _ = try await world.service.pair(rawHubUrl: origin, accessToken: "new-pairing")
+        #expect(defaults.data(forKey: key) == nil)
+        #expect(defaults.string(forKey: key + ".mode") == nil)
+        defaults.set(Data("new-endpoint-trust".utf8), forKey: key)
+        world.service.unpair(hubUrl: origin)
+        #expect(defaults.data(forKey: key) == nil)
+    }
+
     @Test func successfulPairPersistsCredentialsAndActivatesHub() async throws {
         let world = try makeWorld()
         defer { world.tearDown() }
