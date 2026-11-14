@@ -69,6 +69,13 @@ distinct upload ids, and successful uploads retire their local receipt, so a
 later copy cannot reuse an already-deleted attachment path. Changing sessions
 starts a separately scoped upload. iOS may suspend work in the background.
 
+Resumable attachment chips show the Hub-acknowledged percentage and a linear
+progress bar. Retries retain the last confirmed progress; a recovered checkpoint
+updates it to the server's actual offset. Once all bytes arrive, the chip shows
+Finishing… until checksum validation and Runner handoff succeed. Unknown-progress
+small-file and Scratchlist uploads retain an indeterminate spinner. Removed chips
+and superseded sessions ignore stale progress callbacks.
+
 Focused tests: `swift test --filter ResumableUploadTests`; Hub tests are
 `hub/src/uploads/resumable.test.ts` and
 `hub/src/web/routes/resumableUploads.test.ts`.

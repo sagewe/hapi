@@ -50,6 +50,7 @@ public struct ComposerAttachmentUI: Equatable, Sendable, Identifiable {
     public let status: ComposerAttachmentStatus
     /// Upload failure detail, never the request body or file contents.
     public let errorMessage: String?
+    public let uploadProgress: AttachmentUploadProgress?
 
     public init(
         id: String,
@@ -58,7 +59,8 @@ public struct ComposerAttachmentUI: Equatable, Sendable, Identifiable {
         sizeBytes: Int,
         previewBytes: Data?,
         status: ComposerAttachmentStatus,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        uploadProgress: AttachmentUploadProgress? = nil
     ) {
         self.id = id
         self.filename = filename
@@ -67,6 +69,7 @@ public struct ComposerAttachmentUI: Equatable, Sendable, Identifiable {
         self.previewBytes = previewBytes
         self.status = status
         self.errorMessage = errorMessage
+        self.uploadProgress = uploadProgress
     }
 
     func with(status: ComposerAttachmentStatus, errorMessage: String? = nil) -> ComposerAttachmentUI {
@@ -77,8 +80,15 @@ public struct ComposerAttachmentUI: Equatable, Sendable, Identifiable {
             sizeBytes: sizeBytes,
             previewBytes: previewBytes,
             status: status,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            uploadProgress: status == .ready ? nil : uploadProgress
         )
+    }
+
+    func with(uploadProgress: AttachmentUploadProgress?) -> ComposerAttachmentUI {
+        ComposerAttachmentUI(id: id, filename: filename, mimeType: mimeType, sizeBytes: sizeBytes,
+                             previewBytes: previewBytes, status: status, errorMessage: errorMessage,
+                             uploadProgress: uploadProgress)
     }
 }
 
@@ -86,6 +96,8 @@ public struct ComposerAttachmentUI: Equatable, Sendable, Identifiable {
 /// `AttachmentUploadApi`); ``APIClient`` conforms via its existing
 /// `MediaEndpoints` methods, tests script HTTP through the performer.
 public protocol AttachmentUploading: Sendable {
+    func uploadFile(sessionId: String, filename: String, data: Data, mimeType: String,
+                    progress: @escaping AttachmentUploadProgressHandler) async throws -> UploadFileResponse
     /// `POST /api/sessions/:id/upload` — JSON + base64.
     func uploadFile(
         sessionId: String,
@@ -100,6 +112,13 @@ public protocol AttachmentUploading: Sendable {
 
     func uploadScratchlistAttachment(sessionId: String, filename: String, data: Data, mimeType: String) async throws -> ScratchlistUploadResponse
     func deleteScratchlistAttachment(sessionId: String, attachmentId: String) async throws
+}
+
+extension AttachmentUploading {
+    public func uploadFile(sessionId: String, filename: String, data: Data, mimeType: String,
+                           progress: @escaping AttachmentUploadProgressHandler) async throws -> UploadFileResponse {
+        try await uploadFile(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType)
+    }
 }
 
 extension APIClient: AttachmentUploading {}
@@ -390,7 +409,7 @@ public final class ComposerAttachments {
                 Self.deleteDetached(api: api, uploads: [owned])
             }
             entries[index].path = nil
-            entries[index].ui = entry.ui.with(status: .uploading)
+            entries[index].ui = entry.ui.with(status: .uploading).with(uploadProgress: nil)
             upload(id: entry.ui.id, filename: entry.ui.filename, mimeType: entry.ui.mimeType, bytes: bytes)
         }
     }
@@ -417,16 +436,22 @@ public final class ComposerAttachments {
             let revision = sessionRevision
             var path: String?
             var errorMessage: String?
+            @MainActor func uploadTo(_ destination: String) async throws -> UploadFileResponse {
+                let expectedRevision = self.sessionRevision
+                return try await self.api.uploadFile(sessionId: destination, filename: filename, data: bytes, mimeType: mimeType) { [weak self] progress in
+                    await self?.updateUploadProgress(id: id, session: destination, revision: expectedRevision, progress: progress)
+                }
+            }
             do {
                 let response: UploadFileResponse
                 do {
-                    response = try await api.uploadFile(sessionId: target, filename: filename, data: bytes, mimeType: mimeType)
+                    response = try await uploadTo(target)
                 } catch let error as APIError where error.status == 409 && error.code == "session_inactive" && resumeInactiveSession != nil {
                     target = try await recoverSession(from: target, revision: revision)
                     // Removal while /resume was in flight must not upload or
                     // resurrect the cancelled chip.
                     guard entries.contains(where: { $0.ui.id == id }) else { return }
-                    response = try await api.uploadFile(sessionId: target, filename: filename, data: bytes, mimeType: mimeType)
+                    response = try await uploadTo(target)
                 }
                 path = response.success ? response.path : nil
                 if path?.isEmpty == true { path = nil }
@@ -449,6 +474,13 @@ public final class ComposerAttachments {
                 _ = try? await api.deleteUpload(sessionId: target, path: path)
             }
         }
+    }
+
+    private func updateUploadProgress(id: String, session: String, revision: Int, progress: AttachmentUploadProgress) {
+        guard sessionId == session, sessionRevision == revision,
+              let index = entries.firstIndex(where: { $0.ui.id == id }),
+              entries[index].ui.status == .uploading else { return }
+        entries[index].ui = entries[index].ui.with(uploadProgress: progress)
     }
 
     /// Applies the upload outcome to the chip; false when the chip is gone.

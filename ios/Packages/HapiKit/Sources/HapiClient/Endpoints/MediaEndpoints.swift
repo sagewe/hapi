@@ -33,8 +33,13 @@ extension APIClient {
         data: Data,
         mimeType: String
     ) async throws -> UploadFileResponse {
+        try await uploadFile(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType, progress: { _ in })
+    }
+
+    public func uploadFile(sessionId: String, filename: String, data: Data, mimeType: String,
+                           progress: @escaping AttachmentUploadProgressHandler) async throws -> UploadFileResponse {
         if data.count >= 512 * 1024 {
-            return try await resumableUpload(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType)
+            return try await resumableUpload(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType, progress: progress)
         }
         return try await legacyUploadFile(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType)
     }

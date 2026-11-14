@@ -11,6 +11,9 @@ private actor ChunkServer: HTTPPerforming {
     private var loseCompleteResponse = true
     private var offline = false
     private var rejected = false
+    private var completionGate: CheckedContinuation<Void, Never>?
+    private var holdCompletion = false
+    private(set) var completionEntered = false
     private(set) var starts = 0
     private(set) var chunks: [Int] = []
     private(set) var ids: [String] = []
@@ -18,6 +21,8 @@ private actor ChunkServer: HTTPPerforming {
 
     func setOffline(_ value: Bool) { offline = value }
     func setRejected() { rejected = true }
+    func gateCompletionWithoutFailures() { loseChunkResponse = false; loseCompleteResponse = false; holdCompletion = true }
+    func finishCompletion() { completionGate?.resume(); completionGate = nil }
     func bytes() -> Data { stored }
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try #require(request.url)
@@ -41,10 +46,15 @@ private actor ChunkServer: HTTPPerforming {
             status = 200
             response = ["offset": stored.count, "chunkSize": 512 * 1024]
         } else if path.hasSuffix("/complete") {
+            completionEntered = true
+            if holdCompletion { await withCheckedContinuation { completionGate = $0 } }
             if !completed { completions += 1; completed = true }
             if loseCompleteResponse { loseCompleteResponse = false; throw URLError(.networkConnectionLost) }
             status = 200
             response = ["success": true, "path": "/runner/file"]
+        } else if path.hasSuffix("/upload/delete") {
+            status = 200
+            response = ["success": true]
         } else {
             starts += 1
             ids.append(url.lastPathComponent)
@@ -64,6 +74,11 @@ private actor ChunkServer: HTTPPerforming {
     }
 }
 
+private actor UploadProgressRecorder {
+    private(set) var values: [AttachmentUploadProgress] = []
+    func append(_ progress: AttachmentUploadProgress) { values.append(progress) }
+}
+
 private func makeChunkClient(_ server: ChunkServer) throws -> APIClient {
     let origin = "https://upload.example.test"
     let url = try #require(URL(string: origin))
@@ -75,6 +90,29 @@ private func makeChunkClient(_ server: ChunkServer) throws -> APIClient {
 
 @Suite("Resumable attachments")
 struct ResumableUploadTests {
+    @MainActor @Test func trayShowsFinishingUntilServerConfirmsAndDoesNotResurrectRemovedChip() async throws {
+        let server = ChunkServer()
+        await server.gateCompletionWithoutFailures()
+        let client = try makeChunkClient(server)
+        let tray = ComposerAttachments(api: client, sessionId: "progress-fixture")
+        tray.add(PreparedAttachment(id: "progress", filename: "video.mp4", mimeType: "video/mp4", bytes: Data(repeating: 7, count: 512 * 1024)))
+        for _ in 0..<200 {
+            if await server.completionEntered { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await server.completionEntered)
+        #expect(tray.items.first?.status == .uploading)
+        #expect(tray.items.first?.uploadProgress?.phase == .finishing)
+        #expect(tray.items.first?.uploadProgress?.fraction == 1)
+        #expect(!tray.allReady)
+        tray.remove("progress")
+        await server.finishCompletion()
+        for _ in 0..<200 {
+            if await server.completions == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(tray.items.isEmpty)
+    }
     @Test func resumesAcceptedChunkAfterLostResponseAndManualRetry() async throws {
         let server = ChunkServer()
         let client = try makeChunkClient(server)
@@ -86,13 +124,33 @@ struct ResumableUploadTests {
         #expect(first is URLError)
         #expect(await server.bytes().count == 512 * 1024)
         await server.setOffline(false)
-        let result = try await client.resumableUpload(sessionId: "session", filename: "video.mp4", data: data, mimeType: "video/mp4", identities: ids)
+        let recorder = UploadProgressRecorder()
+        let result = try await client.resumableUpload(sessionId: "session", filename: "video.mp4", data: data, mimeType: "video/mp4", identities: ids) {
+            await recorder.append($0)
+        }
         #expect(result.path == "/runner/file")
         #expect(await server.bytes() == data)
         #expect(await server.chunks == [0, 512 * 1024])
         #expect(await server.completions == 1)
         let used = await server.ids
         #expect(Set(used).count == 1)
+        let updates = await recorder.values
+        #expect(updates.first?.acknowledgedBytes == 512 * 1024)
+        #expect(updates.contains { $0.phase == .finishing && $0.fraction == 1 })
+        #expect(updates.contains { $0.phase == .retrying && $0.acknowledgedBytes == data.count })
+        #expect(updates.allSatisfy { $0.totalBytes == data.count && $0.acknowledgedBytes >= 512 * 1024 })
+    }
+
+    @Test func progressIsBoundedAndRetainedAcrossRetryUntilReady() {
+        let progress = AttachmentUploadProgress(acknowledgedBytes: 35, totalBytes: 100)
+        let chip = ComposerAttachmentUI(id: "test", filename: "movie.mp4", mimeType: "video/mp4", sizeBytes: 100,
+                                        previewBytes: nil, status: .uploading, uploadProgress: progress)
+        #expect(chip.with(status: .failed).with(status: .uploading).uploadProgress == progress)
+        #expect(chip.with(status: .ready).uploadProgress == nil)
+        #expect(progress.percent == 35)
+        #expect(AttachmentUploadProgress(acknowledgedBytes: 200, totalBytes: 100).fraction == 1)
+        #expect(AttachmentUploadProgress(acknowledgedBytes: -1, totalBytes: 100).fraction == 0)
+        #expect(AttachmentUploadProgress(acknowledgedBytes: 0, totalBytes: 0).fraction == 0)
     }
 
     @Test func inactiveSessionIsNotRetriedByTheTransport() async throws {

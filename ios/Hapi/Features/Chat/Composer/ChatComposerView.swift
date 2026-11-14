@@ -2518,7 +2518,7 @@ private struct ScheduleTimeSheet: View {
     }
 }
 
-private struct ComposerAttachmentChipView: View {
+struct ComposerAttachmentChipView: View {
     let attachment: ComposerAttachmentUI
     let onRetry: () -> Void
     let onRemove: () -> Void
@@ -2582,16 +2582,38 @@ private struct ComposerAttachmentChipView: View {
                     .lineLimit(1)
                 Text(statusLine)
                     .font(.caption2)
+                    .monospacedDigit()
                     .foregroundStyle(failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
+                    .accessibilityIdentifier("attachment.progress.\(attachment.id)")
+                if attachment.status == .uploading, let progress = attachment.uploadProgress {
+                    GeometryReader { geometry in
+                        Capsule().fill(Color.secondary.opacity(0.15))
+                            .overlay(alignment: .leading) {
+                                Capsule().fill(.tint)
+                                    .frame(width: geometry.size.width * progress.fraction)
+                            }
+                    }
+                        .frame(height: 3)
+                        .padding(.top, 4)
+                        .accessibilityLabel("Uploading…")
+                        .accessibilityValue("\(progress.percent)%")
+                }
             }
             .frame(maxWidth: 132, alignment: .leading)
         }
     }
 
-    private var statusLine: String {
+    var statusLine: String {
         switch attachment.status {
         case .uploading:
+            if let progress = attachment.uploadProgress {
+                switch progress.phase {
+                case .uploading: return "\(progress.percent)%"
+                case .retrying: return "\(String(localized: "Retrying…")) · \(progress.percent)%"
+                case .finishing: return String(localized: "Finishing…")
+                }
+            }
             return String(localized: "Uploading…")
         case .failed:
             return String(localized: "Failed — tap to retry")
@@ -2619,7 +2641,7 @@ private struct ComposerAttachmentChipView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            if attachment.status == .uploading {
+            if attachment.status == .uploading && attachment.uploadProgress == nil {
                 ProgressView()
                     .controlSize(.small)
             }

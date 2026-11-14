@@ -13,6 +13,31 @@ import XCTest
 /// loopback upload fixture, never a saved hub or the user's Keychain.
 @MainActor
 final class AttachmentUploadPresentationTests: XCTestCase {
+    func testAcknowledgedProgressRetryAndFinishingPresentation() throws {
+        func chip(_ bytes: Int, _ phase: AttachmentUploadProgress.Phase) -> ComposerAttachmentChipView {
+            ComposerAttachmentChipView(attachment: ComposerAttachmentUI(id: "progress-\(phase)", filename: "Video.mp4",
+                mimeType: "video/mp4", sizeBytes: 100, previewBytes: nil, status: .uploading,
+                uploadProgress: AttachmentUploadProgress(acknowledgedBytes: bytes, totalBytes: 100, phase: phase)),
+                onRetry: {}, onRemove: {})
+        }
+        let uploading = chip(35, .uploading)
+        let retrying = chip(35, .retrying)
+        let finishing = chip(100, .finishing)
+        XCTAssertEqual(uploading.statusLine, "35%")
+        XCTAssertTrue(retrying.statusLine.contains("35%"))
+        XCTAssertFalse(finishing.statusLine.contains("100%"))
+        let root = VStack(spacing: 16) { uploading; retrying; finishing }.padding(24)
+            .frame(width: 350, height: 280).background(Color(uiColor: .systemBackground))
+        let renderer = ImageRenderer(content: root.environment(\.colorScheme, .light))
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.uiImage)
+        XCTAssertGreaterThan(try XCTUnwrap(image.pngData()).count, 1000)
+        if let directory = ProcessInfo.processInfo.environment["HAPI_UPLOAD_PROGRESS_CAPTURE"] {
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("upload-progress.png")
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try image.pngData()?.write(to: url)
+        }
+    }
     private actor FixtureHTTP: HTTPPerforming {
         var attempts = 0
         private var resumed: Set<String> = []

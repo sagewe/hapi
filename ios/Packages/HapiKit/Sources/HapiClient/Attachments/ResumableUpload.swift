@@ -13,7 +13,8 @@ extension APIClient {
     /// selecting the same prepared file again resumes its server checkpoint.
     /// No file bytes or credential material are persisted by the client here.
     func resumableUpload(sessionId: String, filename: String, data: Data, mimeType: String,
-                         identities: UploadIdentityStore = .shared) async throws -> UploadFileResponse {
+                         identities: UploadIdentityStore = .shared,
+                         progress: @escaping AttachmentUploadProgressHandler = { _ in }) async throws -> UploadFileResponse {
         #if canImport(CryptoKit)
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         let identity = try HapiJSON.encoder.encode([baseURL.absoluteString, sessionId, filename, mimeType, digest])
@@ -21,7 +22,7 @@ extension APIClient {
         let uploadId = await identities.acquire(key: key)
         do {
             let result = try await transferUpload(sessionId: sessionId, filename: filename, data: data,
-                                                  mimeType: mimeType, digest: digest, uploadId: uploadId)
+                                                  mimeType: mimeType, digest: digest, uploadId: uploadId, progress: progress)
             await identities.release(id: uploadId, completed: true)
             return result
         } catch {
@@ -36,10 +37,13 @@ extension APIClient {
     }
 
     private func transferUpload(sessionId: String, filename: String, data: Data, mimeType: String,
-                                digest: String, uploadId: String) async throws -> UploadFileResponse {
+                                digest: String, uploadId: String,
+                                progress: @escaping AttachmentUploadProgressHandler) async throws -> UploadFileResponse {
         let path = "/api/sessions/\(encodePathComponent(sessionId))/uploads/\(uploadId)"
         let metadata = ResumableUploadRequest(filename: filename, mimeType: mimeType, size: data.count, sha256: digest)
         var failures = 0
+        var acknowledged = 0
+        var hasCheckpoint = false
         while true {
             try Task.checkCancellation()
             do {
@@ -51,6 +55,10 @@ extension APIClient {
                       checkpoint.offset >= 0, checkpoint.offset <= data.count else {
                     throw URLError(.cannotParseResponse)
                 }
+                acknowledged = checkpoint.offset
+                hasCheckpoint = true
+                await progress(AttachmentUploadProgress(acknowledgedBytes: acknowledged, totalBytes: data.count,
+                                                       phase: acknowledged == data.count ? .finishing : .uploading))
                 while checkpoint.offset < data.count {
                     try Task.checkCancellation()
                     let offset = checkpoint.offset
@@ -65,6 +73,9 @@ extension APIClient {
                         throw URLError(.cannotParseResponse)
                     }
                     checkpoint = next
+                    acknowledged = next.offset
+                    await progress(AttachmentUploadProgress(acknowledgedBytes: acknowledged, totalBytes: data.count,
+                                                           phase: acknowledged == data.count ? .finishing : .uploading))
                     failures = 0
                 }
                 return try await request(.post, path + "/complete")
@@ -72,6 +83,9 @@ extension APIClient {
                 try Task.checkCancellation()
                 guard Self.canResumeUpload(after: error), failures < 3 else { throw error }
                 failures += 1
+                if hasCheckpoint {
+                    await progress(AttachmentUploadProgress(acknowledgedBytes: acknowledged, totalBytes: data.count, phase: .retrying))
+                }
                 try await Task.sleep(for: .milliseconds(500 * (1 << (failures - 1))))
             }
         }
