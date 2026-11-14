@@ -1143,6 +1143,18 @@ public final class ChatInteractor {
         )
     }
 
+    /// Codex `POST /service-tier` (`fast` or `standard`).
+    public func setServiceTier(_ tier: ServiceTier) {
+        let config = config
+        guard config.canChangeServiceTier, tier != config.serviceTier else { return }
+        let api = api
+        let sessionId = sessionId
+        runConfigChange(
+            optimistic: { $0.serviceTier = tier.rawValue },
+            call: { try await api.setServiceTier(sessionId: sessionId, serviceTier: tier) }
+        )
+    }
+
     /// `POST /model` — nil clears back to the agent default. Pi switches
     /// with a `{provider, modelId}` reference; grok/opencode efforts are
     /// per model, so their options reload afterwards.
@@ -1219,20 +1231,45 @@ public final class ChatInteractor {
         case .idle, .failed:
             break
         }
+        let detail = sessionStore.detail(for: sessionId)
+        let summary = sessionStore.sessions.first { $0.id == sessionId }
+        let active = detail?.active ?? summary?.active ?? false
+        let machineId = detail?.metadata?.machineId ?? summary?.metadata?.machineId
+        guard active || machineId != nil else { return }
+
         codexModels = .loading
         Task { [weak self] in
             guard let self else { return }
             do {
-                let response = try await self.api.sessionCodexModels(sessionId: self.sessionId)
+                let response: CodexModelsResponse
+                if active {
+                    do {
+                        response = try await self.api.sessionCodexModels(sessionId: self.sessionId)
+                    } catch let error as APIError where error.code == "rpc_target_missing" {
+                        guard let machineId else { throw error }
+                        response = try await self.api.machineCodexModels(machineId: machineId)
+                    }
+                } else if let machineId {
+                    response = try await self.api.machineCodexModels(machineId: machineId)
+                } else {
+                    self.codexModels = .idle
+                    return
+                }
                 if response.success, let models = response.models {
                     self.codexModels = .loaded(models)
-                } else {
+                } else if active {
                     self.emit(.notice(response.error ?? "Failed to load models"))
                     self.codexModels = .failed
+                } else {
+                    self.codexModels = .idle
                 }
             } catch {
-                self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
-                self.codexModels = .failed
+                if active {
+                    self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
+                    self.codexModels = .failed
+                } else {
+                    self.codexModels = .idle
+                }
             }
         }
     }

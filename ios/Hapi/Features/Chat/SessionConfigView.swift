@@ -88,10 +88,11 @@ struct SessionConfigView: View {
                 statusNotice("Session is controlled from the terminal — config changes will be rejected.")
             }
 
-            if model.showsModel || model.showsEffort {
+            if model.showsModel || model.showsEffort || model.showsFastMode {
                 Section {
                     if model.showsModel { modelRow }
                     if model.showsEffort { effortMenu }
+                    if model.showsFastMode { fastModeMenu }
                 }
                 .disabled(model.isApplying)
             }
@@ -288,6 +289,24 @@ struct SessionConfigView: View {
             .pickerStyle(.inline)
         }
         .accessibilityIdentifier("session-config-effort")
+    }
+
+    private var fastModeMenu: some View {
+        SessionConfigMenu(
+            title: "Fast Mode",
+            value: Text(LocalizedStringKey(model.serviceTier.label))
+        ) {
+            Picker("Fast Mode", selection: Binding(
+                get: { model.serviceTier }, set: { model.selectServiceTier($0) }
+            )) {
+                ForEach(ServiceTier.allCases, id: \.self) { tier in
+                    Text(LocalizedStringKey(tier.label)).tag(tier)
+                }
+            }
+            .pickerStyle(.inline)
+        }
+        .disabled(!model.config.canChangeServiceTier)
+        .accessibilityIdentifier("session-config-fast-mode")
     }
 
     private var modelRow: some View {

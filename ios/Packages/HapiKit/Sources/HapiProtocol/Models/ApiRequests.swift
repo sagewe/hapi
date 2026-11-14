@@ -127,9 +127,16 @@ extension ModelSelection: Codable {
 }
 
 /// Codex service tier (`POST /api/sessions/:id/service-tier`, spawn request).
-public enum ServiceTier: String, Codable, Sendable {
-    case fast
+public enum ServiceTier: String, Codable, CaseIterable, Sendable {
     case standard
+    case fast
+
+    public var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .fast: return "Fast"
+        }
+    }
 }
 
 /// Pin mode of `PUT /api/sessions/:id/pin`.

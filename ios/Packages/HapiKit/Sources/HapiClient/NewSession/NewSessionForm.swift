@@ -494,6 +494,12 @@ public enum NewSessionLogic {
         } == true
     }
 
+    public static func isFastServiceTier(_ raw: String?) -> Bool {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !trimmed.isEmpty else { return false }
+        return trimmed == "fast" || trimmed == "priority"
+    }
+
     /// Supported reasoning efforts of the active codex model, normalized
     /// (trim/lowercase/dedupe — `getCodexModelReasoningEfforts`); nil when
     /// the catalog does not advertise any (fall back to the static list).

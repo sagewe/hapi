@@ -228,6 +228,65 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertTrue(harness.model.config.controlledByUser)
     }
 
+    func testCodexFastModeVisibilitySelectionAndRollback() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        await harness.http.setModels([
+            CodexModelSummary(id: "fast", displayName: "Fast", isDefault: false, supportedReasoningEfforts: ["low", "high"], serviceTiers: ["standard"]),
+            CodexModelSummary(id: "deep", displayName: "Deep", isDefault: true, supportedReasoningEfforts: ["high", "xhigh"], serviceTiers: ["priority", "fast"]),
+        ])
+        let model = harness.model
+        XCTAssertFalse(model.showsFastMode)
+        model.loadModels()
+        try await configEventually { !model.config.modelOptionsLoading }
+        XCTAssertTrue(model.showsFastMode)
+        XCTAssertEqual(model.serviceTier, .standard)
+        XCTAssertTrue(model.config.canChangeServiceTier)
+
+        model.selectServiceTier(.standard)
+        let initialPosts = await harness.http.posts
+        XCTAssertTrue(initialPosts.isEmpty)
+
+        await harness.http.holdPosts()
+        defer { Task { await harness.http.releasePosts() } }
+        model.selectServiceTier(.fast)
+        XCTAssertTrue(model.isApplying)
+        XCTAssertEqual(model.serviceTier, .fast)
+        XCTAssertEqual(model.modelSummaryValue, "Deep · default · Default · Fast")
+        model.selectServiceTier(.standard)
+        model.selectCollaborationMode(.plan)
+        try await configEventually { await harness.http.posts.count == 1 }
+        let firstPosts = await harness.http.posts
+        XCTAssertEqual(firstPosts.first?.path, "/api/sessions/config/service-tier")
+        XCTAssertEqual(firstPosts.first?.body, #"{"serviceTier":"fast"}"#)
+
+        await harness.http.releasePosts()
+        try await configEventually { !model.isApplying }
+
+        harness.store.updateDetailLocal("config") { $0.active = false }
+        XCTAssertTrue(model.showsFastMode)
+        XCTAssertFalse(model.config.canChangeServiceTier)
+        model.selectServiceTier(.standard)
+        let offlinePosts = await harness.http.posts
+        XCTAssertEqual(offlinePosts.count, 1)
+
+        harness.store.updateDetailLocal("config") { $0.active = true }
+        await harness.http.rejectChanges()
+        var notices: [String] = []
+        harness.interactor.onEvent = {
+            if case .notice(let message) = $0 { notices.append(message) }
+        }
+        model.selectServiceTier(.standard)
+        XCTAssertEqual(model.serviceTier, .standard)
+        try await configEventually { !model.isApplying }
+        XCTAssertEqual(model.serviceTier, .fast)
+        XCTAssertEqual(notices, ["HTTP 409 (Config rejected)"])
+
+        await harness.http.acceptChanges()
+        model.selectModel("fast")
+        try await configEventually { !model.isApplying }
+        XCTAssertFalse(model.showsFastMode)
+    }
+
     func testSubscriptionQuotaLoadsForCodexAndAgy() async throws {
         let harness = try await SessionConfigTestHarness(flavor: "agy")
         let quotaModel = SessionConfigModel(interactor: harness.interactor, api: harness.api, machineId: "machine-1")
@@ -448,12 +507,17 @@ final class SessionConfigTests: XCTestCase {
             scheduleHost.safeAreaRegions = []
             scheduleHost.view.backgroundColor = .clear
 
+            await harness.http.setModels([
+                CodexModelSummary(id: "fast", displayName: "Fast", isDefault: false, supportedReasoningEfforts: ["low", "high"], serviceTiers: ["standard"]),
+                CodexModelSummary(id: "deep", displayName: "Deep", isDefault: true, supportedReasoningEfforts: ["high", "xhigh"], serviceTiers: ["priority", "fast"]),
+            ])
+            harness.store.updateDetailLocal("config") { $0.serviceTier = "fast" }
             let captureModel = SessionConfigModel(interactor: harness.interactor, api: harness.api, machineId: "studio")
             captureModel.loadModels()
             captureModel.loadQuota()
             try await configEventually {
                 if case .loaded = captureModel.quotaState {
-                    return !captureModel.config.modelOptionsLoading
+                    return !captureModel.config.modelOptionsLoading && captureModel.showsFastMode
                 }
                 return false
             }
@@ -588,7 +652,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
         let body: String?
     }
 
-    private let detail: Session
+    private var detail: Session
     private var models = [
         CodexModelSummary(id: "fast", displayName: "Fast", isDefault: false, supportedReasoningEfforts: ["low", "high"]),
         CodexModelSummary(id: "deep", displayName: "Deep", isDefault: true, supportedReasoningEfforts: ["high", "xhigh"]),
@@ -604,6 +668,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
     func setModelsFailure(_ value: Bool) { modelsFailure = value }
     func setModels(_ values: [CodexModelSummary]) { models = values }
     func rejectChanges() { changesRejected = true }
+    func acceptChanges() { changesRejected = false }
     func holdPosts() { postsHeld = true }
     func releasePosts() {
         postsHeld = false
@@ -656,6 +721,11 @@ actor SessionConfigTestHTTP: HTTPPerforming {
         } else if request.httpMethod == "POST" {
             posts.append(Post(path: path, body: request.httpBody.map { String(decoding: $0, as: UTF8.self) }))
             if postsHeld { await withCheckedContinuation { postWaiters.append($0) } }
+            if !changesRejected, path.hasSuffix("/service-tier"),
+               let body = request.httpBody,
+               let payload = try? HapiJSON.decoder.decode([String: String].self, from: body) {
+                detail.serviceTier = payload["serviceTier"]
+            }
             status = changesRejected ? 409 : 200
             data = Data((changesRejected ? #"{"error":"Config rejected"}"# : #"{"ok":true}"#).utf8)
         } else if path.hasSuffix("/codex-models") {

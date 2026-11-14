@@ -31,9 +31,10 @@ final class SessionConfigModel {
     var showsModel: Bool { config.modelOptions != nil || config.modelOptionsLoading }
     var showsEffort: Bool { config.effortOptions?.isEmpty == false }
     var showsCollaborationMode: Bool { config.flavor == "codex" }
+    var showsFastMode: Bool { config.showsFastMode }
     var quotaAgent: UsageQueryAgent? { UsageQueryAgent.from(flavor: config.flavor) }
     var showsQuota: Bool { api != nil && machineId != nil && quotaAgent != nil }
-    var hasSettings: Bool { !config.permissionModes.isEmpty || showsModel || showsEffort || showsCollaborationMode }
+    var hasSettings: Bool { !config.permissionModes.isEmpty || showsModel || showsEffort || showsCollaborationMode || showsFastMode }
 
     var canDiscoverModels: Bool {
         guard config.active, let raw = config.flavor else { return false }
@@ -45,7 +46,7 @@ final class SessionConfigModel {
     }
 
     var showsComposerModelMenu: Bool {
-        showsModel || showsEffort || canDiscoverModels
+        showsModel || showsEffort || showsFastMode || canDiscoverModels
     }
 
     var showsComposerPermissionMenu: Bool {
@@ -57,17 +58,28 @@ final class SessionConfigModel {
     }
 
     var modelSummaryValue: String {
+        var parts = [modelLabel]
         if showsEffort {
-            return "\(modelLabel) · \(currentEffortLabel)"
+            parts.append(currentEffortLabel)
         }
-        return modelLabel
+        if showsFastMode, serviceTier == .fast {
+            parts.append(ServiceTier.fast.label)
+        }
+        return parts.joined(separator: " · ")
     }
 
     var modelSummaryHelp: String {
+        var parts: [String] = []
         if showsEffort {
-            return String(localized: "Model: \(modelLabel) · Effort: \(currentEffortLabel)")
+            parts.append(String(localized: "Model: \(modelLabel) · Effort: \(currentEffortLabel)"))
+        } else {
+            parts.append(String(localized: "Model: \(modelLabel)"))
         }
-        return String(localized: "Model: \(modelLabel)")
+        if showsFastMode {
+            let tierLabel = String(localized: String.LocalizationValue(serviceTier.label))
+            parts.append("\(String(localized: "Fast Mode")): \(tierLabel)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     var permissionSummaryValue: String {
@@ -98,6 +110,7 @@ final class SessionConfigModel {
 
     var permission: PermissionMode { config.permissionMode ?? .default }
     var collaborationMode: CodexCollaborationMode { config.collaborationMode ?? .default }
+    var serviceTier: ServiceTier { config.serviceTier }
 
     var currentModel: String? {
         if config.flavor == "claude" {
@@ -158,6 +171,11 @@ final class SessionConfigModel {
     func selectEffort(_ value: String?) {
         guard !isApplying, value != currentEffort, canSelectEffort(value) else { return }
         interactor.setEffort(value)
+    }
+
+    func selectServiceTier(_ tier: ServiceTier) {
+        guard !isApplying, config.canChangeServiceTier, tier != serviceTier else { return }
+        interactor.setServiceTier(tier)
     }
 
     func loadModels() {

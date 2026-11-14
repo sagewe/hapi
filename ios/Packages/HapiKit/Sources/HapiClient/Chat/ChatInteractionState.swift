@@ -271,6 +271,9 @@ public struct SessionConfigState: Equatable, Sendable {
     public let effort: String?
     /// nil → hide the effort section.
     public let effortOptions: [CatalogOption]?
+    public let serviceTier: ServiceTier
+    public let showsFastMode: Bool
+    public let canChangeServiceTier: Bool
 
     public init(
         flavor: String?,
@@ -285,7 +288,10 @@ public struct SessionConfigState: Equatable, Sendable {
         modelOptionsLoading: Bool,
         modelLoadFailed: Bool = false,
         effort: String?,
-        effortOptions: [CatalogOption]?
+        effortOptions: [CatalogOption]?,
+        serviceTier: ServiceTier = .standard,
+        showsFastMode: Bool = false,
+        canChangeServiceTier: Bool = false
     ) {
         self.flavor = flavor
         self.active = active
@@ -300,6 +306,9 @@ public struct SessionConfigState: Equatable, Sendable {
         self.modelLoadFailed = modelLoadFailed
         self.effort = effort
         self.effortOptions = effortOptions
+        self.serviceTier = serviceTier
+        self.showsFastMode = showsFastMode
+        self.canChangeServiceTier = canChangeServiceTier
     }
 }
 
@@ -322,6 +331,8 @@ public func buildSessionConfigState(
     var modelLoadFailed = false
     var effort: String?
     var effortOptions: [CatalogOption]?
+    var effectiveRawServiceTier = detail?.serviceTier
+    var showsFastMode = flavor == "codex" && NewSessionLogic.isFastServiceTier(detail?.serviceTier)
 
     switch flavor {
     case "claude":
@@ -337,13 +348,29 @@ public func buildSessionConfigState(
                     label: row.displayName + (row.isDefault ? " · default" : "")
                 )
             }
-            let selected = models.first { $0.id == model } ?? models.first { $0.isDefault }
+            let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let selected: CodexModelSummary?
+            if let normalizedModel, !normalizedModel.isEmpty {
+                selected = models.first {
+                    $0.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedModel
+                }
+            } else {
+                selected = models.first { $0.isDefault }
+            }
             let efforts = selected?.supportedReasoningEfforts ?? []
             if !efforts.isEmpty {
                 effort = detail?.modelReasoningEffort
                 effortOptions = [CatalogOption(value: nil, label: "Default")] + efforts.map { level in
                     CatalogOption(value: level, label: ModelCatalog.capitalizedFirst(level))
                 }
+            }
+            let advertisesFastTier = NewSessionLogic.codexModelAdvertisesFastTier(
+                model: model ?? "",
+                models: models
+            )
+            showsFastMode = advertisesFastTier
+            if detail?.serviceTier == nil {
+                effectiveRawServiceTier = selected?.defaultServiceTier
             }
         case .loading:
             modelOptions = []
@@ -406,6 +433,9 @@ public func buildSessionConfigState(
         modelOptions = nil // Generic fallback: hide the picker.
     }
 
+    let serviceTier: ServiceTier = NewSessionLogic.isFastServiceTier(effectiveRawServiceTier) ? .fast : .standard
+    let canChangeServiceTier = detail != nil && flavor == "codex" && active && !controlledByUser && showsFastMode
+
     return SessionConfigState(
         flavor: flavor,
         active: active,
@@ -419,7 +449,10 @@ public func buildSessionConfigState(
         modelOptionsLoading: modelOptionsLoading,
         modelLoadFailed: modelLoadFailed,
         effort: effort,
-        effortOptions: effortOptions
+        effortOptions: effortOptions,
+        serviceTier: serviceTier,
+        showsFastMode: showsFastMode,
+        canChangeServiceTier: canChangeServiceTier
     )
 }
 

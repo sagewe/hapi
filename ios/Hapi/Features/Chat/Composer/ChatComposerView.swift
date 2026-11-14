@@ -1259,11 +1259,26 @@ struct ChatComposerView: View {
                 .pickerStyle(.inline)
             }
         }
+        if configModel.showsFastMode {
+            Section("Fast Mode") {
+                Picker("Fast Mode", selection: Binding(
+                    get: { configModel.serviceTier },
+                    set: { configModel.selectServiceTier($0) }
+                )) {
+                    ForEach(ServiceTier.allCases, id: \.self) { tier in
+                        Text(LocalizedStringKey(tier.label)).tag(tier)
+                    }
+                }
+                .pickerStyle(.inline)
+                .disabled(!configModel.config.canChangeServiceTier)
+            }
+        }
     }
 
     #if targetEnvironment(macCatalyst)
     private var composerModelMenu: some View {
-        let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
+        let hasCustomEffort = (configModel.showsEffort && configModel.currentEffort != nil)
+            || (configModel.showsFastMode && configModel.serviceTier == .fast)
         return Menu {
             if !configModel.config.active {
                 Text("Session is offline")
@@ -1423,9 +1438,10 @@ struct ChatComposerView: View {
             return .orange
         }
         let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
+        let hasFastMode = configModel.showsFastMode && configModel.serviceTier == .fast
         let hasCustomPermission = configModel.permission != .default
             || (configModel.showsCollaborationMode && configModel.collaborationMode != .default)
-        if hasCustomEffort || hasCustomPermission || isPopupOpen(.sessionControls) {
+        if hasCustomEffort || hasFastMode || hasCustomPermission || isPopupOpen(.sessionControls) {
             return .accentColor
         }
         return Color.primary.opacity(0.88)
@@ -4060,11 +4076,55 @@ struct ComposerSessionControlsPopupCard: View {
                 .disabled(controlsDisabled)
             }
 
+            if model.showsFastMode {
+                Text("Fast Mode")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, model.showsEffort ? 2 : 0)
+
+                HStack(spacing: 4) {
+                    ForEach(ServiceTier.allCases, id: \.self) { tier in
+                        let selected = model.serviceTier == tier
+                        Button {
+                            model.selectServiceTier(tier)
+                        } label: {
+                            HStack(spacing: 4) {
+                                if tier == .fast {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(selected ? .orange : .secondary)
+                                }
+                                Text(LocalizedStringKey(tier.label))
+                            }
+                            .font(.caption.weight(selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? .primary : .secondary)
+                            .frame(maxWidth: .infinity, minHeight: 30)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(selected
+                                          ? (isDark ? Color.white.opacity(0.18) : Color.white)
+                                          : Color.clear)
+                                    .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
+                )
+                .disabled(controlsDisabled || !model.config.canChangeServiceTier)
+                .accessibilityIdentifier("session-config-fast-mode")
+            }
+
             if model.showsModel || model.canDiscoverModels {
                 Text("Model")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.top, model.showsEffort ? 2 : 0)
+                    .padding(.top, (model.showsEffort || model.showsFastMode) ? 2 : 0)
 
                 if model.config.modelOptionsLoading {
                     HStack(spacing: 8) {

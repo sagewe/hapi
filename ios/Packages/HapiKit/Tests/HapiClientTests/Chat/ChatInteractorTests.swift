@@ -1249,6 +1249,69 @@ struct ChatInteractorTests {
         #expect(config.effortOptions?.map(\.value) == [nil, "low", "medium", "high"])
     }
 
+    @Test func codexServiceTierGateingDefaultsSelectionAndOfflineCatalogFallback() async throws {
+        var detail = chatDetail(flavor: "codex", model: "gpt-6.1-sol")
+        detail.metadata?.machineId = "mach-1"
+        let harness = try await ChatInteractionHarness(detail: detail)
+        await harness.performer.serve(
+            "GET", "/api/sessions/sess-1/codex-models",
+            json: """
+            {"success":true,"models":[\
+            {"id":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","isDefault":true,"defaultServiceTier":"priority","serviceTiers":["priority","fast"]},\
+            {"id":"gpt-6-mini","displayName":"GPT-6 Mini","isDefault":false,"serviceTiers":["standard"]}\
+            ]}
+            """
+        )
+
+        harness.interactor.loadModelOptions()
+        #expect(await eventually { harness.interactor.config.showsFastMode })
+        #expect(harness.interactor.config.serviceTier == .fast)
+        #expect(harness.interactor.config.canChangeServiceTier)
+
+        harness.interactor.setServiceTier(.standard)
+        #expect(harness.interactor.config.serviceTier == .standard)
+        #expect(await eventually {
+            await harness.performer.count("POST", pathSuffix: "/service-tier") == 1
+        })
+        #expect(await harness.performer.bodies("POST", pathSuffix: "/service-tier") == [#"{"serviceTier":"standard"}"#])
+
+        harness.interactor.setServiceTier(.fast)
+        #expect(harness.interactor.config.serviceTier == .fast)
+        #expect(await eventually {
+            await harness.performer.count("POST", pathSuffix: "/service-tier") == 2
+        })
+        #expect(await harness.performer.bodies("POST", pathSuffix: "/service-tier") == [
+            #"{"serviceTier":"standard"}"#,
+            #"{"serviceTier":"fast"}"#,
+        ])
+
+        harness.interactor.setModel("gpt-6-mini")
+        #expect(await eventually { !harness.interactor.configOpPending })
+        #expect(!harness.interactor.config.showsFastMode)
+        #expect(!harness.interactor.config.canChangeServiceTier)
+        harness.interactor.setServiceTier(.standard)
+        #expect(await harness.performer.count("POST", pathSuffix: "/service-tier") == 2)
+
+        var offlineDetail = chatDetail(flavor: "codex", active: false, model: "gpt-6.1-sol")
+        offlineDetail.metadata?.machineId = "mach-1"
+        offlineDetail.serviceTier = "fast"
+        let offline = try await ChatInteractionHarness(detail: offlineDetail)
+        await offline.performer.serve(
+            "GET", "/api/machines/mach-1/codex-models",
+            json: """
+            {"success":true,"models":[{"id":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","isDefault":true,"serviceTiers":["priority","fast"]}]}
+            """
+        )
+        offline.interactor.loadModelOptions()
+        #expect(await eventually { offline.interactor.config.modelOptions?.isEmpty == false })
+        #expect(await offline.performer.count("GET", pathSuffix: "/api/sessions/sess-1/codex-models") == 0)
+        #expect(await offline.performer.count("GET", pathSuffix: "/api/machines/mach-1/codex-models") == 1)
+        #expect(offline.interactor.config.showsFastMode)
+        #expect(offline.interactor.config.serviceTier == .fast)
+        #expect(!offline.interactor.config.canChangeServiceTier)
+        #expect(offline.events.isEmpty)
+    }
+
     // MARK: Codex plans (client actions, not permissions)
 
     private func planSession() -> Session {
