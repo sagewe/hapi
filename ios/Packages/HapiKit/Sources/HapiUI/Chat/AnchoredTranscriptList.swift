@@ -428,6 +428,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var applying = false
     private var environmentSignature: TranscriptEnvironmentSignature?
     private var configuredWidth: CGFloat = 0
+    private var lastLayoutHeight: CGFloat = 0
     private var configuredSpacing: [CGFloat] = []
     private var renderedHistoryVersion = -1
     private var lastJumpToken = 0
@@ -479,11 +480,27 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         guard collection.bounds.width > 24 else { return }
+        let previousHeight = lastLayoutHeight
+        lastLayoutHeight = collection.bounds.height
+        let heightChanged = previousHeight > 0 && abs(collection.bounds.height - previousHeight) > 0.5
         if abs(configuredWidth - collection.bounds.width) > 0.5, !applying {
             if pending == nil { pending = configuration }
             drain()
         } else if layout.followsTail, !applying, !collection.isDragging {
-            layout.correctOffset(to: layout.bottomOffset(collection))
+            let targetY = layout.bottomOffset(collection)
+            if abs(collection.contentOffset.y - targetY) > 0.5 {
+                if heightChanged && UIView.inheritedAnimationDuration > 0 {
+                    // Preserve the active keyboard/inset CoreAnimation curve by
+                    // mutating bounds.origin directly instead of calling
+                    // invalidateLayout(with:), which strips animation in UIKit.
+                    collection.contentOffset = CGPoint(x: collection.contentOffset.x, y: targetY)
+                    UIView.performWithoutAnimation {
+                        collection.layoutIfNeeded()
+                    }
+                } else {
+                    layout.correctOffset(to: targetY)
+                }
+            }
         }
         reportViewport()
     }

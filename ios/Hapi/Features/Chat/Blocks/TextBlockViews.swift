@@ -292,7 +292,8 @@ struct AgentReasoningBlockView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -300,6 +301,13 @@ struct AgentReasoningBlockView: View {
                 CachedMarkdownView(markdown: block.text)
                     .opacity(0.75)
                     .padding(.leading, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            expandedOverride = false
+                        }
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

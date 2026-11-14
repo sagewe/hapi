@@ -59,8 +59,8 @@ struct ChatComposerView: View {
     @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 16
     @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 28
     #else
-    @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 19.5
-    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 36
+    @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 18.5
+    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 31
     #endif
 
     init(
@@ -347,7 +347,6 @@ struct ChatComposerView: View {
                 )
             }
             #endif
-            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: collapsed)
         }
         .hapiReadingColumn()
         .padding(.top, 8)
@@ -1440,7 +1439,7 @@ struct ChatComposerView: View {
                 usedPercent: configModel.quotaPeakUsedPercent,
                 accentColor: composerControlsColor
             )
-            .frame(minWidth: 38, minHeight: 38)
+            .frame(minWidth: 36, minHeight: 36)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1840,7 +1839,7 @@ struct ChatComposerView: View {
         if isBusy {
             ProgressView()
                 .controlSize(.small)
-                .frame(minWidth: 38, minHeight: 38)
+                .frame(minWidth: 36, minHeight: 36)
                 .accessibilityLabel(String(localized: "Dictate"))
                 .accessibilityIdentifier("chat.composer-mic")
         } else if isRecording, let dictation {
@@ -1934,7 +1933,7 @@ struct ChatComposerView: View {
                 foreground: AnyShapeStyle(primaryCircleForeground)
             ) {
                 Image(systemName: "waveform")
-                    .font(.system(size: primaryDiameter * 0.46, weight: .semibold))
+                    .font(.system(size: primaryDiameter * 0.44, weight: .semibold))
             }
             .overlay {
                 VoicePrimaryTouchSurface(
@@ -1986,7 +1985,7 @@ struct ChatComposerView: View {
             foreground: enabled ? AnyShapeStyle(primaryCircleForeground) : AnyShapeStyle(primaryCircleDisabledForeground)
         ) {
             Image(systemName: "arrow.up")
-                .font(.system(size: primaryDiameter * 0.46, weight: .bold))
+                .font(.system(size: primaryDiameter * 0.44, weight: .semibold))
         }
         #endif
     }
@@ -1998,13 +1997,26 @@ struct ChatComposerView: View {
         let slotWidth: CGFloat = 32
         let slotHeight: CGFloat = 32
         let defaultStyle = AnyShapeStyle(.secondary)
+        let glyphSize = toolGlyphSize
+        let glyphWeight: Font.Weight = .medium
         #else
-        let slotWidth: CGFloat = 38
-        let slotHeight: CGFloat = 38
+        let slotWidth: CGFloat = 36
+        let slotHeight: CGFloat = 36
         let defaultStyle = AnyShapeStyle(Color.primary.opacity(0.88))
+        let glyphSize: CGFloat = switch name {
+        case "mic":
+            toolGlyphSize * 0.88
+        case "sparkles":
+            toolGlyphSize * 0.90
+        case "plus":
+            toolGlyphSize * 1.05
+        default:
+            toolGlyphSize
+        }
+        let glyphWeight: Font.Weight = .regular
         #endif
         return Image(systemName: name)
-            .font(.system(size: toolGlyphSize, weight: .medium))
+            .font(.system(size: glyphSize, weight: glyphWeight))
             .foregroundStyle(active ?? defaultStyle)
             .frame(minWidth: slotWidth, minHeight: slotHeight)
             .contentShape(Rectangle())
@@ -2020,8 +2032,8 @@ struct ChatComposerView: View {
         let slotWidth: CGFloat = 32
         let slotHeight: CGFloat = 32
         #else
-        let slotWidth: CGFloat = 40
-        let slotHeight: CGFloat = 40
+        let slotWidth: CGFloat = 36
+        let slotHeight: CGFloat = 36
         #endif
         return content()
             .foregroundStyle(foreground)
@@ -2844,6 +2856,14 @@ private struct ComposerQuotaGaugeIcon: View {
     let usedPercent: Int?
     let accentColor: Color
 
+    #if targetEnvironment(macCatalyst)
+    @ScaledMetric(relativeTo: .body) private var gaugeDiameter: CGFloat = 16
+    private let lineWidth: CGFloat = 1.6
+    #else
+    @ScaledMetric(relativeTo: .body) private var gaugeDiameter: CGFloat = 22
+    private let lineWidth: CGFloat = 1.95
+    #endif
+
     private var fraction: Double {
         let value = Double(usedPercent ?? 32)
         return min(1.0, max(0.18, value / 100.0))
@@ -2855,7 +2875,7 @@ private struct ComposerQuotaGaugeIcon: View {
                 .trim(from: 0, to: 240.0 / 360.0)
                 .stroke(
                     Color.primary.opacity(0.22),
-                    style: StrokeStyle(lineWidth: 1.85, lineCap: .round)
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(150))
 
@@ -2863,20 +2883,23 @@ private struct ComposerQuotaGaugeIcon: View {
                 .trim(from: 0, to: (240.0 / 360.0) * fraction)
                 .stroke(
                     accentColor,
-                    style: StrokeStyle(lineWidth: 1.85, lineCap: .round)
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(150))
 
             Canvas { context, size in
                 let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let scale = size.width / 19.0
                 let rad = (150.0 + fraction * 240.0) * .pi / 180.0
+                let pivotRadius = 2.1 * scale
+                let needleLength = 5.8 * scale
                 let start = CGPoint(
-                    x: center.x + 2.1 * cos(rad),
-                    y: center.y + 2.1 * sin(rad)
+                    x: center.x + pivotRadius * cos(rad),
+                    y: center.y + pivotRadius * sin(rad)
                 )
                 let end = CGPoint(
-                    x: center.x + 5.8 * cos(rad),
-                    y: center.y + 5.8 * sin(rad)
+                    x: center.x + needleLength * cos(rad),
+                    y: center.y + needleLength * sin(rad)
                 )
                 var needle = Path()
                 needle.move(to: start)
@@ -2884,22 +2907,23 @@ private struct ComposerQuotaGaugeIcon: View {
                 context.stroke(
                     needle,
                     with: .color(accentColor),
-                    style: StrokeStyle(lineWidth: 1.75, lineCap: .round)
+                    style: StrokeStyle(lineWidth: lineWidth * 0.92, lineCap: .round)
                 )
                 let pivotRect = CGRect(
-                    x: center.x - 2.1,
-                    y: center.y - 2.1,
-                    width: 4.2,
-                    height: 4.2
+                    x: center.x - pivotRadius,
+                    y: center.y - pivotRadius,
+                    width: pivotRadius * 2,
+                    height: pivotRadius * 2
                 )
                 context.stroke(
                     Path(ellipseIn: pivotRect),
                     with: .color(accentColor),
-                    lineWidth: 1.65
+                    lineWidth: lineWidth * 0.88
                 )
             }
         }
-        .frame(width: 19, height: 19)
+        .frame(width: gaugeDiameter, height: gaugeDiameter)
+        .offset(y: gaugeDiameter * 0.10)
     }
 }
 

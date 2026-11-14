@@ -13,7 +13,7 @@ struct TranscriptRow: Identifiable, Equatable {
         case message(VisibleChatBlock, Bool, Bool)
         case group(ToolGroupPresentation)
         case responseFeedback(InitialResponseState)
-        case executionText(ChatBlock)
+        case executionText(String, ChatBlock)
         case executionSection(String, ExecutionDetailSection, Bool)
         case executionTool(String, ToolCallBlock, Bool)
         case executionOutput(ToolCallBlock)
@@ -97,7 +97,7 @@ struct ChatTranscriptView: View {
                     }
                 } else {
                     result.append(TranscriptRow(id: "inline-text:\(group.id):\(block.id)", role: .content,
-                        box: .init(.executionText(block)), navigationID: group.id))
+                        box: .init(.executionText(group.id, block)), navigationID: group.id))
                 }
             }
             if group.processRole == "tools" {
@@ -199,12 +199,16 @@ struct ChatTranscriptView: View {
             if presentation.isExecutionProcess && presentation.processRole != "header" {
                 InlineExecutionGroupView(presentation: presentation, model: model, basePath: basePath)
             } else { ToolGroupBlockView(presentation: presentation) }
-        case .executionText(let block):
+        case .executionText(let groupID, let block):
             if case .agentReasoning(let reasoning) = block {
                 CachedMarkdownView(markdown: reasoning.text)
                     .opacity(0.75)
                     .padding(.leading, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        model.toggleInlineExecutionGroup(groupID)
+                    }
             } else {
                 ChatSubBlockView(block: block, basePath: basePath)
             }
