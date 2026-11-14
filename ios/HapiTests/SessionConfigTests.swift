@@ -651,8 +651,102 @@ final class SessionConfigTests: XCTestCase {
             try XCTUnwrap(tallImg.pngData()).write(to: dir.appendingPathComponent("5-session-controls-popup.png"))
         }
     }
+
+    func testSessionControlsPopupFollowsComposerDownWhenKeyboardDismisses() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let rootVC = UIViewController()
+        window.rootViewController = rootVC
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let composerContainer = UIView(frame: CGRect(x: 12, y: 440, width: 369, height: 100))
+        rootVC.view.addSubview(composerContainer)
+
+        let box = PopupTestBox()
+        let popupHost = UIHostingController(rootView: PopupTestWrapper(
+            box: box,
+            interactor: harness.interactor,
+            model: harness.model
+        ))
+        popupHost.safeAreaRegions = []
+        popupHost.view.backgroundColor = .clear
+        popupHost.view.frame = composerContainer.bounds
+        rootVC.addChild(popupHost)
+        composerContainer.addSubview(popupHost.view)
+        popupHost.didMove(toParent: rootVC)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+
+        box.activePopup = .sessionControls
+        window.layoutIfNeeded()
+
+        func findCard() -> UIView? {
+            func search(_ view: UIView) -> UIView? {
+                if view.accessibilityIdentifier == "chat.session-controls-popup" { return view }
+                for sub in view.subviews {
+                    if let hit = search(sub) { return hit }
+                }
+                return nil
+            }
+            return search(window)
+        }
+
+        try await configEventually { findCard() != nil }
+        let initialCard = try XCTUnwrap(findCard())
+        XCTAssertEqual(initialCard.frame.maxY, 432, accuracy: 2, "Popup should initially sit 8pt above the elevated composer")
+
+        // Simulate UIKit/SwiftUI keyboard dismissal animating the composer ancestor down.
+        UIView.animate(withDuration: 0.25) {
+            composerContainer.frame = CGRect(x: 12, y: 720, width: 369, height: 100)
+        }
+        try await Task.sleep(for: .milliseconds(380))
+
+        let settledCard = try XCTUnwrap(findCard())
+        XCTAssertEqual(settledCard.frame.maxY, 712, accuracy: 2, "Popup must track the composer down to 8pt above its resting position")
+        XCTAssertEqual(settledCard.frame.maxX, 381, accuracy: 2, "Popup must stay trailing-aligned with the composer")
+
+        box.activePopup = nil
+        try await configEventually { findCard() == nil }
+    }
     #endif
 }
+
+#if !targetEnvironment(macCatalyst)
+@MainActor
+@Observable
+private final class PopupTestBox {
+    var activePopup: ComposerPopupKind?
+}
+
+private struct PopupTestWrapper: View {
+    @Bindable var box: PopupTestBox
+    let interactor: ChatInteractor
+    let model: SessionConfigModel
+
+    var body: some View {
+        ComposerPopupHost(
+            activePopup: $box.activePopup,
+            colorScheme: .light,
+            interactor: interactor,
+            configModel: model,
+            canParkDraft: false,
+            onCamera: {},
+            onPhotos: {},
+            onFiles: {},
+            onSelectSkill: { _ in },
+            onScheduleTimePicker: {},
+            onOpenScratchlist: { _, _ in },
+            onOpenSettings: {}
+        )
+    }
+}
+#endif
 
 /// Real app model, interactor, store and API over fake HTTP. No hub connection,
 /// Keychain, window activation, saved drafts, or shared conformance fixtures.

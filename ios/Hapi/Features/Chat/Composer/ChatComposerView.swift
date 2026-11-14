@@ -2802,7 +2802,7 @@ private struct PickedMovie: Transferable {
 #if !targetEnvironment(macCatalyst)
 // MARK: - iOS Instant Toolbar Popups & Harmonious Icons
 
-private enum ComposerPopupKind: Equatable {
+enum ComposerPopupKind: Equatable {
     case attachment
     case skills
     case scratchlist
@@ -2953,7 +2953,7 @@ private struct ComposerQuotaGaugeIcon: View {
 
 /// Anchors instant-response floating glass popup cards in the key window over the
 /// composer's leading or trailing edge while leaving the software keyboard focused.
-private struct ComposerPopupHost: UIViewRepresentable {
+struct ComposerPopupHost: UIViewRepresentable {
     @Binding var activePopup: ComposerPopupKind?
     let colorScheme: ColorScheme
     let interactor: ChatInteractor
@@ -3009,10 +3009,16 @@ private struct ComposerPopupHost: UIViewRepresentable {
 
     final class AnchorView: UIView {
         var onWindowChange: ((UIWindow?) -> Void)?
+        var onLayout: (() -> Void)?
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
             onWindowChange?(window)
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onLayout?()
         }
     }
 
@@ -3161,6 +3167,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
             currentKind = nil
             if let overlay {
                 self.overlay = nil
+                overlay.stopTrackingAnchor()
                 overlay.layer.removeAllAnimations()
                 overlay.cardContainer.layer.removeAllAnimations()
                 overlay.removeFromSuperview()
@@ -3194,19 +3201,53 @@ private struct ComposerPopupHost: UIViewRepresentable {
         }
     }
 
+    private final class AnchorDisplayLink {
+        private var displayLink: CADisplayLink?
+        private let onTick: () -> Void
+
+        init(onTick: @escaping () -> Void) {
+            self.onTick = onTick
+        }
+
+        func start() {
+            guard displayLink == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(tick))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+        }
+
+        func stop() {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+
+        @objc private func tick() {
+            onTick()
+        }
+
+        deinit {
+            displayLink?.invalidate()
+        }
+    }
+
     @MainActor
     final class PopupOverlayView: UIView {
         private var kind: ComposerPopupKind
-        private weak var anchorView: UIView?
+        private weak var anchorView: AnchorView?
         private var actions: PopupOverlayActions
         private let backdropView = UIView()
         let cardContainer = UIView()
         private let cardHostingController: PopupCardHostingController<AnyView>
+        private var anchorDisplayLink: AnchorDisplayLink?
+        private var isDismissing = false
+        private var lastTrackedAnchorFrame: CGRect?
+        private var lastTrackedOverlaySize: CGSize?
+        private var lastTrackedSafeAreaInsets: UIEdgeInsets?
 
         init(
             frame: CGRect,
             kind: ComposerPopupKind,
-            anchorView: UIView,
+            anchorView: AnchorView,
             colorScheme: ColorScheme,
             interactor: ChatInteractor,
             configModel: SessionConfigModel,
@@ -3240,7 +3281,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
             cardHostingController.safeAreaRegions = []
             cardHostingController.view.backgroundColor = .clear
             cardHostingController.onLayout = { [weak self] in
-                self?.positionCard()
+                self?.positionCard(force: true)
             }
 
             cardContainer.backgroundColor = .clear
@@ -3251,6 +3292,13 @@ private struct ComposerPopupHost: UIViewRepresentable {
             cardContainer.layer.shadowOpacity = colorScheme == .dark ? 0.34 : 0.12
             cardContainer.addSubview(cardHostingController.view)
             addSubview(cardContainer)
+
+            anchorDisplayLink = AnchorDisplayLink { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.positionCard(force: false)
+                }
+            }
+            wireAnchorLayout(anchorView)
         }
 
         @available(*, unavailable)
@@ -3258,7 +3306,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
 
         func update(
             kind: ComposerPopupKind,
-            anchorView: UIView,
+            anchorView: AnchorView,
             colorScheme: ColorScheme,
             interactor: ChatInteractor,
             configModel: SessionConfigModel,
@@ -3269,6 +3317,11 @@ private struct ComposerPopupHost: UIViewRepresentable {
             self.kind = kind
             self.anchorView = anchorView
             self.actions = actions
+            isDismissing = false
+            wireAnchorLayout(anchorView)
+            if window != nil {
+                anchorDisplayLink?.start()
+            }
             cardHostingController.rootView = Self.makeCard(
                 kind: kind,
                 colorScheme: colorScheme,
@@ -3285,22 +3338,88 @@ private struct ComposerPopupHost: UIViewRepresentable {
                     delay: 0,
                     options: [.allowUserInteraction, .beginFromCurrentState]
                 ) {
-                    self.positionCard()
+                    self.positionCard(force: true)
                 }
             } else {
-                positionCard()
+                positionCard(force: true)
+            }
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil && !isDismissing {
+                anchorDisplayLink?.start()
+                positionCard(force: true)
+            } else {
+                anchorDisplayLink?.stop()
             }
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
             backdropView.frame = bounds
-            positionCard()
+            positionCard(force: true)
         }
 
-        private func positionCard() {
+        func stopTrackingAnchor() {
+            isDismissing = true
+            anchorDisplayLink?.stop()
+        }
+
+        private func wireAnchorLayout(_ anchorView: AnchorView) {
+            anchorView.onLayout = { [weak self] in
+                self?.positionCard(force: true)
+            }
+        }
+
+        /// Computes the anchor's live rendered frame (including in-flight UIKit/SwiftUI
+        /// keyboard dismissal animations on ancestor layers) in `target`'s bounds.
+        private static func liveRect(of view: UIView, in target: UIView) -> CGRect {
+            guard let window = view.window, window === target.window else {
+                return view.convert(view.bounds, to: target)
+            }
+            var rect = view.bounds
+            var current: CALayer? = view.layer
+            let windowLayer = window.layer
+            while let layer = current, layer !== windowLayer {
+                let active = layer.presentation() ?? layer
+                let anchor = CGPoint(
+                    x: active.bounds.origin.x + active.bounds.width * active.anchorPoint.x,
+                    y: active.bounds.origin.y + active.bounds.height * active.anchorPoint.y
+                )
+                let transform = active.affineTransform()
+                let corners = [
+                    CGPoint(x: rect.minX - anchor.x, y: rect.minY - anchor.y),
+                    CGPoint(x: rect.maxX - anchor.x, y: rect.minY - anchor.y),
+                    CGPoint(x: rect.minX - anchor.x, y: rect.maxY - anchor.y),
+                    CGPoint(x: rect.maxX - anchor.x, y: rect.maxY - anchor.y),
+                ].map { pt -> CGPoint in
+                    let transformed = pt.applying(transform)
+                    return CGPoint(x: transformed.x + active.position.x, y: transformed.y + active.position.y)
+                }
+                let minX = corners.map(\.x).min() ?? 0
+                let maxX = corners.map(\.x).max() ?? 0
+                let minY = corners.map(\.y).min() ?? 0
+                let maxY = corners.map(\.y).max() ?? 0
+                rect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                current = layer.superlayer
+            }
+            return target.convert(rect, from: nil)
+        }
+
+        private func positionCard(force: Bool = true) {
             guard let anchorView, anchorView.window === self.window else { return }
-            let composerFrame = anchorView.convert(anchorView.bounds, to: self)
+            let composerFrame = Self.liveRect(of: anchorView, in: self)
+            if !force,
+               composerFrame == lastTrackedAnchorFrame,
+               bounds.size == lastTrackedOverlaySize,
+               safeAreaInsets == lastTrackedSafeAreaInsets {
+                return
+            }
+            lastTrackedAnchorFrame = composerFrame
+            lastTrackedOverlaySize = bounds.size
+            lastTrackedSafeAreaInsets = safeAreaInsets
+
             let maxCardWidth = max(180, bounds.width - 24)
             let cardWidth = min(kind.cardWidth, maxCardWidth)
             let topLimit = safeAreaInsets.top + 8
@@ -3341,8 +3460,12 @@ private struct ComposerPopupHost: UIViewRepresentable {
         }
 
         func animateIn() {
+            isDismissing = false
             isUserInteractionEnabled = true
-            positionCard()
+            if window != nil {
+                anchorDisplayLink?.start()
+            }
+            positionCard(force: true)
             if UIAccessibility.isReduceMotionEnabled {
                 cardContainer.transform = .identity
                 cardContainer.alpha = 0
@@ -3366,6 +3489,7 @@ private struct ComposerPopupHost: UIViewRepresentable {
         }
 
         func animateOut(completion: @escaping () -> Void) {
+            stopTrackingAnchor()
             isUserInteractionEnabled = false
             UIView.animate(
                 withDuration: 0.10,
