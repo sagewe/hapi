@@ -196,6 +196,66 @@ struct ExecutionProcessTests {
         #expect(getToolGroupActionKind(toolBlock("search_web")) == .web)
         #expect(getToolGroupActionKind(toolBlock("read_url_content")) == .web)
     }
+
+    @Test func withholdsExecutionTimerWhileRunningRoundOnlyHasEventsOrBlankText() {
+        let eventOnly = ChatBlock.agentEvent(.init(
+            id: "title-event",
+            createdAt: 4177,
+            invokedAt: nil,
+            model: nil,
+            event: .init(object: ["type": .string("message"), "message": .string("Title")]),
+            meta: nil
+        ))
+        let blankReasoning = ChatBlock.agentReasoning(.init(
+            id: "blank-reasoning",
+            localId: nil,
+            createdAt: 4200,
+            invokedAt: nil,
+            durationMs: nil,
+            usage: nil,
+            model: nil,
+            text: "   ",
+            meta: nil
+        ))
+        let before = buildExecutionProcessBlocks(
+            [user, eventOnly, blankReasoning].map { .block($0) },
+            completedRounds: [],
+            isRunning: true,
+            hasMoreMessages: false
+        )
+        #expect(!before.contains { $0.testID.hasPrefix("execution-timer:") })
+        #expect(initialResponseState(before, isSending: false, isRunning: true, isActive: true) == .waiting)
+
+        let after = buildExecutionProcessBlocks(
+            [user, eventOnly, text("progress", phase: "progress")].map { .block($0) },
+            completedRounds: [],
+            isRunning: true,
+            hasMoreMessages: false
+        )
+        #expect(after.contains { $0.testID == "execution-timer:u" })
+        #expect(initialResponseState(after, isSending: false, isRunning: true, isActive: true) == nil)
+    }
+
+    @Test func ignoresSummaryContentInTimingsAndCompletedRounds() {
+        let prompt = NormalizedMessage(
+            id: "u",
+            createdAt: 1000,
+            content: .user(text: "request", attachments: nil),
+            invokedAt: 1000
+        )
+        let summary = NormalizedMessage(
+            id: "sum",
+            createdAt: 4177,
+            content: .agent([.summary("Hapi iOS Missing Quick Mode")])
+        )
+        let ready = NormalizedMessage(
+            id: "r",
+            createdAt: 3000,
+            content: .event(.init(object: ["type": .string("ready")]))
+        )
+        #expect(executionRoundTimings([prompt, summary, ready])["u"] == .init(startedAt: 1000, endedAt: 3000))
+        #expect(completedExecutionRounds([prompt, ready, summary]) == ["u"])
+    }
 }
 
 private extension VisibleChatBlock {

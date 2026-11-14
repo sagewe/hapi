@@ -1,4 +1,4 @@
-import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings } from '@/chat/executionProcess'
+import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripNormalizedAgentSummaries } from '@/chat/executionProcess'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from '@tanstack/react-router'
@@ -1603,7 +1603,7 @@ function SessionChatInner(props: SessionChatProps) {
                 if (cached.normalized) normalized.push(cached.normalized)
                 continue
             }
-            const next = normalizeDecryptedMessage(message)
+            const next = stripNormalizedAgentSummaries(normalizeDecryptedMessage(message))
             cache.set(message.id, { source: message, normalized: next })
             if (next) normalized.push(next)
         }

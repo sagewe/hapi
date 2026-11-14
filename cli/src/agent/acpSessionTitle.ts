@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AcpSdkBackend } from '@/agent/backends/acp';
 import { normalizeNativeSessionTitle } from '@/agent/nativeSessionTitle';
@@ -6,7 +5,7 @@ import { normalizeNativeSessionTitle } from '@/agent/nativeSessionTitle';
 type AcpSessionTitleBackend = Pick<AcpSdkBackend, 'setSessionInfoUpdateListener'>;
 type AcpSessionTitleClient = Pick<
     ApiSessionClient,
-    'sendClaudeSessionMessage' | 'getMetadata' | 'updateMetadata'
+    'getMetadata' | 'updateMetadata'
 >;
 
 export interface AcpSessionTitleController {
@@ -31,11 +30,13 @@ export function createAcpSessionTitleSync(client: AcpSessionTitleClient): AcpSes
                 return;
             }
             lastTitle = normalizedTitle;
-            client.sendClaudeSessionMessage({
-                type: 'summary',
-                summary: normalizedTitle,
-                leafUuid: randomUUID()
-            });
+            client.updateMetadata((metadata) => ({
+                ...metadata,
+                summary: {
+                    text: normalizedTitle,
+                    updatedAt: Date.now()
+                }
+            }));
         },
         markManualTitle: () => {
             if (manual) {

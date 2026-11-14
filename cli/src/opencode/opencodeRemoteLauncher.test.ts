@@ -501,6 +501,7 @@ function createSessionStub(
         return harness.steerStateResult;
     });
 
+    let metadata: Record<string, unknown> = {};
     const client = {
         rpcHandlerManager: {
             registerHandler(method: string, handler: (params: unknown) => unknown) {
@@ -509,9 +510,11 @@ function createSessionStub(
         },
         sendAgentMessage(message: unknown) { sentAgentMessages.push(message); },
         getMetadata() {
-            return null;
+            return { ...metadata };
         },
-        updateMetadata(_handler: (metadata: unknown) => unknown) {},
+        updateMetadata(handler: (current: Record<string, unknown>) => Record<string, unknown>) {
+            metadata = handler(metadata);
+        },
         sendClaudeSessionMessage(message: unknown) {
             claudeSessionMessages.push(message);
         },
@@ -5265,12 +5268,19 @@ describe('opencodeRemoteLauncher v2 flavor wiring', () => {
         expect(harness.bridgeOptions?.onChangeTitle).toBeTypeOf('function');
         const initialCount = claudeSessionMessages.length;
         listener!({ sessionId: 'acp-session-1', title: 'Native Title' });
-        expect(claudeSessionMessages).toHaveLength(initialCount + 1);
-        expect(claudeSessionMessages.at(-1)).toMatchObject({ type: 'summary', summary: 'Native Title' });
+        expect(claudeSessionMessages).toHaveLength(initialCount);
+        expect(session.client.getMetadata()?.summary).toEqual({
+            text: 'Native Title',
+            updatedAt: expect.any(Number)
+        });
 
         harness.bridgeOptions!.onChangeTitle!();
         listener!({ sessionId: 'acp-session-1', title: 'Later Native Title' });
-        expect(claudeSessionMessages).toHaveLength(initialCount + 1);
+        expect(claudeSessionMessages).toHaveLength(initialCount);
+        expect(session.client.getMetadata()?.summary).toEqual({
+            text: 'Native Title',
+            updatedAt: expect.any(Number)
+        });
     });
 
     it('v2: reports one automatic application start without changing turn thinking for preparation', async () => {

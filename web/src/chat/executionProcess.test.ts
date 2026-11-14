@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings } from './executionProcess'
+import { buildExecutionProcessBlocks, completedExecutionRounds, executionRoundTimings, stripNormalizedAgentSummaries } from './executionProcess'
+import { initialResponseState } from './initialResponse'
+import { normalizeDecryptedMessage } from './normalize'
 import { buildSourceMessageIdsByBlock } from '@/lib/assistant-runtime'
 import type { ChatBlock, ToolCallBlock, NormalizedMessage } from './types'
 import type { ToolGroupBlock } from './toolGroups'
@@ -178,5 +180,85 @@ describe('execution process projection', () => {
         expect(completedExecutionRounds(rows).has('u')).toBe(true)
         rows.push({ ...base, id: 'new', role: 'agent', content: [{ type: 'text', text: 'continue', uuid: 'new', parentUUID: null }] })
         expect(completedExecutionRounds(rows).has('u')).toBe(false)
+    })
+    it('withholds execution-timer header while a running round only has non-substantive events', () => {
+        const eventOnly: ChatBlock = {
+            kind: 'agent-event',
+            id: 'title-event',
+            createdAt: 4177,
+            event: { type: 'message', message: 'Title' }
+        }
+        const blankReasoning: ChatBlock = {
+            kind: 'agent-reasoning',
+            id: 'blank-reasoning',
+            localId: null,
+            createdAt: 4200,
+            text: '   '
+        }
+        const beforeOutput = buildExecutionProcessBlocks([user(), eventOnly, blankReasoning], {
+            ...options,
+            isRunning: true,
+            completedRounds: new Set()
+        })
+        expect(beforeOutput.some(b => b.id.startsWith('execution-timer:'))).toBe(false)
+        expect(initialResponseState(beforeOutput, { isSending: false, isRunning: true, isActive: true })).toBe('waiting')
+
+        const afterOutput = buildExecutionProcessBlocks([user(), eventOnly, text('progress', 'progress')], {
+            ...options,
+            isRunning: true,
+            completedRounds: new Set()
+        })
+        expect(afterOutput.some(b => b.id === 'execution-timer:u')).toBe(true)
+        expect(initialResponseState(afterOutput, { isSending: false, isRunning: true, isActive: true })).toBeNull()
+    })
+    it('ignores summary items in timings and completion and strips them via stripNormalizedAgentSummaries', () => {
+        const summaryWire = normalizeDecryptedMessage({
+            id: 'sum-1',
+            seq: 3,
+            localId: null,
+            createdAt: 4177,
+            content: { role: 'agent', content: { type: 'output', data: { type: 'summary', summary: 'Hapi iOS Missing Quick Mode' } } }
+        })
+        if (!summaryWire) throw new Error('Expected summary wire message to normalize')
+        expect(stripNormalizedAgentSummaries(summaryWire)).toBeNull()
+
+        const mixed: NormalizedMessage = {
+            id: 'mixed',
+            localId: null,
+            createdAt: 5000,
+            isSidechain: false,
+            role: 'agent',
+            content: [
+                { type: 'summary', summary: 'Ignored title' },
+                { type: 'text', text: 'real reply', uuid: 'r1', parentUUID: null }
+            ]
+        }
+        expect(stripNormalizedAgentSummaries(mixed)).toEqual({
+            ...mixed,
+            content: [{ type: 'text', text: 'real reply', uuid: 'r1', parentUUID: null }]
+        })
+
+        const userRow: NormalizedMessage = {
+            id: 'u',
+            localId: 'loc-1',
+            createdAt: 1000,
+            invokedAt: 1000,
+            isSidechain: false,
+            role: 'user',
+            content: { type: 'text', text: 'hello' }
+        }
+        const readyRow: NormalizedMessage = {
+            id: 'ready-1',
+            localId: null,
+            createdAt: 3000,
+            isSidechain: false,
+            role: 'event',
+            content: { type: 'ready' }
+        }
+        expect(executionRoundTimings([userRow, { ...summaryWire, createdAt: 4177 }, readyRow]).get('u')).toEqual({
+            startedAt: 1000,
+            endedAt: 3000
+        })
+        expect(completedExecutionRounds([userRow, readyRow, summaryWire]).has('u')).toBe(true)
     })
 })

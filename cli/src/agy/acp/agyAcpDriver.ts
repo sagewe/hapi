@@ -313,9 +313,10 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 }
                 this.lastMode = msg.mode;
                 const ids = (msg.items ?? []).flatMap((item) => item.localId ? [item.localId] : []);
+                let acknowledged = false;
                 let accepted = false;
                 const acknowledge = () => {
-                    if (!accepted) { accepted = true; session.client.emitMessagesConsumed(ids); }
+                    if (!acknowledged) { acknowledged = true; session.client.emitMessagesConsumed(ids); }
                 };
                 session.onThinkingChange(true);
                 this.generation++;
@@ -327,13 +328,18 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         this.activeModeHash = msg.hash;
                         this.steering(true);
                         this.reactiveWakeup.beforePrompt(session.sessionId);
+                        acknowledge();
                         const onUpdate = (message: AgentMessage) => {
-                            if (['text', 'reasoning', 'tool_call', 'tool_result'].includes(message.type)) acknowledge();
+                            if (['text', 'reasoning', 'tool_call', 'tool_result'].includes(message.type)) {
+                                accepted = true;
+                                acknowledge();
+                            }
                             this.reactiveWakeup.observePromptUpdate(message);
                             const converted = convertAgentMessage(message, msg.mode.model);
                             if (converted) session.client.sendAgentMessage(converted);
                         };
                         await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
+                        accepted = true;
                         acknowledge();
                         await backend.waitForResponseComplete();
                         if (this.stopping || this.aborting || this.backend !== backend) return;

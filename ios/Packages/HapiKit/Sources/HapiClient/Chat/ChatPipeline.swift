@@ -95,6 +95,7 @@ public actor ChatPipeline {
             if let status = row.status {
                 next?.status = status.rawValue
             }
+            next = Self.stripSummaryContent(next)
             normalizeCache[row.id] = NormalizeCacheEntry(source: row, normalized: next)
             if let next {
                 normalized.append(next)
@@ -125,6 +126,21 @@ public actor ChatPipeline {
         lastDirectSendIDs = directSendLocalIds
         lastOutput = visible
         return visible
+    }
+
+    private static func stripSummaryContent(_ message: NormalizedMessage?) -> NormalizedMessage? {
+        guard var message else { return nil }
+        if case .agent(let items) = message.content {
+            let filtered = items.filter {
+                if case .summary = $0 { return false }
+                return true
+            }
+            if filtered.isEmpty { return nil }
+            if filtered.count != items.count {
+                message.content = .agent(filtered)
+            }
+        }
+        return message
     }
 
     private static func filterEmptyReasoning(_ blocks: [ChatBlock]) -> [ChatBlock] {

@@ -752,14 +752,26 @@ describe('cursorAcpRemoteLauncher', () => {
             const replacement = vi.mocked(createCursorAcpBackend).mock.results.at(-1)!.value!;
             const listener = vi.mocked(replacement.setSessionInfoUpdateListener).mock.calls.at(-1)![0]!;
             const sendSummary = vi.mocked(session.client.sendClaudeSessionMessage);
+            const updateMetadata = vi.mocked(session.client.updateMetadata);
             sendSummary.mockClear();
+            updateMetadata.mockClear();
             listener({ sessionId: 'loaded-acp-session', title: 'Relaunched Native Title' });
-            expect(sendSummary).toHaveBeenCalledWith(expect.objectContaining({ type: 'summary', summary: 'Relaunched Native Title' }));
+            expect(sendSummary).not.toHaveBeenCalled();
+            expect(updateMetadata).toHaveBeenCalledTimes(1);
+            const updater = updateMetadata.mock.calls[0]![0]!;
+            expect(updater({ path: '/tmp/project', host: 'localhost' })).toMatchObject({
+                summary: {
+                    text: 'Relaunched Native Title',
+                    updatedAt: expect.any(Number)
+                }
+            });
 
-            sendSummary.mockClear();
+            updateMetadata.mockClear();
             expect(harness.onChangeTitle).not.toBeNull();
             harness.onChangeTitle!('Manual Title');
+            updateMetadata.mockClear();
             listener({ sessionId: 'loaded-acp-session', title: 'Later Native Title' });
+            expect(updateMetadata).not.toHaveBeenCalled();
             expect(sendSummary).not.toHaveBeenCalled();
         } finally {
             session.queue.close();

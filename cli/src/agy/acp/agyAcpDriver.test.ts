@@ -191,6 +191,44 @@ describe('Antigravity ACP delivery', () => {
         await h.driver.stop(); await running;
     });
 
+    it('acknowledges message consumption immediately upon prompt dispatch before any output chunk arrives', async () => {
+        const h = harness();
+        h.queue.push('hello', mode, 'msg-ack-1');
+        const running = h.driver.run();
+        try {
+            await vi.waitFor(() => expect(h.backend.prompt).toHaveBeenCalledTimes(1));
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledTimes(1);
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledWith(['msg-ack-1']);
+
+            h.getUpdate()({ type: 'text', text: 'working' });
+            h.turn.resolve();
+            await vi.waitFor(() => expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledTimes(1);
+        } finally {
+            await h.driver.stop();
+            await running;
+        }
+    });
+
+    it('emits abort-restore without duplicate emitMessagesConsumed when dispatched prompt rejects before producing output', async () => {
+        const h = harness();
+        h.queue.push('hello', mode, 'msg-reject-1');
+        const running = h.driver.run();
+        try {
+            await vi.waitFor(() => expect(h.backend.prompt).toHaveBeenCalledTimes(1));
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledTimes(1);
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledWith(['msg-reject-1']);
+
+            h.turn.reject(new Error('prompt failed'));
+            await vi.waitFor(() => expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'abort-restore', text: 'hello' });
+            expect(h.client.emitMessagesConsumed).toHaveBeenCalledTimes(1);
+        } finally {
+            await h.driver.stop();
+            await running;
+        }
+    });
+
     it('releases foreground state while background tasks wait, streams Reactive Wakeup steps, and calls resumeSession to advance SkipHistory', async () => {
         const brainDir = mkdtempSync(join(tmpdir(), 'agy-reactive-test-'));
         try {

@@ -9,9 +9,11 @@ public func executionRoundTimings(_ messages: [NormalizedMessage]) -> [String: E
             round = message.id
             if let start = message.invokedAt { result[round] = .init(startedAt: start, endedAt: start) }
         case .agent(let content) where content.contains(where: {
-            if case .toolResult = $0 { return false }
-            if case .generatedImage(let image) = $0, image.source?.ingress == .toolResult, image.source?.toolName == "view_image" { return false }
-            return true
+            switch $0 {
+            case .toolResult, .summary: return false
+            case .generatedImage(let image) where image.source?.ingress == .toolResult && image.source?.toolName == "view_image": return false
+            default: return true
+            }
         }):
             let prior = result[round]
             result[round] = .init(startedAt: prior?.startedAt ?? message.createdAt,
@@ -33,7 +35,10 @@ public func completedExecutionRounds(_ messages: [NormalizedMessage]) -> Set<Str
         case .user: round = message.id
         case .event(let event) where event.type == "ready" && (event.object["agentId"] == nil || event.object["agentId"] == .null || event.object["agentId"] == .string("")):
             completed.insert(round)
-        case .agent(let content) where !content.isEmpty: completed.remove(round)
+        case .agent(let content) where content.contains(where: {
+            if case .summary = $0 { return false }
+            return true
+        }): completed.remove(round)
         default: break
         }
     }
@@ -129,9 +134,17 @@ public func buildExecutionProcessBlocks(
             if case .agentText(let text) = block { return text.meta?["assistantPhase"]?.stringValue == "final" }
             return false
         }
+        let hasSubstantiveOutput = round.contains { block in
+            switch block {
+            case .agentEvent, .userText: return false
+            case .agentText(let text): return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .agentReasoning(let text): return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            default: return true
+            }
+        }
         let readingTimeline = previousGroups.contains { $0.processRoundId == roundID && keepVisibleIds.contains($0.id) } || previousGroups.contains { $0.processRoundId == roundID }
             && round.contains { ($0.kind == "agent-text" || $0.kind == "agent-reasoning") && keepVisibleIds.contains($0.id) }
-        if (tail && isRunning && !hasFinal) || readingTimeline {
+        if (tail && isRunning && !hasFinal && hasSubstantiveOutput) || readingTimeline {
             func makeGroup(_ members: [ChatBlock], role: String) -> ToolGroupBlock {
                 let first = members.first ?? round[0]
                 let tools = members.compactMap(\.asToolCall)

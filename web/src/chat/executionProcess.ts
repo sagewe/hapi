@@ -3,6 +3,14 @@ import { isObject } from '@hapi/protocol'
 import type { ChatBlock, NormalizedMessage, ToolCallBlock } from './types'
 import { isInteractiveToolBlock, summarizeToolGroup, type ToolGroupBlock, type VisibleChatBlock } from './toolGroups'
 
+/** Hide legacy in-thread ACP/Claude summary rows without altering protocol golden fixtures. */
+export function stripNormalizedAgentSummaries(message: NormalizedMessage | null): NormalizedMessage | null {
+    if (!message || message.role !== 'agent') return message
+    if (!message.content.some(content => content.type === 'summary')) return message
+    const filtered = message.content.filter(content => content.type !== 'summary')
+    return filtered.length > 0 ? { ...message, content: filtered } : null
+}
+
 /** Receive timestamps span the root round; parallel tool durations are never summed. */
 export function executionRoundTimings(messages: readonly NormalizedMessage[]): Map<string, { startedAt: number; endedAt: number }> {
     const result = new Map<string, { startedAt: number; endedAt: number }>()
@@ -15,6 +23,7 @@ export function executionRoundTimings(messages: readonly NormalizedMessage[]): M
             continue
         }
         const agent = message.role === 'agent' && message.content.some(content => content.type !== 'tool-result'
+            && content.type !== 'summary'
             && !(content.type === 'generated-image' && content.source?.ingress === 'tool_result' && content.source.toolName === 'view_image'))
         const ready = message.role === 'event' && message.content.type === 'ready'
             && (!('agentId' in message.content) || !message.content.agentId)
@@ -37,7 +46,7 @@ export function completedExecutionRounds(messages: readonly NormalizedMessage[])
         if (message.isSidechain) continue
         if (message.role === 'user') round = message.id
         else if (message.role === 'event' && message.content.type === 'ready' && (!('agentId' in message.content) || message.content.agentId == null || message.content.agentId === '')) completed.add(round)
-        else if (message.role === 'agent' && message.content.length > 0) completed.delete(round)
+        else if (message.role === 'agent' && message.content.some(content => content.type !== 'summary')) completed.delete(round)
     }
     return completed
 }
@@ -134,9 +143,14 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         // Keep consecutive prose/reasoning until a new explanation or answer arrives.
         const explanation = new Set<string>()
         const hasFinal = round.some(block => block.kind === 'agent-text' && isObject(block.meta) && block.meta.assistantPhase === 'final')
+        const hasSubstantiveOutput = round.some(block => {
+            if (block.kind === 'agent-event' || block.kind === 'user-text') return false
+            if (block.kind === 'agent-text' || block.kind === 'agent-reasoning') return block.text.trim().length > 0
+            return true
+        })
         const readingTimeline = options.previousGroups?.some(group => group.processRoundId === roundId && options.keepVisibleIds?.has(group.id)) || options.previousGroups?.some(group => group.processRoundId === roundId)
             && round.some(block => (block.kind === 'agent-text' || block.kind === 'agent-reasoning') && options.keepVisibleIds?.has(block.id))
-        if ((tail && options.isRunning && !hasFinal) || readingTimeline) {
+        if ((tail && options.isRunning && !hasFinal && hasSubstantiveOutput) || readingTimeline) {
             const makeGroup = (members: ChatBlock[], role: 'header' | 'tools'): ToolGroupBlock => {
                 const first = members[0] ?? round[0]
                 const tools = members.filter((block): block is ToolCallBlock => block.kind === 'tool-call')
