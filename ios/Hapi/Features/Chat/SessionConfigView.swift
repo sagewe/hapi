@@ -198,7 +198,7 @@ struct SessionConfigView: View {
                     .font(.caption.monospaced().weight(.semibold))
                 Spacer()
                 if let window {
-                    Text(verbatim: "\(window.usedPercentInt)% used · \(window.remainingPercentInt)% left")
+                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
                         .font(.caption.monospacedDigit())
                     if window.resetsAt != nil {
                         Text(verbatim: "· ↻ \(window.formatResetCountdown())")
@@ -242,12 +242,12 @@ struct SessionConfigView: View {
         Group {
             if option.tone == .danger {
                 Label {
-                    Text(verbatim: option.label) + Text(verbatim: " · ") + Text("High risk")
+                    Text(LocalizedStringKey(option.label)) + Text(verbatim: " · ") + Text("High risk")
                 } icon: {
                     Image(systemName: "exclamationmark.triangle")
                 }
             } else {
-                Text(verbatim: option.label)
+                Text(LocalizedStringKey(option.label))
             }
         }
         .tag(option.mode)
@@ -274,13 +274,13 @@ struct SessionConfigView: View {
     private var effortMenu: some View {
         SessionConfigMenu(
             title: "Effort",
-            value: Text(verbatim: model.effortOptions.first { $0.value == model.currentEffort }?.label ?? "Default")
+            value: Text(LocalizedStringKey(model.effortOptions.first { $0.value == model.currentEffort }?.label ?? "Default"))
         ) {
             Picker("Effort", selection: Binding(
                 get: { model.currentEffort }, set: { model.selectEffort($0) }
             )) {
                 ForEach(model.effortOptions, id: \.value) { option in
-                    Text(verbatim: option.label)
+                    Text(LocalizedStringKey(option.label))
                         .tag(option.value)
                         .disabled(!model.canSelectEffort(option.value))
                 }

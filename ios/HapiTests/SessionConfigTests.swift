@@ -288,11 +288,13 @@ final class SessionConfigTests: XCTestCase {
         }
         .frame(width: 393, height: 320)
         .background(Color(uiColor: .systemBackground))
+        .environment(\.locale, Locale(identifier: "zh-Hans"))
 
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 393, height: 320)
         let host = UIHostingController(rootView: rootView)
+        host.safeAreaRegions = []
         host.traitOverrides.horizontalSizeClass = .compact
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -350,69 +352,192 @@ final class SessionConfigTests: XCTestCase {
 
         try await waitUntil {
             let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
-            return ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 0
+            return ids.contains("chat.add-attachment")
+                && ids.contains("chat.composer-voice")
+                && visibleMenuButtons(in: host.view).count == 0
         }
         try maybeCapture("1-collapsed")
 
-        // 1. Collapsed empty capsule: shows primary voice TouchView (`chat.composer-voice`),
-        //    0 UIMenu buttons (+ uses instant custom popup card), and NO `chat.composer-mic`
+        // 1. Collapsed empty capsule: shows `+` (`chat.add-attachment`) and primary voice TouchView (`chat.composer-voice`),
+        //    0 UIMenu buttons, and NO expanded toolbar icons or `chat.composer-mic`
         let collapsedViews = collectViews(in: host.view).filter(isEffectivelyVisible)
         let collapsedIDs = Set(collapsedViews.compactMap(\.accessibilityIdentifier))
         let collapsedMenuButtons = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(collapsedIDs.contains("chat.add-attachment"), "Collapsed empty composer must show + attachment button")
         XCTAssertTrue(collapsedIDs.contains("chat.composer-voice"), "Collapsed empty composer must show primary voice button")
+        XCTAssertFalse(collapsedIDs.contains("chat.skills"), "Collapsed composer must hide skills button")
+        XCTAssertFalse(collapsedIDs.contains("chat.schedule-send"), "Collapsed composer must hide schedule send button")
+        XCTAssertFalse(collapsedIDs.contains("chat.composer-controls"), "Collapsed composer must hide session controls gauge button")
         XCTAssertFalse(collapsedIDs.contains("chat.composer-mic"), "Collapsed composer must not duplicate mic button")
-        XCTAssertEqual(collapsedMenuButtons.count, 0, "Collapsed composer must not use a slow UIMenu on the + attachment button")
+        XCTAssertEqual(collapsedMenuButtons.count, 0, "Collapsed composer must have zero UIMenu buttons")
 
-        // 2. Focused empty state: shows `+` instant attachment button, `sparkles` skills icon,
-        //    `clock` schedule-send menu + unified `gauge.with.needle` controls menu (2 menu buttons),
-        //    and `chat.composer-voice` primary button
+        // 2. Focused empty state: shows `+`, `sparkles`, `clock`, right-side gauge (`chat.composer-controls`),
+        //    and `chat.composer-voice`, with 0 UIMenu buttons
         harness.interactor.focusComposer()
         try await waitUntil {
-            visibleMenuButtons(in: host.view).count == 2
+            let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
+            return ids.contains("chat.add-attachment")
+                && ids.contains("chat.skills")
+                && ids.contains("chat.schedule-send")
+                && ids.contains("chat.composer-controls")
+                && ids.contains("chat.composer-voice")
         }
         try maybeCapture("2-expanded-empty")
 
         let expandedEmptyViews = collectViews(in: host.view).filter(isEffectivelyVisible)
         let expandedEmptyIDs = Set(expandedEmptyViews.compactMap(\.accessibilityIdentifier))
         let expandedEmptyMenus = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(expandedEmptyIDs.contains("chat.add-attachment"), "Expanded empty composer must show + attachment button")
+        XCTAssertTrue(expandedEmptyIDs.contains("chat.skills"), "Expanded empty composer must show skills button")
+        XCTAssertTrue(expandedEmptyIDs.contains("chat.schedule-send"), "Expanded empty composer must show schedule send button")
+        XCTAssertTrue(expandedEmptyIDs.contains("chat.composer-controls"), "Expanded empty composer must show session controls button")
         XCTAssertTrue(expandedEmptyIDs.contains("chat.composer-voice"), "Expanded empty composer must show primary voice button")
-        XCTAssertEqual(
-            expandedEmptyMenus.count,
-            2,
-            "Expanded composer must show schedule send and unified controls menus (got \(expandedEmptyMenus.count))"
-        )
+        XCTAssertEqual(expandedEmptyMenus.count, 0, "Expanded empty composer must use instant popup cards instead of slow UIMenu buttons")
 
-        // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send`,
-        //    plus the 2 menus (`clock` and `gauge.with.needle`)!
+        // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send` (`chat.composer-send`),
+        //    all instant toolbar buttons, and 0 UIMenu buttons
         harness.interactor.setComposerText("检查家庭网关")
         try await waitUntil {
             let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
-            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 2
+            return ids.contains("chat.composer-mic")
+                && ids.contains("chat.composer-send")
+                && !ids.contains("chat.composer-voice")
+                && ids.contains("chat.composer-controls")
         }
         try maybeCapture("3-expanded-draft")
 
         let expandedDraftViews = collectViews(in: host.view).filter(isEffectivelyVisible)
         let expandedDraftIDs = Set(expandedDraftViews.compactMap(\.accessibilityIdentifier))
         let expandedDraftMenus = visibleMenuButtons(in: host.view)
+        XCTAssertTrue(expandedDraftIDs.contains("chat.add-attachment"), "Expanded composer with text must keep + button")
+        XCTAssertTrue(expandedDraftIDs.contains("chat.skills"), "Expanded composer with text must keep skills button")
+        XCTAssertTrue(expandedDraftIDs.contains("chat.schedule-send"), "Expanded composer with text must keep schedule send button")
+        XCTAssertTrue(expandedDraftIDs.contains("chat.composer-controls"), "Expanded composer with text must keep session controls button")
         XCTAssertTrue(expandedDraftIDs.contains("chat.composer-mic"), "Expanded composer with text must retain voice mic button")
+        XCTAssertTrue(expandedDraftIDs.contains("chat.composer-send"), "Expanded composer with text must show Send circle")
         XCTAssertFalse(expandedDraftIDs.contains("chat.composer-voice"), "Primary voice circle must morph into Send circle when draft has text")
-        XCTAssertEqual(expandedDraftMenus.count, 2, "Expanded composer with text must keep schedule send and unified speedometer controls menu")
+        XCTAssertEqual(expandedDraftMenus.count, 0, "Expanded composer with text must have zero UIMenu buttons")
 
-        if ProcessInfo.processInfo.environment["HAPI_COMPOSER_CAPTURE"] != nil {
-            let popupHost = UIHostingController(rootView: ComposerAttachmentPopupCard(
+        if let dirPath = ProcessInfo.processInfo.environment["HAPI_COMPOSER_CAPTURE"] {
+            let locale = Locale(identifier: "zh-Hans")
+            let attachHost = UIHostingController(rootView: ComposerAttachmentPopupCard(
                 colorScheme: .light,
                 onCamera: {},
                 onPhotos: {},
                 onFiles: {}
-            ))
-            popupHost.safeAreaRegions = []
-            popupHost.view.backgroundColor = .clear
-            let size = popupHost.sizeThatFits(in: CGSize(width: 232, height: 400))
-            popupHost.view.frame = CGRect(x: 12, y: window.bounds.height - 8 - ceil(size.height), width: 232, height: ceil(size.height))
-            window.addSubview(popupHost.view)
+            ).environment(\.locale, locale))
+            attachHost.safeAreaRegions = []
+            attachHost.view.backgroundColor = .clear
+            let attachSize = attachHost.sizeThatFits(in: CGSize(width: 232, height: 400))
+            attachHost.view.frame = CGRect(x: 12, y: window.bounds.height - 8 - ceil(attachSize.height), width: 232, height: ceil(attachSize.height))
+            window.addSubview(attachHost.view)
             window.layoutIfNeeded()
             try maybeCapture("4-attachment-popup")
-            popupHost.view.removeFromSuperview()
+            attachHost.view.removeFromSuperview()
+
+            let dir = URL(fileURLWithPath: dirPath, isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+            let scheduleHost = UIHostingController(rootView: ComposerSchedulePopupCard(
+                colorScheme: .light,
+                currentSchedule: .delay(minutes: 30),
+                onSelectPreset: { _ in },
+                onPickTime: {},
+                onClear: {}
+            ).environment(\.locale, locale))
+            scheduleHost.safeAreaRegions = []
+            scheduleHost.view.backgroundColor = .clear
+
+            let captureModel = SessionConfigModel(interactor: harness.interactor, api: harness.api, machineId: "studio")
+            captureModel.loadModels()
+            captureModel.loadQuota()
+            try await configEventually {
+                if case .loaded = captureModel.quotaState {
+                    return !captureModel.config.modelOptionsLoading
+                }
+                return false
+            }
+
+            let tallWindow = UIWindow(windowScene: scene)
+            tallWindow.frame = CGRect(x: 0, y: 0, width: 393, height: 700)
+            let scheduleBaseRoot = VStack {
+                Spacer()
+                ChatComposerView(
+                    interactor: harness.interactor,
+                    dictation: dictation,
+                    holdDictation: holdDictation,
+                    api: harness.api,
+                    machineId: "studio"
+                )
+                .padding(.horizontal, 12)
+            }
+            .frame(width: 393, height: 700)
+            .background(Color(uiColor: .systemBackground))
+            .environment(\.locale, locale)
+
+            let scheduleBaseHost = UIHostingController(rootView: scheduleBaseRoot)
+            scheduleBaseHost.safeAreaRegions = []
+            scheduleBaseHost.traitOverrides.horizontalSizeClass = .compact
+            tallWindow.rootViewController = scheduleBaseHost
+            tallWindow.makeKeyAndVisible()
+            defer {
+                tallWindow.isHidden = true
+                tallWindow.rootViewController = nil
+            }
+            tallWindow.layoutIfNeeded()
+            scheduleBaseHost.view.layoutIfNeeded()
+
+            let scheduleSize = scheduleHost.sizeThatFits(in: CGSize(width: 232, height: 500))
+            scheduleHost.view.frame = CGRect(
+                x: 12,
+                y: tallWindow.bounds.height - 64 - ceil(scheduleSize.height),
+                width: 232,
+                height: ceil(scheduleSize.height)
+            )
+            tallWindow.addSubview(scheduleHost.view)
+            tallWindow.layoutIfNeeded()
+            let scheduleImg = UIGraphicsImageRenderer(bounds: tallWindow.bounds).image { _ in
+                tallWindow.drawHierarchy(in: tallWindow.bounds, afterScreenUpdates: true)
+            }
+            try XCTUnwrap(scheduleImg.pngData()).write(to: dir.appendingPathComponent("6-schedule-popup.png"))
+            scheduleHost.view.removeFromSuperview()
+
+            let controlsRoot = ZStack(alignment: .bottomTrailing) {
+                VStack {
+                    Spacer()
+                    ChatComposerView(
+                        interactor: harness.interactor,
+                        dictation: dictation,
+                        holdDictation: holdDictation,
+                        api: harness.api,
+                        machineId: "studio"
+                    )
+                    .padding(.horizontal, 12)
+                }
+                ComposerSessionControlsPopupCard(
+                    model: captureModel,
+                    colorScheme: .light
+                )
+                .frame(width: 316)
+                .padding(.trailing, 12)
+                .padding(.bottom, 58)
+            }
+            .frame(width: 393, height: 700)
+            .background(Color(uiColor: .systemBackground))
+            .environment(\.locale, locale)
+
+            let tallHost = UIHostingController(rootView: controlsRoot)
+            tallHost.safeAreaRegions = []
+            tallHost.traitOverrides.horizontalSizeClass = .compact
+            tallWindow.rootViewController = tallHost
+            tallWindow.layoutIfNeeded()
+            tallHost.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(150))
+            tallWindow.layoutIfNeeded()
+            let tallImg = UIGraphicsImageRenderer(bounds: tallWindow.bounds).image { _ in
+                tallWindow.drawHierarchy(in: tallWindow.bounds, afterScreenUpdates: true)
+            }
+            try XCTUnwrap(tallImg.pngData()).write(to: dir.appendingPathComponent("5-session-controls-popup.png"))
         }
     }
     #endif

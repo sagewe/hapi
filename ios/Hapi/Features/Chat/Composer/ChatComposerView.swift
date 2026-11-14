@@ -33,8 +33,12 @@ struct ChatComposerView: View {
     // Attachment pickers (the launchers live here; policy + upload live in
     // HapiKit — `AttachmentPreparer` / `ComposerAttachments`).
     @State private var configModel: SessionConfigModel
+    #if targetEnvironment(macCatalyst)
     @State private var quotaPopoverOpen = false
     @State private var attachDialogOpen = false
+    #else
+    @State private var activePopup: ComposerPopupKind?
+    #endif
     @State private var photosPickerOpen = false
     @State private var photoSelection: [PhotosPickerItem] = []
     @State private var cameraOpen = false
@@ -55,8 +59,8 @@ struct ChatComposerView: View {
     @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 16
     @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 28
     #else
-    @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 18
-    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 34
+    @ScaledMetric(relativeTo: .body) private var toolGlyphSize: CGFloat = 19.5
+    @ScaledMetric(relativeTo: .body) private var primaryDiameter: CGFloat = 36
     #endif
 
     init(
@@ -313,9 +317,12 @@ struct ChatComposerView: View {
             .modifier(ComposerCardSurface(fill: composerSurfaceColor, isFocused: textFocused, isCollapsed: collapsed))
             #if !targetEnvironment(macCatalyst)
             .background {
-                ComposerAttachmentPopupHost(
-                    isPresented: $attachDialogOpen,
+                ComposerPopupHost(
+                    activePopup: $activePopup,
                     colorScheme: colorScheme,
+                    interactor: interactor,
+                    configModel: configModel,
+                    canParkDraft: canParkDraft,
                     onCamera: {
                         if CameraCaptureView.isAvailable {
                             cameraOpen = true
@@ -328,7 +335,15 @@ struct ChatComposerView: View {
                     },
                     onFiles: {
                         filePickerOpen = true
-                    }
+                    },
+                    onSelectSkill: { skillName in
+                        insertTrigger("$\(skillName) ")
+                        interactor.recordSkill(skillName)
+                    },
+                    onScheduleTimePicker: {
+                        schedulePickerOpen = true
+                    },
+                    onOpenScratchlist: onOpenScratchlist
                 )
             }
             #endif
@@ -564,11 +579,24 @@ struct ChatComposerView: View {
         }
     }
 
+    #if !targetEnvironment(macCatalyst)
+    private func togglePopup(_ kind: ComposerPopupKind) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        activePopup = (activePopup == kind) ? nil : kind
+    }
+
+    private func isPopupOpen(_ kind: ComposerPopupKind) -> Bool {
+        activePopup == kind
+    }
+    #endif
+
     /// Web clock: relative presets (resolved at Send) or a specific time
     /// within 7 days. Unavailable with attachments — the hub rejects them.
+    @ViewBuilder
     private func scheduleButton(hasAttachments: Bool) -> some View {
         let active = interactor.pendingSchedule != nil
-        return Menu {
+        #if targetEnvironment(macCatalyst)
+        Menu {
             Section("Schedule send") {
                 ForEach(PendingSchedule.presets, id: \.self) { preset in
                     Button(ScheduledSendChip.presetLabel(preset)) {
@@ -595,6 +623,23 @@ struct ChatComposerView: View {
         .accessibilityLabel("Schedule send")
         .accessibilityIdentifier("chat.schedule-send")
         .help("Schedule send")
+        #else
+        Button {
+            togglePopup(.schedule)
+        } label: {
+            toolGlyph("clock", active: (active || isPopupOpen(.schedule)) ? AnyShapeStyle(.tint) : nil)
+        }
+        .buttonStyle(.plain)
+        .disabled(hasAttachments || interactor.scratchlistBusy)
+        .accessibilityLabel("Schedule send")
+        .accessibilityIdentifier("chat.schedule-send")
+        .help("Schedule send")
+        .background {
+            ComposerAccessibilityProbe(identifier: "chat.schedule-send")
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+        }
+        #endif
     }
 
     @ViewBuilder
@@ -624,16 +669,20 @@ struct ChatComposerView: View {
         .help("Attach files (click) · Hold for Photo Library")
         #else
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            attachDialogOpen.toggle()
+            togglePopup(.attachment)
         } label: {
-            toolGlyph("plus")
+            toolGlyph("plus", active: isPopupOpen(.attachment) ? AnyShapeStyle(.tint) : nil)
         }
         .buttonStyle(.plain)
         .disabled(preparingAttachment || interactor.scratchlistBusy)
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("chat.add-attachment")
         .help("Add attachment")
+        .background {
+            ComposerAccessibilityProbe(identifier: "chat.add-attachment")
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+        }
         #endif
     }
 
@@ -674,6 +723,7 @@ struct ChatComposerView: View {
         historyIndex = nil
         draftBeforeHistory = ""
         #if !targetEnvironment(macCatalyst)
+        activePopup = nil
         holdDictation?.clearInlineEditSession()
         #endif
         interactor.sendMessage(steer: steer)
@@ -682,11 +732,31 @@ struct ChatComposerView: View {
         #endif
     }
 
+    private var scratchlistIconStyle: AnyShapeStyle? {
+        if scratchlistMode {
+            return AnyShapeStyle(.orange)
+        }
+        #if !targetEnvironment(macCatalyst)
+        if isPopupOpen(.scratchlist) {
+            return AnyShapeStyle(.tint)
+        }
+        #endif
+        return nil
+    }
+
     private var scratchlistButton: some View {
         Button {
+            #if targetEnvironment(macCatalyst)
             interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
+            #else
+            if scratchlistMode {
+                interactor.setComposerDestination(.chat)
+            } else {
+                togglePopup(.scratchlist)
+            }
+            #endif
         } label: {
-            toolGlyph("tray", active: scratchlistMode ? AnyShapeStyle(.orange) : nil)
+            toolGlyph("tray", active: scratchlistIconStyle)
             .overlay(alignment: .topTrailing) {
                 if interactor.scratchlistCount > 0 {
                     Text(verbatim: interactor.scratchlistCount > 99 ? "99+" : "\(interactor.scratchlistCount)")
@@ -705,6 +775,13 @@ struct ChatComposerView: View {
         .accessibilityValue(scratchlistMode ? String(localized: "Held — not sent") : String(localized: "Chat"))
         .accessibilityIdentifier("scratchlist.toggle")
         .help("Toggle Scratchlist (⇧⌘D)")
+        #if !targetEnvironment(macCatalyst)
+        .background {
+            ComposerAccessibilityProbe(identifier: "scratchlist.toggle")
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+        }
+        #endif
     }
 
     private var canParkDraft: Bool {
@@ -1068,15 +1145,20 @@ struct ChatComposerView: View {
         addAttachmentButton
         if !scratchlistMode {
             Button {
-                insertTrigger("$")
+                togglePopup(.skills)
             } label: {
-                toolGlyph("sparkles")
+                toolGlyph("sparkles", active: isPopupOpen(.skills) ? AnyShapeStyle(.tint) : nil)
             }
             .buttonStyle(.plain)
             .disabled(interactor.scratchlistBusy)
             .accessibilityLabel("Skills")
             .accessibilityIdentifier("chat.skills")
             .help("Insert skill ($)")
+            .background {
+                ComposerAccessibilityProbe(identifier: "chat.skills")
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
         }
         if interactor.scratchlist != nil {
             scratchlistButton
@@ -1334,97 +1416,42 @@ struct ChatComposerView: View {
         configModel.showsComposerModelMenu || configModel.showsComposerPermissionMenu || configModel.showsQuota
     }
 
-    private var composerControlsIconStyle: AnyShapeStyle? {
+    private var composerControlsColor: Color {
         if configModel.permission.tone == .danger || (configModel.quotaPeakUsedPercent ?? 0) >= 90 {
-            return AnyShapeStyle(.red)
+            return .red
         }
         if configModel.permission.tone == .warning || (configModel.quotaPeakUsedPercent ?? 0) >= 75 {
-            return AnyShapeStyle(.orange)
+            return .orange
         }
         let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
         let hasCustomPermission = configModel.permission != .default
             || (configModel.showsCollaborationMode && configModel.collaborationMode != .default)
-        if hasCustomEffort || hasCustomPermission {
-            return AnyShapeStyle(.tint)
+        if hasCustomEffort || hasCustomPermission || isPopupOpen(.sessionControls) {
+            return .accentColor
         }
-        return nil
-    }
-
-    private var quotaMenuSubtitle: String? {
-        guard case .loaded(let result) = configModel.quotaState else { return nil }
-        let fiveHour = result.groups?.first?.fiveHour ?? result.fiveHour
-        let sevenDay = result.groups?.first?.sevenDay ?? result.sevenDay
-        var parts: [String] = []
-        if let fiveHour {
-            parts.append("5H \(fiveHour.usedPercentInt)%")
-        }
-        if let sevenDay {
-            parts.append("7D \(sevenDay.usedPercentInt)%")
-        }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return Color.primary.opacity(0.88)
     }
 
     private var composerSessionControlsButton: some View {
-        Menu {
-            if !configModel.config.active {
-                Text("Session is offline")
-            } else if configModel.config.controlledByUser {
-                Text("Controlled from terminal")
-            }
-            if configModel.showsComposerModelMenu {
-                Menu {
-                    composerModelMenuSections
-                } label: {
-                    Label {
-                        Text("Model")
-                        Text(verbatim: configModel.modelSummaryValue)
-                    } icon: {
-                        Image(systemName: "cpu")
-                    }
-                }
-                .accessibilityIdentifier("chat.composer-model")
-            }
-            if configModel.showsComposerPermissionMenu {
-                Menu {
-                    composerPermissionMenuSections
-                } label: {
-                    Label {
-                        Text("Permission mode")
-                        Text(verbatim: configModel.permissionSummaryValue)
-                    } icon: {
-                        Image(systemName: permissionIconName)
-                    }
-                }
-                .accessibilityIdentifier("chat.composer-permission")
-            }
-            if configModel.showsQuota {
-                Divider()
-                Button {
-                    quotaPopoverOpen = true
-                } label: {
-                    Label {
-                        Text("Subscription Quota")
-                        if let subtitle = quotaMenuSubtitle {
-                            Text(verbatim: subtitle)
-                        }
-                    } icon: {
-                        Image(systemName: "gauge.with.dots.needle.33percent")
-                    }
-                }
-                .accessibilityIdentifier("chat.composer-quota")
-            }
+        Button {
+            togglePopup(.sessionControls)
         } label: {
-            toolGlyph("gauge.with.needle", active: composerControlsIconStyle)
+            ComposerQuotaGaugeIcon(
+                usedPercent: configModel.quotaPeakUsedPercent,
+                accentColor: composerControlsColor
+            )
+            .frame(minWidth: 38, minHeight: 38)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
         .disabled(configModel.isApplying || interactor.scratchlistBusy)
         .accessibilityLabel(String(localized: "Session controls"))
         .accessibilityValue(Text(verbatim: "\(configModel.modelSummaryValue) · \(configModel.permissionSummaryValue)"))
         .accessibilityIdentifier("chat.composer-controls")
-        .popover(isPresented: $quotaPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            ComposerQuotaPopoverView(model: configModel)
-                .presentationCompactAdaptation(.popover)
+        .background {
+            ComposerAccessibilityProbe(identifier: "chat.composer-controls")
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
         }
     }
     #endif
@@ -1676,6 +1703,13 @@ struct ChatComposerView: View {
             .disabled(true)
             .accessibilityLabel("Send")
             .accessibilityIdentifier("chat.composer-send")
+            #if !targetEnvironment(macCatalyst)
+            .background {
+                ComposerAccessibilityProbe(identifier: "chat.composer-send")
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
+            #endif
         case .stop:
             Button {
                 interactor.abortSession()
@@ -1702,6 +1736,13 @@ struct ChatComposerView: View {
             .accessibilityLabel("Stop the current turn")
             .accessibilityIdentifier("chat.composer-stop")
             .help("Stop the current turn (⌘.)")
+            #if !targetEnvironment(macCatalyst)
+            .background {
+                ComposerAccessibilityProbe(identifier: "chat.composer-stop")
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+            }
+            #endif
         #if !targetEnvironment(macCatalyst)
         case .voice:
             voicePrimaryButton
@@ -1719,23 +1760,44 @@ struct ChatComposerView: View {
                 .accessibilityLabel("Schedule send")
                 .accessibilityIdentifier("chat.composer-send")
                 .help("Schedule send (↩)")
-            } else if composer.canSendAndSteer && enabled {
-                // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
-                Menu {
-                    Button("Send & steer into current turn (⇧⌘↩)") {
-                        submitMessage(steer: true)
-                    }
-                } label: {
-                    label
-                } primaryAction: {
-                    submitMessage()
+                #if !targetEnvironment(macCatalyst)
+                .background {
+                    ComposerAccessibilityProbe(identifier: "chat.composer-send")
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .accessibilityLabel("Send — long-press to steer")
-                .accessibilityIdentifier("chat.composer-send")
-                .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
+                #endif
             } else {
+                #if targetEnvironment(macCatalyst)
+                if composer.canSendAndSteer && enabled {
+                    // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
+                    Menu {
+                        Button("Send & steer into current turn (⇧⌘↩)") {
+                            submitMessage(steer: true)
+                        }
+                    } label: {
+                        label
+                    } primaryAction: {
+                        submitMessage()
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Send — long-press to steer")
+                    .accessibilityIdentifier("chat.composer-send")
+                    .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
+                } else {
+                    Button {
+                        submitMessage()
+                    } label: {
+                        label
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!enabled)
+                    .accessibilityLabel("Send")
+                    .accessibilityIdentifier("chat.composer-send")
+                    .help("Send (↩)")
+                }
+                #else
                 Button {
                     submitMessage()
                 } label: {
@@ -1743,9 +1805,24 @@ struct ChatComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!enabled)
-                .accessibilityLabel("Send")
+                .contextMenu {
+                    if composer.canSendAndSteer && enabled {
+                        Button {
+                            submitMessage(steer: true)
+                        } label: {
+                            Label("Send & steer into current turn (⇧⌘↩)", systemImage: "arrow.triangle.turn.up.right.diamond")
+                        }
+                    }
+                }
+                .accessibilityLabel(composer.canSendAndSteer && enabled ? "Send — long-press to steer" : "Send")
                 .accessibilityIdentifier("chat.composer-send")
                 .help("Send (↩)")
+                .background {
+                    ComposerAccessibilityProbe(identifier: "chat.composer-send")
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                }
+                #endif
             }
         }
     }
@@ -1763,7 +1840,7 @@ struct ChatComposerView: View {
         if isBusy {
             ProgressView()
                 .controlSize(.small)
-                .frame(minWidth: 34, minHeight: 40)
+                .frame(minWidth: 38, minHeight: 38)
                 .accessibilityLabel(String(localized: "Dictate"))
                 .accessibilityIdentifier("chat.composer-mic")
         } else if isRecording, let dictation {
@@ -1920,13 +1997,15 @@ struct ChatComposerView: View {
         #if targetEnvironment(macCatalyst)
         let slotWidth: CGFloat = 32
         let slotHeight: CGFloat = 32
+        let defaultStyle = AnyShapeStyle(.secondary)
         #else
-        let slotWidth: CGFloat = 34
-        let slotHeight: CGFloat = 40
+        let slotWidth: CGFloat = 38
+        let slotHeight: CGFloat = 38
+        let defaultStyle = AnyShapeStyle(Color.primary.opacity(0.88))
         #endif
         return Image(systemName: name)
             .font(.system(size: toolGlyphSize, weight: .medium))
-            .foregroundStyle(active ?? AnyShapeStyle(.secondary))
+            .foregroundStyle(active ?? defaultStyle)
             .frame(minWidth: slotWidth, minHeight: slotHeight)
             .contentShape(Rectangle())
     }
@@ -2065,7 +2144,7 @@ private struct ComposerQuotaPopoverView: View {
                     .font(.caption.monospaced().weight(.semibold))
                 Spacer(minLength: 4)
                 if let window {
-                    Text(verbatim: "\(window.usedPercentInt)% used · \(window.remainingPercentInt)% left")
+                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
                         .font(.caption.monospacedDigit())
                     if window.resetsAt != nil {
                         Text(verbatim: "· ↻ \(window.formatResetCountdown())")
@@ -2685,20 +2764,162 @@ private struct PickedMovie: Transferable {
 }
 
 #if !targetEnvironment(macCatalyst)
-// MARK: - Instant Attachment Popup Card
+// MARK: - iOS Instant Toolbar Popups & Harmonious Icons
 
-/// Anchors an instant-response floating attachment card directly in the key
-/// window above the composer card's bottom-leading corner, avoiding `UIMenu`
-/// context-menu snapshot delays and leaving the software keyboard focused.
-private struct ComposerAttachmentPopupHost: UIViewRepresentable {
-    @Binding var isPresented: Bool
+private enum ComposerPopupKind: Equatable {
+    case attachment
+    case skills
+    case scratchlist
+    case schedule
+    case sessionControls
+
+    var cardWidth: CGFloat {
+        switch self {
+        case .attachment, .schedule:
+            return 232
+        case .skills, .scratchlist:
+            return 276
+        case .sessionControls:
+            return 316
+        }
+    }
+
+    var isTrailingAligned: Bool {
+        self == .sessionControls
+    }
+
+    var identifier: String {
+        switch self {
+        case .attachment: return "chat.attachment-popup"
+        case .skills: return "chat.skills-popup"
+        case .scratchlist: return "chat.scratchlist-popup"
+        case .schedule: return "chat.schedule-popup"
+        case .sessionControls: return "chat.session-controls-popup"
+        }
+    }
+}
+
+/// Exposes SwiftUI toolbar button identifiers to UIKit view hierarchy probes in tests
+/// without altering layout or intercepting touches.
+private struct ComposerAccessibilityProbe: UIViewRepresentable {
+    let identifier: String
+
+    final class ProbeHostView: UIView {
+        let probe = UIView()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isAccessibilityElement = false
+            isUserInteractionEnabled = false
+            probe.isAccessibilityElement = false
+            probe.isUserInteractionEnabled = false
+            addSubview(probe)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            probe.frame = bounds
+        }
+    }
+
+    func makeUIView(context: Context) -> ProbeHostView {
+        let view = ProbeHostView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        view.probe.accessibilityIdentifier = identifier
+        return view
+    }
+
+    func updateUIView(_ view: ProbeHostView, context: Context) {
+        if view.probe.accessibilityIdentifier != identifier {
+            view.probe.accessibilityIdentifier = identifier
+        }
+    }
+}
+
+/// Open-bottom 240° dual-tone progress arc gauge with a central pivot needle,
+/// distinguishing quota/session controls from the leading `clock` schedule glyph.
+private struct ComposerQuotaGaugeIcon: View {
+    let usedPercent: Int?
+    let accentColor: Color
+
+    private var fraction: Double {
+        let value = Double(usedPercent ?? 32)
+        return min(1.0, max(0.18, value / 100.0))
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .trim(from: 0, to: 240.0 / 360.0)
+                .stroke(
+                    Color.primary.opacity(0.22),
+                    style: StrokeStyle(lineWidth: 1.85, lineCap: .round)
+                )
+                .rotationEffect(.degrees(150))
+
+            Circle()
+                .trim(from: 0, to: (240.0 / 360.0) * fraction)
+                .stroke(
+                    accentColor,
+                    style: StrokeStyle(lineWidth: 1.85, lineCap: .round)
+                )
+                .rotationEffect(.degrees(150))
+
+            Canvas { context, size in
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let rad = (150.0 + fraction * 240.0) * .pi / 180.0
+                let start = CGPoint(
+                    x: center.x + 2.1 * cos(rad),
+                    y: center.y + 2.1 * sin(rad)
+                )
+                let end = CGPoint(
+                    x: center.x + 5.8 * cos(rad),
+                    y: center.y + 5.8 * sin(rad)
+                )
+                var needle = Path()
+                needle.move(to: start)
+                needle.addLine(to: end)
+                context.stroke(
+                    needle,
+                    with: .color(accentColor),
+                    style: StrokeStyle(lineWidth: 1.75, lineCap: .round)
+                )
+                let pivotRect = CGRect(
+                    x: center.x - 2.1,
+                    y: center.y - 2.1,
+                    width: 4.2,
+                    height: 4.2
+                )
+                context.stroke(
+                    Path(ellipseIn: pivotRect),
+                    with: .color(accentColor),
+                    lineWidth: 1.65
+                )
+            }
+        }
+        .frame(width: 19, height: 19)
+    }
+}
+
+/// Anchors instant-response floating glass popup cards in the key window over the
+/// composer's leading or trailing edge while leaving the software keyboard focused.
+private struct ComposerPopupHost: UIViewRepresentable {
+    @Binding var activePopup: ComposerPopupKind?
     let colorScheme: ColorScheme
+    let interactor: ChatInteractor
+    let configModel: SessionConfigModel
+    let canParkDraft: Bool
     let onCamera: () -> Void
     let onPhotos: () -> Void
     let onFiles: () -> Void
+    let onSelectSkill: (String) -> Void
+    let onScheduleTimePicker: () -> Void
+    let onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isPresented: $isPresented)
+        Coordinator(activePopup: $activePopup)
     }
 
     func makeUIView(context: Context) -> AnchorView {
@@ -2716,13 +2937,19 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
 
     func updateUIView(_ anchorView: AnchorView, context: Context) {
         context.coordinator.update(
-            isPresented: $isPresented,
-            presented: isPresented,
+            activePopupBinding: $activePopup,
+            activePopup: activePopup,
             colorScheme: colorScheme,
             anchorView: anchorView,
+            interactor: interactor,
+            configModel: configModel,
+            canParkDraft: canParkDraft,
             onCamera: onCamera,
             onPhotos: onPhotos,
-            onFiles: onFiles
+            onFiles: onFiles,
+            onSelectSkill: onSelectSkill,
+            onScheduleTimePicker: onScheduleTimePicker,
+            onOpenScratchlist: onOpenScratchlist
         )
     }
 
@@ -2741,45 +2968,64 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject {
-        private var isPresentedBinding: Binding<Bool>
+        private var activePopupBinding: Binding<ComposerPopupKind?>
         private var overlay: PopupOverlayView?
         private var currentlyPresented = false
+        private var currentKind: ComposerPopupKind?
+
         private var onCamera: () -> Void = {}
         private var onPhotos: () -> Void = {}
         private var onFiles: () -> Void = {}
+        private var onSelectSkill: (String) -> Void = { _ in }
+        private var onScheduleTimePicker: () -> Void = {}
+        private var onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void = { _, _ in }
 
-        init(isPresented: Binding<Bool>) {
-            self.isPresentedBinding = isPresented
+        init(activePopup: Binding<ComposerPopupKind?>) {
+            self.activePopupBinding = activePopup
         }
 
         func update(
-            isPresented: Binding<Bool>,
-            presented: Bool,
+            activePopupBinding: Binding<ComposerPopupKind?>,
+            activePopup: ComposerPopupKind?,
             colorScheme: ColorScheme,
             anchorView: AnchorView,
+            interactor: ChatInteractor,
+            configModel: SessionConfigModel,
+            canParkDraft: Bool,
             onCamera: @escaping () -> Void,
             onPhotos: @escaping () -> Void,
-            onFiles: @escaping () -> Void
+            onFiles: @escaping () -> Void,
+            onSelectSkill: @escaping (String) -> Void,
+            onScheduleTimePicker: @escaping () -> Void,
+            onOpenScratchlist: @escaping (ScratchlistEntry?, Bool) -> Void
         ) {
-            self.isPresentedBinding = isPresented
+            self.activePopupBinding = activePopupBinding
             self.onCamera = onCamera
             self.onPhotos = onPhotos
             self.onFiles = onFiles
+            self.onSelectSkill = onSelectSkill
+            self.onScheduleTimePicker = onScheduleTimePicker
+            self.onOpenScratchlist = onOpenScratchlist
 
-            if presented {
+            if let kind = activePopup {
                 guard let window = anchorView.window else { return }
+                let actions = makeActions(interactor: interactor)
                 if let overlay {
                     if overlay.superview !== window {
                         overlay.removeFromSuperview()
                         window.addSubview(overlay)
                     }
+                    let switched = currentlyPresented && currentKind != kind
+                    currentKind = kind
                     overlay.update(
+                        kind: kind,
                         anchorView: anchorView,
                         colorScheme: colorScheme,
-                        onCamera: { [weak self] in self?.runAction { self?.onCamera() } },
-                        onPhotos: { [weak self] in self?.runAction { self?.onPhotos() } },
-                        onFiles: { [weak self] in self?.runAction { self?.onFiles() } },
-                        onDismiss: { [weak self] in self?.dismissFromBackdrop() }
+                        interactor: interactor,
+                        configModel: configModel,
+                        canParkDraft: canParkDraft,
+                        actions: actions,
+                        animateReposition: switched
                     )
                     overlay.setNeedsLayout()
                     if !currentlyPresented {
@@ -2787,14 +3033,16 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
                         overlay.animateIn()
                     }
                 } else {
+                    currentKind = kind
                     let overlay = PopupOverlayView(
                         frame: window.bounds,
+                        kind: kind,
                         anchorView: anchorView,
                         colorScheme: colorScheme,
-                        onCamera: { [weak self] in self?.runAction { self?.onCamera() } },
-                        onPhotos: { [weak self] in self?.runAction { self?.onPhotos() } },
-                        onFiles: { [weak self] in self?.runAction { self?.onFiles() } },
-                        onDismiss: { [weak self] in self?.dismissFromBackdrop() }
+                        interactor: interactor,
+                        configModel: configModel,
+                        canParkDraft: canParkDraft,
+                        actions: actions
                     )
                     overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
                     window.addSubview(overlay)
@@ -2805,8 +3053,32 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
                 }
             } else if currentlyPresented || overlay != nil {
                 currentlyPresented = false
+                currentKind = nil
                 dismissAnimated()
             }
+        }
+
+        private func makeActions(interactor: ChatInteractor) -> PopupOverlayActions {
+            PopupOverlayActions(
+                onCamera: { [weak self] in self?.runAction { self?.onCamera() } },
+                onPhotos: { [weak self] in self?.runAction { self?.onPhotos() } },
+                onFiles: { [weak self] in self?.runAction { self?.onFiles() } },
+                onSelectSkill: { [weak self] name in self?.runAction { self?.onSelectSkill(name) } },
+                onSelectPreset: { [weak self, weak interactor] preset in
+                    self?.runAction { interactor?.setPendingSchedule(preset) }
+                },
+                onPickScheduleTime: { [weak self] in self?.runAction { self?.onScheduleTimePicker() } },
+                onClearSchedule: { [weak self, weak interactor] in
+                    self?.runAction { interactor?.setPendingSchedule(nil) }
+                },
+                onSaveDraft: { [weak self, weak interactor] in
+                    self?.runAction { interactor?.parkComposerDraft() }
+                },
+                onViewAllScratchlist: { [weak self] in
+                    self?.runAction { self?.onOpenScratchlist(nil, false) }
+                },
+                onDismiss: { [weak self] in self?.dismissFromBackdrop() }
+            )
         }
 
         private func runAction(_ action: () -> Void) {
@@ -2815,11 +3087,11 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
         }
 
         private func dismissFromBackdrop() {
-            guard isPresentedBinding.wrappedValue else {
+            guard activePopupBinding.wrappedValue != nil else {
                 dismissAnimated()
                 return
             }
-            isPresentedBinding.wrappedValue = false
+            activePopupBinding.wrappedValue = nil
         }
 
         private func dismissAnimated() {
@@ -2832,44 +3104,72 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
 
         func dismissImmediate(resetBinding: Bool) {
             currentlyPresented = false
+            currentKind = nil
             if let overlay {
                 self.overlay = nil
                 overlay.layer.removeAllAnimations()
                 overlay.cardContainer.layer.removeAllAnimations()
                 overlay.removeFromSuperview()
             }
-            if resetBinding, isPresentedBinding.wrappedValue {
-                isPresentedBinding.wrappedValue = false
+            if resetBinding, activePopupBinding.wrappedValue != nil {
+                activePopupBinding.wrappedValue = nil
             }
+        }
+    }
+
+    struct PopupOverlayActions {
+        let onCamera: () -> Void
+        let onPhotos: () -> Void
+        let onFiles: () -> Void
+        let onSelectSkill: (String) -> Void
+        let onSelectPreset: (PendingSchedule) -> Void
+        let onPickScheduleTime: () -> Void
+        let onClearSchedule: () -> Void
+        let onSaveDraft: () -> Void
+        let onViewAllScratchlist: () -> Void
+        let onDismiss: () -> Void
+    }
+
+    private final class PopupCardHostingController<Content: View>: UIHostingController<Content> {
+        var onLayout: (() -> Void)?
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            onLayout?()
         }
     }
 
     @MainActor
     final class PopupOverlayView: UIView {
+        private var kind: ComposerPopupKind
         private weak var anchorView: UIView?
-        private var onDismiss: () -> Void
+        private var actions: PopupOverlayActions
         private let backdropView = UIView()
         let cardContainer = UIView()
-        private let cardHostingController: UIHostingController<ComposerAttachmentPopupCard>
+        private let cardHostingController: PopupCardHostingController<AnyView>
 
         init(
             frame: CGRect,
+            kind: ComposerPopupKind,
             anchorView: UIView,
             colorScheme: ColorScheme,
-            onCamera: @escaping () -> Void,
-            onPhotos: @escaping () -> Void,
-            onFiles: @escaping () -> Void,
-            onDismiss: @escaping () -> Void
+            interactor: ChatInteractor,
+            configModel: SessionConfigModel,
+            canParkDraft: Bool,
+            actions: PopupOverlayActions
         ) {
+            self.kind = kind
             self.anchorView = anchorView
-            self.onDismiss = onDismiss
-            let card = ComposerAttachmentPopupCard(
+            self.actions = actions
+            let root = Self.makeCard(
+                kind: kind,
                 colorScheme: colorScheme,
-                onCamera: onCamera,
-                onPhotos: onPhotos,
-                onFiles: onFiles
+                interactor: interactor,
+                configModel: configModel,
+                canParkDraft: canParkDraft,
+                actions: actions
             )
-            self.cardHostingController = UIHostingController(rootView: card)
+            self.cardHostingController = PopupCardHostingController(rootView: root)
             super.init(frame: frame)
 
             backgroundColor = .clear
@@ -2877,15 +3177,19 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
             backdropView.frame = bounds
             backdropView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             backdropView.backgroundColor = .clear
-            backdropView.accessibilityIdentifier = "chat.attachment-popup.backdrop"
+            backdropView.accessibilityIdentifier = "chat.composer-popup.backdrop"
             let tap = UITapGestureRecognizer(target: self, action: #selector(handleBackdropTap))
             backdropView.addGestureRecognizer(tap)
             addSubview(backdropView)
 
             cardHostingController.safeAreaRegions = []
             cardHostingController.view.backgroundColor = .clear
+            cardHostingController.onLayout = { [weak self] in
+                self?.positionCard()
+            }
+
             cardContainer.backgroundColor = .clear
-            cardContainer.accessibilityIdentifier = "chat.attachment-popup"
+            cardContainer.accessibilityIdentifier = kind.identifier
             cardContainer.layer.shadowColor = UIColor.black.cgColor
             cardContainer.layer.shadowOffset = CGSize(width: 0, height: 6)
             cardContainer.layer.shadowRadius = 20
@@ -2898,23 +3202,39 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
         required init?(coder: NSCoder) { fatalError() }
 
         func update(
+            kind: ComposerPopupKind,
             anchorView: UIView,
             colorScheme: ColorScheme,
-            onCamera: @escaping () -> Void,
-            onPhotos: @escaping () -> Void,
-            onFiles: @escaping () -> Void,
-            onDismiss: @escaping () -> Void
+            interactor: ChatInteractor,
+            configModel: SessionConfigModel,
+            canParkDraft: Bool,
+            actions: PopupOverlayActions,
+            animateReposition: Bool
         ) {
+            self.kind = kind
             self.anchorView = anchorView
-            self.onDismiss = onDismiss
-            cardHostingController.rootView = ComposerAttachmentPopupCard(
+            self.actions = actions
+            cardHostingController.rootView = Self.makeCard(
+                kind: kind,
                 colorScheme: colorScheme,
-                onCamera: onCamera,
-                onPhotos: onPhotos,
-                onFiles: onFiles
+                interactor: interactor,
+                configModel: configModel,
+                canParkDraft: canParkDraft,
+                actions: actions
             )
+            cardContainer.accessibilityIdentifier = kind.identifier
             cardContainer.layer.shadowOpacity = colorScheme == .dark ? 0.34 : 0.12
-            positionCard()
+            if animateReposition {
+                UIView.animate(
+                    withDuration: 0.14,
+                    delay: 0,
+                    options: [.allowUserInteraction, .beginFromCurrentState]
+                ) {
+                    self.positionCard()
+                }
+            } else {
+                positionCard()
+            }
         }
 
         override func layoutSubviews() {
@@ -2927,12 +3247,21 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
             guard let anchorView, anchorView.window === self.window else { return }
             let composerFrame = anchorView.convert(anchorView.bounds, to: self)
             let maxCardWidth = max(180, bounds.width - 24)
-            let cardWidth = min(232, maxCardWidth)
-            let targetSize = cardHostingController.sizeThatFits(in: CGSize(width: cardWidth, height: 400))
-            let cardSize = CGSize(width: cardWidth, height: ceil(targetSize.height))
-            let minX = min(max(12, composerFrame.minX), max(12, bounds.width - cardSize.width - 12))
-            let minY = max(safeAreaInsets.top + 8, composerFrame.maxY - cardSize.height)
+            let cardWidth = min(kind.cardWidth, maxCardWidth)
+            let topLimit = safeAreaInsets.top + 8
+            let maxHeight = max(200, composerFrame.maxY - topLimit)
+            let targetSize = cardHostingController.sizeThatFits(in: CGSize(width: cardWidth, height: maxHeight))
+            let cardHeight = min(ceil(targetSize.height), maxHeight)
+            let cardSize = CGSize(width: cardWidth, height: cardHeight)
+
+            let minX: CGFloat = if kind.isTrailingAligned {
+                max(12, min(composerFrame.maxX, bounds.width - 12) - cardSize.width)
+            } else {
+                min(max(12, composerFrame.minX), max(12, bounds.width - cardSize.width - 12))
+            }
+            let minY = max(topLimit, composerFrame.maxY - cardSize.height)
             let targetCenter = CGPoint(x: minX + cardSize.width / 2, y: minY + cardSize.height / 2)
+
             if cardContainer.bounds.size != cardSize {
                 cardContainer.bounds = CGRect(origin: .zero, size: cardSize)
                 cardHostingController.view.frame = cardContainer.bounds
@@ -2946,9 +3275,9 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
             }
         }
 
-        private func bottomLeadingScaleTransform(_ scale: CGFloat) -> CGAffineTransform {
+        private func cornerScaleTransform(_ scale: CGFloat) -> CGAffineTransform {
             let size = cardContainer.bounds.size
-            let dx = size.width * 0.36
+            let dx = size.width * (kind.isTrailingAligned ? -0.36 : 0.36)
             let dy = size.height * 0.42
             return CGAffineTransform(translationX: -dx, y: dy)
                 .scaledBy(x: scale, y: scale)
@@ -2967,7 +3296,7 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
                 return
             }
             cardContainer.alpha = 0
-            cardContainer.transform = bottomLeadingScaleTransform(0.88)
+            cardContainer.transform = cornerScaleTransform(0.88)
             UIView.animate(
                 withDuration: 0.15,
                 delay: 0,
@@ -2989,7 +3318,7 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
             ) {
                 self.cardContainer.alpha = 0
                 if !UIAccessibility.isReduceMotionEnabled {
-                    self.cardContainer.transform = self.bottomLeadingScaleTransform(0.94)
+                    self.cardContainer.transform = self.cornerScaleTransform(0.94)
                 }
             } completion: { _ in
                 completion()
@@ -2997,20 +3326,64 @@ private struct ComposerAttachmentPopupHost: UIViewRepresentable {
         }
 
         @objc private func handleBackdropTap() {
-            onDismiss()
+            actions.onDismiss()
+        }
+
+        private static func makeCard(
+            kind: ComposerPopupKind,
+            colorScheme: ColorScheme,
+            interactor: ChatInteractor,
+            configModel: SessionConfigModel,
+            canParkDraft: Bool,
+            actions: PopupOverlayActions
+        ) -> AnyView {
+            switch kind {
+            case .attachment:
+                return AnyView(ComposerAttachmentPopupCard(
+                    colorScheme: colorScheme,
+                    onCamera: actions.onCamera,
+                    onPhotos: actions.onPhotos,
+                    onFiles: actions.onFiles
+                ))
+            case .schedule:
+                return AnyView(ComposerSchedulePopupCard(
+                    colorScheme: colorScheme,
+                    currentSchedule: interactor.pendingSchedule,
+                    onSelectPreset: actions.onSelectPreset,
+                    onPickTime: actions.onPickScheduleTime,
+                    onClear: actions.onClearSchedule
+                ))
+            case .skills:
+                return AnyView(ComposerSkillsPopupCard(
+                    colorScheme: colorScheme,
+                    interactor: interactor,
+                    onSelectSkill: actions.onSelectSkill
+                ))
+            case .scratchlist:
+                return AnyView(ComposerScratchlistPopupCard(
+                    colorScheme: colorScheme,
+                    interactor: interactor,
+                    canParkDraft: canParkDraft,
+                    onSaveDraft: actions.onSaveDraft,
+                    onViewAll: actions.onViewAllScratchlist
+                ))
+            case .sessionControls:
+                return AnyView(ComposerSessionControlsPopupCard(
+                    model: configModel,
+                    colorScheme: colorScheme,
+                    isBusy: interactor.scratchlistBusy
+                ))
+            }
         }
     }
 }
 
-struct ComposerAttachmentPopupCard: View {
+private struct ComposerPopupSurface: ViewModifier {
     let colorScheme: ColorScheme
-    let onCamera: () -> Void
-    let onPhotos: () -> Void
-    let onFiles: () -> Void
 
     private var isDark: Bool { colorScheme == .dark }
 
-    var body: some View {
+    func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
         let specularRim = LinearGradient(
             colors: [
@@ -3020,19 +3393,10 @@ struct ComposerAttachmentPopupCard: View {
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
-        let content = VStack(alignment: .leading, spacing: 4) {
-            popupRow(title: String(localized: "Camera"), systemImage: "camera", identifier: "chat.attachment-popup.camera", action: onCamera)
-            popupRow(title: String(localized: "Photos"), systemImage: "photo", identifier: "chat.attachment-popup.photos", action: onPhotos)
-            popupRow(title: String(localized: "Files"), systemImage: "paperclip", identifier: "chat.attachment-popup.files", action: onFiles)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
         Group {
             if #available(iOS 26.0, *) {
                 content
-                    .background(shape.fill(isDark ? Color(white: 0.16).opacity(0.76) : Color.white.opacity(0.78)))
+                    .background(shape.fill(isDark ? Color(white: 0.16).opacity(0.76) : Color.white.opacity(0.80)))
                     .clipShape(shape)
                     .glassEffect(.regular, in: shape)
                     .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
@@ -3040,7 +3404,7 @@ struct ComposerAttachmentPopupCard: View {
                 content
                     .background {
                         shape.fill(.ultraThinMaterial)
-                            .overlay(shape.fill(isDark ? Color(white: 0.15).opacity(0.70) : Color.white.opacity(0.78)))
+                            .overlay(shape.fill(isDark ? Color(white: 0.15).opacity(0.70) : Color.white.opacity(0.80)))
                     }
                     .clipShape(shape)
                     .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
@@ -3048,33 +3412,9 @@ struct ComposerAttachmentPopupCard: View {
         }
         .preferredColorScheme(colorScheme)
     }
-
-    private func popupRow(title: String, systemImage: String, identifier: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Circle()
-                    .fill(isDark ? Color.white.opacity(0.11) : Color.black.opacity(0.055))
-                    .frame(width: 38, height: 38)
-                    .overlay {
-                        Image(systemName: systemImage)
-                            .font(.system(size: 16.5, weight: .medium))
-                            .foregroundStyle(.primary)
-                    }
-                Text(verbatim: title)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .frame(minHeight: 52)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(AttachmentPopupRowButtonStyle(isDark: isDark))
-        .accessibilityIdentifier(identifier)
-    }
 }
 
-private struct AttachmentPopupRowButtonStyle: ButtonStyle {
+private struct ComposerPopupRowButtonStyle: ButtonStyle {
     let isDark: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -3086,6 +3426,701 @@ private struct AttachmentPopupRowButtonStyle: ButtonStyle {
                           : Color.clear)
             )
             .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+}
+
+private struct ComposerPopupIconRow<Trailing: View>: View {
+    let colorScheme: ColorScheme
+    let title: String
+    var subtitle: String?
+    let systemImage: String
+    var tint: Color?
+    let identifier: String
+    let action: () -> Void
+    @ViewBuilder var trailing: () -> Trailing
+
+    private var isDark: Bool { colorScheme == .dark }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Circle()
+                    .fill(isDark ? Color.white.opacity(0.11) : Color.black.opacity(0.055))
+                    .frame(width: 38, height: 38)
+                    .overlay {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 16.5, weight: .medium))
+                            .foregroundStyle(tint ?? .primary)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: title)
+                        .font(.body)
+                        .foregroundStyle(tint ?? .primary)
+                        .lineLimit(1)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(verbatim: subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 4)
+                trailing()
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ComposerPopupRowButtonStyle(isDark: isDark))
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+struct ComposerAttachmentPopupCard: View {
+    let colorScheme: ColorScheme
+    let onCamera: () -> Void
+    let onPhotos: () -> Void
+    let onFiles: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ComposerPopupIconRow(
+                colorScheme: colorScheme,
+                title: String(localized: "Camera"),
+                systemImage: "camera",
+                identifier: "chat.attachment-popup.camera",
+                action: onCamera
+            ) { EmptyView() }
+            ComposerPopupIconRow(
+                colorScheme: colorScheme,
+                title: String(localized: "Photos"),
+                systemImage: "photo",
+                identifier: "chat.attachment-popup.photos",
+                action: onPhotos
+            ) { EmptyView() }
+            ComposerPopupIconRow(
+                colorScheme: colorScheme,
+                title: String(localized: "Files"),
+                systemImage: "paperclip",
+                identifier: "chat.attachment-popup.files",
+                action: onFiles
+            ) { EmptyView() }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ComposerPopupSurface(colorScheme: colorScheme))
+    }
+}
+
+struct ComposerSchedulePopupCard: View {
+    let colorScheme: ColorScheme
+    let currentSchedule: PendingSchedule?
+    let onSelectPreset: (PendingSchedule) -> Void
+    let onPickTime: () -> Void
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(PendingSchedule.presets, id: \.self) { preset in
+                let selected = currentSchedule == preset
+                ComposerPopupIconRow(
+                    colorScheme: colorScheme,
+                    title: ScheduledSendChip.presetLabel(preset),
+                    systemImage: "clock",
+                    tint: selected ? .accentColor : nil,
+                    identifier: "chat.schedule-popup.preset.\(ScheduledSendChip.presetLabel(preset))",
+                    action: { onSelectPreset(preset) }
+                ) {
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tint)
+                    }
+                }
+            }
+            ComposerPopupIconRow(
+                colorScheme: colorScheme,
+                title: String(localized: "Pick a Time…"),
+                systemImage: "calendar",
+                identifier: "chat.schedule-popup.custom",
+                action: onPickTime
+            ) { EmptyView() }
+            if currentSchedule != nil {
+                Divider()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                ComposerPopupIconRow(
+                    colorScheme: colorScheme,
+                    title: String(localized: "Don't Schedule"),
+                    systemImage: "xmark",
+                    tint: .red,
+                    identifier: "chat.schedule-popup.clear",
+                    action: onClear
+                ) { EmptyView() }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ComposerPopupSurface(colorScheme: colorScheme))
+    }
+}
+
+struct ComposerSkillsPopupCard: View {
+    let colorScheme: ColorScheme
+    let interactor: ChatInteractor
+    let onSelectSkill: (String) -> Void
+
+    var body: some View {
+        let skills = SkillSuggestions.matches(interactor.skills, query: "", recent: interactor.recentSkills)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("Skills")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                if interactor.skillsLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+
+            if interactor.skillsLoading && skills.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 12)
+            } else if let error = interactor.skillsError, skills.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("Retry") {
+                        Task { await interactor.loadSkills() }
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            } else if skills.isEmpty {
+                Text("No matching skills")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 12)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    skillsList(skills)
+                    ScrollView {
+                        skillsList(skills)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ComposerPopupSurface(colorScheme: colorScheme))
+        .task {
+            if interactor.skills.isEmpty {
+                await interactor.loadSkills()
+            }
+        }
+    }
+
+    private func skillsList(_ skills: [SkillSummary]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(skills, id: \.name) { skill in
+                ComposerPopupIconRow(
+                    colorScheme: colorScheme,
+                    title: "$\(skill.name)",
+                    subtitle: skill.description,
+                    systemImage: "sparkles",
+                    identifier: "chat.skills-popup.\(skill.name)",
+                    action: { onSelectSkill(skill.name) }
+                ) { EmptyView() }
+            }
+        }
+    }
+}
+
+struct ComposerScratchlistPopupCard: View {
+    let colorScheme: ColorScheme
+    let interactor: ChatInteractor
+    let canParkDraft: Bool
+    let onSaveDraft: () -> Void
+    let onViewAll: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if canParkDraft {
+                ComposerPopupIconRow(
+                    colorScheme: colorScheme,
+                    title: String(localized: "Save draft"),
+                    systemImage: "tray.and.arrow.down",
+                    tint: .orange,
+                    identifier: "chat.scratchlist-popup.save",
+                    action: onSaveDraft
+                ) { EmptyView() }
+            }
+            ComposerPopupIconRow(
+                colorScheme: colorScheme,
+                title: String(localized: "View all"),
+                systemImage: "tray",
+                identifier: "chat.scratchlist-popup.view-all",
+                action: onViewAll
+            ) {
+                if interactor.scratchlistCount > 0 {
+                    Text(verbatim: interactor.scratchlistCount > 99 ? "99+" : "\(interactor.scratchlistCount)")
+                        .font(.caption.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.06),
+                            in: Capsule()
+                        )
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ComposerPopupSurface(colorScheme: colorScheme))
+    }
+}
+
+struct ComposerSessionControlsPopupCard: View {
+    let model: SessionConfigModel
+    let colorScheme: ColorScheme
+    var isBusy: Bool = false
+
+    private var isDark: Bool { colorScheme == .dark }
+    private var controlsDisabled: Bool { model.isApplying || isBusy }
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            contentStack
+            ScrollView {
+                contentStack
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ComposerPopupSurface(colorScheme: colorScheme))
+        .onAppear {
+            if model.showsQuota {
+                model.loadQuota()
+            }
+        }
+    }
+
+    private var contentStack: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !model.config.active {
+                statusBanner(String(localized: "Session is offline"))
+            } else if model.config.controlledByUser {
+                statusBanner(String(localized: "Controlled from terminal"))
+            }
+
+            if model.showsQuota {
+                quotaSection
+            }
+
+            if model.showsComposerPermissionMenu {
+                if model.showsQuota { Divider() }
+                permissionSection
+            }
+
+            if model.showsComposerModelMenu {
+                if model.showsQuota || model.showsComposerPermissionMenu { Divider() }
+                modelSection
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusBanner(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Text(verbatim: message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var quotaSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Subscription Quota")
+                    .font(.subheadline.weight(.semibold))
+                if case .loaded(let result) = model.quotaState, let plan = result.planType, !plan.isEmpty {
+                    Text(verbatim: plan.uppercased())
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+                Spacer(minLength: 4)
+                if case .loaded(let result) = model.quotaState, result.stale {
+                    Text("Cached")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                Button {
+                    model.loadQuota(force: true)
+                } label: {
+                    if model.quotaState == .loading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 24, height: 24)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(model.quotaState == .loading)
+                .accessibilityLabel("Refresh Quota")
+            }
+
+            switch model.quotaState {
+            case .idle, .loading:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading quota…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+            case .disabled:
+                Button {
+                    model.loadQuota(force: true)
+                } label: {
+                    Label("Query Subscription Quota", systemImage: "gauge.with.dots.needle.33percent")
+                        .font(.footnote.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+            case .failed(let error):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(verbatim: error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button("Retry") {
+                        model.loadQuota(force: true)
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+            case .loaded(let result):
+                if result.status != "success", let err = result.error {
+                    Text(verbatim: err)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if let groups = result.groups, !groups.isEmpty {
+                    ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                        if index > 0 {
+                            Divider()
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(verbatim: group.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            quotaWindowRow(label: "5H", window: group.fiveHour)
+                            if group.sevenDay != nil {
+                                quotaWindowRow(label: "7D", window: group.sevenDay)
+                            }
+                        }
+                    }
+                } else {
+                    quotaWindowRow(label: "5H", window: result.fiveHour)
+                    quotaWindowRow(label: "7D", window: result.sevenDay)
+                }
+            }
+        }
+    }
+
+    private func quotaWindowRow(label: String, window: UsageQueryWindow?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(verbatim: label)
+                    .font(.caption.monospaced().weight(.semibold))
+                Spacer(minLength: 4)
+                if let window {
+                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
+                        .font(.caption.monospacedDigit())
+                    if window.resetsAt != nil {
+                        Text(verbatim: "· ↻ \(window.formatResetCountdown())")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("—")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let window {
+                let used = window.usedPercentInt
+                ProgressView(value: Double(used), total: 100)
+                    .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
+            }
+        }
+    }
+
+    private var permissionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !model.config.permissionModes.isEmpty {
+                Text("Permission mode")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                let modes: [(option: PermissionModeOption, selectable: Bool)] = {
+                    var list = model.config.permissionModes.map { ($0, true) }
+                    if !model.config.permissionModes.contains(where: { $0.mode == model.permission }) {
+                        list.insert((PermissionModeOption(mode: model.permission), false), at: 0)
+                    }
+                    return list
+                }()
+
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)],
+                    spacing: 6
+                ) {
+                    ForEach(modes, id: \.option.mode) { item in
+                        let selected = model.permission == item.option.mode
+                        let toneColor = permissionToneColor(item.option.tone)
+                        Button {
+                            model.selectPermission(item.option.mode)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: item.option.tone == .danger || item.option.tone == .warning
+                                      ? "exclamationmark.shield"
+                                      : "checkmark.shield")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(selected ? toneColor : .secondary)
+                                Text(LocalizedStringKey(item.option.label))
+                                    .font(.footnote.weight(selected ? .semibold : .regular))
+                                    .foregroundStyle(selected ? .primary : .secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                Spacer(minLength: 2)
+                                if selected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(toneColor)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 36)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(selected ? toneColor.opacity(isDark ? 0.22 : 0.13)
+                                          : (isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.045)))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(selected ? toneColor.opacity(0.42) : .clear, lineWidth: 1)
+                            )
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!item.selectable)
+                    }
+                }
+                .disabled(controlsDisabled)
+            }
+
+            if model.showsCollaborationMode {
+                Text("Collaboration Mode")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+
+                HStack(spacing: 4) {
+                    ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
+                        let selected = model.collaborationMode == mode
+                        Button {
+                            model.selectCollaborationMode(mode)
+                        } label: {
+                            Text(LocalizedStringKey(mode.label))
+                                .font(.caption.weight(selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? .primary : .secondary)
+                                .frame(maxWidth: .infinity, minHeight: 30)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(selected
+                                              ? (isDark ? Color.white.opacity(0.18) : Color.white)
+                                              : Color.clear)
+                                        .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
+                )
+                .disabled(controlsDisabled || !model.config.canChangeCollaborationMode)
+            }
+        }
+    }
+
+    private func permissionToneColor(_ tone: PermissionModeTone) -> Color {
+        switch tone {
+        case .danger: return .red
+        case .warning: return .orange
+        case .neutral, .info: return .accentColor
+        }
+    }
+
+    private var modelSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.showsEffort {
+                Text("Effort")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 4) {
+                    ForEach(model.effortOptions, id: \.value) { option in
+                        let selected = model.currentEffort == option.value
+                        let allowed = model.canSelectEffort(option.value)
+                        Button {
+                            model.selectEffort(option.value)
+                        } label: {
+                            Text(LocalizedStringKey(option.label))
+                                .font(.caption.weight(selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? .primary : (allowed ? .secondary : .tertiary))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .frame(maxWidth: .infinity, minHeight: 30)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(selected
+                                              ? (isDark ? Color.white.opacity(0.18) : Color.white)
+                                              : Color.clear)
+                                        .shadow(color: selected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
+                                )
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!allowed)
+                    }
+                }
+                .padding(3)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.05))
+                )
+                .disabled(controlsDisabled)
+            }
+
+            if model.showsModel || model.canDiscoverModels {
+                Text("Model")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, model.showsEffort ? 2 : 0)
+
+                if model.config.modelOptionsLoading {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading models…")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if model.modelLoadFailed {
+                    HStack(spacing: 8) {
+                        Text("Failed to load models")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Retry") {
+                            model.loadModels()
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                } else if let options = model.config.modelOptions, !options.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let current = model.unlistedModelOption {
+                            modelOptionRow(label: current.label, selected: true, selectable: false) {}
+                        }
+                        ForEach(options, id: \.value) { option in
+                            let selected = model.currentModel == option.value
+                            modelOptionRow(label: option.label, selected: selected, selectable: true) {
+                                model.selectModel(option.value)
+                            }
+                        }
+                    }
+                    .disabled(controlsDisabled)
+                } else if model.canDiscoverModels {
+                    Button {
+                        model.loadModels()
+                    } label: {
+                        Label("Load Models", systemImage: "arrow.clockwise")
+                            .font(.footnote.weight(.medium))
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Text("Model list unavailable")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func modelOptionRow(
+        label: String,
+        selected: Bool,
+        selectable: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(verbatim: label)
+                    .font(.subheadline.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? .primary : .secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tint)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(minHeight: 36)
+            .background(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(selected
+                          ? Color.accentColor.opacity(isDark ? 0.22 : 0.12)
+                          : (isDark ? Color.white.opacity(0.05) : Color.black.opacity(0.035)))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!selectable)
     }
 }
 #endif
