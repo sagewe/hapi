@@ -615,62 +615,23 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("chat.add-attachment")
         .help("Attach files (click) · Hold for Photo Library")
         #else
-        let hasAttachments = !interactor.attachments.items.isEmpty
-        let scheduleActive = interactor.pendingSchedule != nil
         Menu {
-            Section {
+            Button {
+                photosPickerOpen = true
+            } label: {
+                Label("Photo library", systemImage: "photo.on.rectangle")
+            }
+            if CameraCaptureView.isAvailable {
                 Button {
-                    photosPickerOpen = true
+                    cameraOpen = true
                 } label: {
-                    Label("Photo library", systemImage: "photo.on.rectangle")
-                }
-                if CameraCaptureView.isAvailable {
-                    Button {
-                        cameraOpen = true
-                    } label: {
-                        Label("Camera", systemImage: "camera")
-                    }
-                }
-                Button {
-                    filePickerOpen = true
-                } label: {
-                    Label("Files", systemImage: "folder")
+                    Label("Camera", systemImage: "camera")
                 }
             }
-            Section {
-                if !scratchlistMode {
-                    Button {
-                        insertTrigger("$")
-                    } label: {
-                        Label("Skills", systemImage: "sparkles")
-                    }
-                    Menu {
-                        ForEach(PendingSchedule.presets, id: \.self) { preset in
-                            Button(ScheduledSendChip.presetLabel(preset)) {
-                                interactor.setPendingSchedule(preset)
-                            }
-                        }
-                        Button("Pick a Time…", systemImage: "calendar") {
-                            schedulePickerOpen = true
-                        }
-                        if scheduleActive {
-                            Button("Don't Schedule", systemImage: "xmark") {
-                                interactor.setPendingSchedule(nil)
-                            }
-                        }
-                    } label: {
-                        Label("Schedule send", systemImage: scheduleActive ? "clock.fill" : "clock")
-                    }
-                    .disabled(hasAttachments || interactor.scratchlistBusy)
-                }
-                if interactor.scratchlist != nil {
-                    Button {
-                        interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
-                    } label: {
-                        Label("Scratchlist", systemImage: scratchlistMode ? "tray.fill" : "tray")
-                    }
-                    .disabled(interactor.isSending)
-                }
+            Button {
+                filePickerOpen = true
+            } label: {
+                Label("Files", systemImage: "folder")
             }
         } label: {
             toolGlyph("plus")
@@ -1095,6 +1056,7 @@ struct ChatComposerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Skills")
+            .accessibilityIdentifier("chat.skills")
             .help("Insert skill ($)")
         }
         if interactor.scratchlist != nil { scratchlistButton }
@@ -1112,10 +1074,23 @@ struct ChatComposerView: View {
         }
         #else
         addAttachmentButton
-        if interactor.scratchlist != nil, scratchlistMode || interactor.scratchlistCount > 0 {
+        if !scratchlistMode {
+            Button {
+                insertTrigger("$")
+            } label: {
+                toolGlyph("sparkles")
+            }
+            .buttonStyle(.plain)
+            .disabled(interactor.scratchlistBusy)
+            .accessibilityLabel("Skills")
+            .accessibilityIdentifier("chat.skills")
+            .help("Insert skill ($)")
+        }
+        if interactor.scratchlist != nil {
             scratchlistButton
         }
         if !scratchlistMode {
+            scheduleButton(hasAttachments: hasAttachments)
             if holdDictation?.isRefiningEdit == true {
                 HStack(spacing: 5) {
                     ProgressView()

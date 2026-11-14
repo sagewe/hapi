@@ -363,11 +363,11 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertFalse(collapsedIDs.contains("chat.composer-mic"), "Collapsed composer must not duplicate mic button")
         XCTAssertEqual(collapsedMenuButtons.count, 1, "Collapsed composer must only show the + attachment menu button")
 
-        // 2. Focused empty state: shows `+` attachment menu + unified `gauge.with.needle` controls menu (2 menu buttons, NOT 4!),
-        //    and `chat.composer-voice` primary button
+        // 2. Focused empty state: shows `+` attachment menu, `sparkles` skills icon, `clock` schedule-send menu,
+        //    unified `gauge.with.needle` controls menu (3 menu buttons), and `chat.composer-voice` primary button
         harness.interactor.focusComposer()
         try await waitUntil {
-            visibleMenuButtons(in: host.view).count == 2
+            visibleMenuButtons(in: host.view).count == 3
         }
         try maybeCapture("2-expanded-empty")
 
@@ -377,15 +377,16 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertTrue(expandedEmptyIDs.contains("chat.composer-voice"), "Expanded empty composer must show primary voice button")
         XCTAssertEqual(
             expandedEmptyMenus.count,
-            2,
-            "Expanded composer must collapse Model + Permission + Quota into 1 unified controls menu alongside + attachment menu (got \(expandedEmptyMenus.count))"
+            3,
+            "Expanded composer must show + attachment, schedule send, and unified controls menus (got \(expandedEmptyMenus.count))"
         )
 
-        // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send`, plus the 2 menus (`+` and `gauge.with.needle`)!
+        // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send`,
+        //    plus the 3 menus (`+`, `clock`, and `gauge.with.needle`)!
         harness.interactor.setComposerText("检查家庭网关")
         try await waitUntil {
             let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
-            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 2
+            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 3
         }
         try maybeCapture("3-expanded-draft")
 
@@ -394,7 +395,7 @@ final class SessionConfigTests: XCTestCase {
         let expandedDraftMenus = visibleMenuButtons(in: host.view)
         XCTAssertTrue(expandedDraftIDs.contains("chat.composer-mic"), "Expanded composer with text must retain voice mic button")
         XCTAssertFalse(expandedDraftIDs.contains("chat.composer-voice"), "Primary voice circle must morph into Send circle when draft has text")
-        XCTAssertEqual(expandedDraftMenus.count, 2, "Expanded composer with text must keep + and unified speedometer controls menu")
+        XCTAssertEqual(expandedDraftMenus.count, 3, "Expanded composer with text must keep +, schedule send, and unified speedometer controls menu")
     }
     #endif
 }
