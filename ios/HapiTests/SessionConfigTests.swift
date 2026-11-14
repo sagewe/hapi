@@ -350,24 +350,25 @@ final class SessionConfigTests: XCTestCase {
 
         try await waitUntil {
             let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
-            return ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 1
+            return ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 0
         }
         try maybeCapture("1-collapsed")
 
         // 1. Collapsed empty capsule: shows primary voice TouchView (`chat.composer-voice`),
-        //    only 1 menu button (`+` attachment), and NO `chat.composer-mic`
+        //    0 UIMenu buttons (+ uses instant custom popup card), and NO `chat.composer-mic`
         let collapsedViews = collectViews(in: host.view).filter(isEffectivelyVisible)
         let collapsedIDs = Set(collapsedViews.compactMap(\.accessibilityIdentifier))
         let collapsedMenuButtons = visibleMenuButtons(in: host.view)
         XCTAssertTrue(collapsedIDs.contains("chat.composer-voice"), "Collapsed empty composer must show primary voice button")
         XCTAssertFalse(collapsedIDs.contains("chat.composer-mic"), "Collapsed composer must not duplicate mic button")
-        XCTAssertEqual(collapsedMenuButtons.count, 1, "Collapsed composer must only show the + attachment menu button")
+        XCTAssertEqual(collapsedMenuButtons.count, 0, "Collapsed composer must not use a slow UIMenu on the + attachment button")
 
-        // 2. Focused empty state: shows `+` attachment menu, `sparkles` skills icon, `clock` schedule-send menu,
-        //    unified `gauge.with.needle` controls menu (3 menu buttons), and `chat.composer-voice` primary button
+        // 2. Focused empty state: shows `+` instant attachment button, `sparkles` skills icon,
+        //    `clock` schedule-send menu + unified `gauge.with.needle` controls menu (2 menu buttons),
+        //    and `chat.composer-voice` primary button
         harness.interactor.focusComposer()
         try await waitUntil {
-            visibleMenuButtons(in: host.view).count == 3
+            visibleMenuButtons(in: host.view).count == 2
         }
         try maybeCapture("2-expanded-empty")
 
@@ -377,16 +378,16 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertTrue(expandedEmptyIDs.contains("chat.composer-voice"), "Expanded empty composer must show primary voice button")
         XCTAssertEqual(
             expandedEmptyMenus.count,
-            3,
-            "Expanded composer must show + attachment, schedule send, and unified controls menus (got \(expandedEmptyMenus.count))"
+            2,
+            "Expanded composer must show schedule send and unified controls menus (got \(expandedEmptyMenus.count))"
         )
 
         // 3. Draft has text: retains `chat.composer-mic` right next to `↑ Send`,
-        //    plus the 3 menus (`+`, `clock`, and `gauge.with.needle`)!
+        //    plus the 2 menus (`clock` and `gauge.with.needle`)!
         harness.interactor.setComposerText("检查家庭网关")
         try await waitUntil {
             let ids = Set(collectViews(in: host.view).filter(isEffectivelyVisible).compactMap(\.accessibilityIdentifier))
-            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 3
+            return ids.contains("chat.composer-mic") && !ids.contains("chat.composer-voice") && visibleMenuButtons(in: host.view).count == 2
         }
         try maybeCapture("3-expanded-draft")
 
@@ -395,7 +396,24 @@ final class SessionConfigTests: XCTestCase {
         let expandedDraftMenus = visibleMenuButtons(in: host.view)
         XCTAssertTrue(expandedDraftIDs.contains("chat.composer-mic"), "Expanded composer with text must retain voice mic button")
         XCTAssertFalse(expandedDraftIDs.contains("chat.composer-voice"), "Primary voice circle must morph into Send circle when draft has text")
-        XCTAssertEqual(expandedDraftMenus.count, 3, "Expanded composer with text must keep +, schedule send, and unified speedometer controls menu")
+        XCTAssertEqual(expandedDraftMenus.count, 2, "Expanded composer with text must keep schedule send and unified speedometer controls menu")
+
+        if ProcessInfo.processInfo.environment["HAPI_COMPOSER_CAPTURE"] != nil {
+            let popupHost = UIHostingController(rootView: ComposerAttachmentPopupCard(
+                colorScheme: .light,
+                onCamera: {},
+                onPhotos: {},
+                onFiles: {}
+            ))
+            popupHost.safeAreaRegions = []
+            popupHost.view.backgroundColor = .clear
+            let size = popupHost.sizeThatFits(in: CGSize(width: 232, height: 400))
+            popupHost.view.frame = CGRect(x: 12, y: window.bounds.height - 8 - ceil(size.height), width: 232, height: ceil(size.height))
+            window.addSubview(popupHost.view)
+            window.layoutIfNeeded()
+            try maybeCapture("4-attachment-popup")
+            popupHost.view.removeFromSuperview()
+        }
     }
     #endif
 }

@@ -311,6 +311,27 @@ struct ChatComposerView: View {
                 }
             }
             .modifier(ComposerCardSurface(fill: composerSurfaceColor, isFocused: textFocused, isCollapsed: collapsed))
+            #if !targetEnvironment(macCatalyst)
+            .background {
+                ComposerAttachmentPopupHost(
+                    isPresented: $attachDialogOpen,
+                    colorScheme: colorScheme,
+                    onCamera: {
+                        if CameraCaptureView.isAvailable {
+                            cameraOpen = true
+                        } else {
+                            interactor.postNotice(String(localized: "Camera is unavailable"))
+                        }
+                    },
+                    onPhotos: {
+                        photosPickerOpen = true
+                    },
+                    onFiles: {
+                        filePickerOpen = true
+                    }
+                )
+            }
+            #endif
             .animation(.spring(response: 0.28, dampingFraction: 0.84), value: collapsed)
         }
         .hapiReadingColumn()
@@ -377,19 +398,6 @@ struct ChatComposerView: View {
             .opacity(0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-        }
-        .confirmationDialog("Attach", isPresented: $attachDialogOpen, titleVisibility: .visible) {
-            Button("Photo library") {
-                photosPickerOpen = true
-            }
-            if CameraCaptureView.isAvailable {
-                Button("Camera") {
-                    cameraOpen = true
-                }
-            }
-            Button("Files") {
-                filePickerOpen = true
-            }
         }
         .sheet(isPresented: $schedulePickerOpen) {
             ScheduleTimeSheet { date in
@@ -615,28 +623,12 @@ struct ChatComposerView: View {
         .accessibilityIdentifier("chat.add-attachment")
         .help("Attach files (click) · Hold for Photo Library")
         #else
-        Menu {
-            Button {
-                photosPickerOpen = true
-            } label: {
-                Label("Photo library", systemImage: "photo.on.rectangle")
-            }
-            if CameraCaptureView.isAvailable {
-                Button {
-                    cameraOpen = true
-                } label: {
-                    Label("Camera", systemImage: "camera")
-                }
-            }
-            Button {
-                filePickerOpen = true
-            } label: {
-                Label("Files", systemImage: "folder")
-            }
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            attachDialogOpen.toggle()
         } label: {
             toolGlyph("plus")
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
         .disabled(preparingAttachment || interactor.scratchlistBusy)
         .accessibilityLabel("Add attachment")
@@ -854,8 +846,8 @@ struct ChatComposerView: View {
                     onPasteItems: ingest,
                     holdToDictateEnabled: !scratchlistMode && (holdDictation?.isAvailable == true),
                     hitTestOutsets: collapsed
-                        ? UIEdgeInsets(top: 12, left: 4, bottom: 12, right: 4)
-                        : UIEdgeInsets(top: 14, left: 16, bottom: 6, right: 16),
+                        ? UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+                        : UIEdgeInsets(top: 14, left: 16, bottom: 0, right: 16),
                     onHoldBegan: { location, windowSize in
                         if let holdDictation {
                             handleHoldBegan(location, windowSize: windowSize, controller: holdDictation)
@@ -2691,3 +2683,409 @@ private struct PickedMovie: Transferable {
         }
     }
 }
+
+#if !targetEnvironment(macCatalyst)
+// MARK: - Instant Attachment Popup Card
+
+/// Anchors an instant-response floating attachment card directly in the key
+/// window above the composer card's bottom-leading corner, avoiding `UIMenu`
+/// context-menu snapshot delays and leaving the software keyboard focused.
+private struct ComposerAttachmentPopupHost: UIViewRepresentable {
+    @Binding var isPresented: Bool
+    let colorScheme: ColorScheme
+    let onCamera: () -> Void
+    let onPhotos: () -> Void
+    let onFiles: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeUIView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        let coordinator = context.coordinator
+        view.onWindowChange = { [weak coordinator] window in
+            if window == nil {
+                coordinator?.dismissImmediate(resetBinding: true)
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ anchorView: AnchorView, context: Context) {
+        context.coordinator.update(
+            isPresented: $isPresented,
+            presented: isPresented,
+            colorScheme: colorScheme,
+            anchorView: anchorView,
+            onCamera: onCamera,
+            onPhotos: onPhotos,
+            onFiles: onFiles
+        )
+    }
+
+    static func dismantleUIView(_ uiView: AnchorView, coordinator: Coordinator) {
+        coordinator.dismissImmediate(resetBinding: false)
+    }
+
+    final class AnchorView: UIView {
+        var onWindowChange: ((UIWindow?) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindowChange?(window)
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        private var isPresentedBinding: Binding<Bool>
+        private var overlay: PopupOverlayView?
+        private var currentlyPresented = false
+        private var onCamera: () -> Void = {}
+        private var onPhotos: () -> Void = {}
+        private var onFiles: () -> Void = {}
+
+        init(isPresented: Binding<Bool>) {
+            self.isPresentedBinding = isPresented
+        }
+
+        func update(
+            isPresented: Binding<Bool>,
+            presented: Bool,
+            colorScheme: ColorScheme,
+            anchorView: AnchorView,
+            onCamera: @escaping () -> Void,
+            onPhotos: @escaping () -> Void,
+            onFiles: @escaping () -> Void
+        ) {
+            self.isPresentedBinding = isPresented
+            self.onCamera = onCamera
+            self.onPhotos = onPhotos
+            self.onFiles = onFiles
+
+            if presented {
+                guard let window = anchorView.window else { return }
+                if let overlay {
+                    if overlay.superview !== window {
+                        overlay.removeFromSuperview()
+                        window.addSubview(overlay)
+                    }
+                    overlay.update(
+                        anchorView: anchorView,
+                        colorScheme: colorScheme,
+                        onCamera: { [weak self] in self?.runAction { self?.onCamera() } },
+                        onPhotos: { [weak self] in self?.runAction { self?.onPhotos() } },
+                        onFiles: { [weak self] in self?.runAction { self?.onFiles() } },
+                        onDismiss: { [weak self] in self?.dismissFromBackdrop() }
+                    )
+                    overlay.setNeedsLayout()
+                    if !currentlyPresented {
+                        currentlyPresented = true
+                        overlay.animateIn()
+                    }
+                } else {
+                    let overlay = PopupOverlayView(
+                        frame: window.bounds,
+                        anchorView: anchorView,
+                        colorScheme: colorScheme,
+                        onCamera: { [weak self] in self?.runAction { self?.onCamera() } },
+                        onPhotos: { [weak self] in self?.runAction { self?.onPhotos() } },
+                        onFiles: { [weak self] in self?.runAction { self?.onFiles() } },
+                        onDismiss: { [weak self] in self?.dismissFromBackdrop() }
+                    )
+                    overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    window.addSubview(overlay)
+                    overlay.layoutIfNeeded()
+                    self.overlay = overlay
+                    self.currentlyPresented = true
+                    overlay.animateIn()
+                }
+            } else if currentlyPresented || overlay != nil {
+                currentlyPresented = false
+                dismissAnimated()
+            }
+        }
+
+        private func runAction(_ action: () -> Void) {
+            dismissImmediate(resetBinding: true)
+            action()
+        }
+
+        private func dismissFromBackdrop() {
+            guard isPresentedBinding.wrappedValue else {
+                dismissAnimated()
+                return
+            }
+            isPresentedBinding.wrappedValue = false
+        }
+
+        private func dismissAnimated() {
+            guard let overlay else { return }
+            self.overlay = nil
+            overlay.animateOut { [weak overlay] in
+                overlay?.removeFromSuperview()
+            }
+        }
+
+        func dismissImmediate(resetBinding: Bool) {
+            currentlyPresented = false
+            if let overlay {
+                self.overlay = nil
+                overlay.layer.removeAllAnimations()
+                overlay.cardContainer.layer.removeAllAnimations()
+                overlay.removeFromSuperview()
+            }
+            if resetBinding, isPresentedBinding.wrappedValue {
+                isPresentedBinding.wrappedValue = false
+            }
+        }
+    }
+
+    @MainActor
+    final class PopupOverlayView: UIView {
+        private weak var anchorView: UIView?
+        private var onDismiss: () -> Void
+        private let backdropView = UIView()
+        let cardContainer = UIView()
+        private let cardHostingController: UIHostingController<ComposerAttachmentPopupCard>
+
+        init(
+            frame: CGRect,
+            anchorView: UIView,
+            colorScheme: ColorScheme,
+            onCamera: @escaping () -> Void,
+            onPhotos: @escaping () -> Void,
+            onFiles: @escaping () -> Void,
+            onDismiss: @escaping () -> Void
+        ) {
+            self.anchorView = anchorView
+            self.onDismiss = onDismiss
+            let card = ComposerAttachmentPopupCard(
+                colorScheme: colorScheme,
+                onCamera: onCamera,
+                onPhotos: onPhotos,
+                onFiles: onFiles
+            )
+            self.cardHostingController = UIHostingController(rootView: card)
+            super.init(frame: frame)
+
+            backgroundColor = .clear
+
+            backdropView.frame = bounds
+            backdropView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            backdropView.backgroundColor = .clear
+            backdropView.accessibilityIdentifier = "chat.attachment-popup.backdrop"
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleBackdropTap))
+            backdropView.addGestureRecognizer(tap)
+            addSubview(backdropView)
+
+            cardHostingController.safeAreaRegions = []
+            cardHostingController.view.backgroundColor = .clear
+            cardContainer.backgroundColor = .clear
+            cardContainer.accessibilityIdentifier = "chat.attachment-popup"
+            cardContainer.layer.shadowColor = UIColor.black.cgColor
+            cardContainer.layer.shadowOffset = CGSize(width: 0, height: 6)
+            cardContainer.layer.shadowRadius = 20
+            cardContainer.layer.shadowOpacity = colorScheme == .dark ? 0.34 : 0.12
+            cardContainer.addSubview(cardHostingController.view)
+            addSubview(cardContainer)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        func update(
+            anchorView: UIView,
+            colorScheme: ColorScheme,
+            onCamera: @escaping () -> Void,
+            onPhotos: @escaping () -> Void,
+            onFiles: @escaping () -> Void,
+            onDismiss: @escaping () -> Void
+        ) {
+            self.anchorView = anchorView
+            self.onDismiss = onDismiss
+            cardHostingController.rootView = ComposerAttachmentPopupCard(
+                colorScheme: colorScheme,
+                onCamera: onCamera,
+                onPhotos: onPhotos,
+                onFiles: onFiles
+            )
+            cardContainer.layer.shadowOpacity = colorScheme == .dark ? 0.34 : 0.12
+            positionCard()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            backdropView.frame = bounds
+            positionCard()
+        }
+
+        private func positionCard() {
+            guard let anchorView, anchorView.window === self.window else { return }
+            let composerFrame = anchorView.convert(anchorView.bounds, to: self)
+            let maxCardWidth = max(180, bounds.width - 24)
+            let cardWidth = min(232, maxCardWidth)
+            let targetSize = cardHostingController.sizeThatFits(in: CGSize(width: cardWidth, height: 400))
+            let cardSize = CGSize(width: cardWidth, height: ceil(targetSize.height))
+            let minX = min(max(12, composerFrame.minX), max(12, bounds.width - cardSize.width - 12))
+            let minY = max(safeAreaInsets.top + 8, composerFrame.maxY - cardSize.height)
+            let targetCenter = CGPoint(x: minX + cardSize.width / 2, y: minY + cardSize.height / 2)
+            if cardContainer.bounds.size != cardSize {
+                cardContainer.bounds = CGRect(origin: .zero, size: cardSize)
+                cardHostingController.view.frame = cardContainer.bounds
+                cardContainer.layer.shadowPath = UIBezierPath(
+                    roundedRect: cardContainer.bounds,
+                    cornerRadius: 28
+                ).cgPath
+            }
+            if cardContainer.center != targetCenter {
+                cardContainer.center = targetCenter
+            }
+        }
+
+        private func bottomLeadingScaleTransform(_ scale: CGFloat) -> CGAffineTransform {
+            let size = cardContainer.bounds.size
+            let dx = size.width * 0.36
+            let dy = size.height * 0.42
+            return CGAffineTransform(translationX: -dx, y: dy)
+                .scaledBy(x: scale, y: scale)
+                .translatedBy(x: dx, y: -dy)
+        }
+
+        func animateIn() {
+            isUserInteractionEnabled = true
+            positionCard()
+            if UIAccessibility.isReduceMotionEnabled {
+                cardContainer.transform = .identity
+                cardContainer.alpha = 0
+                UIView.animate(withDuration: 0.12, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
+                    self.cardContainer.alpha = 1
+                }
+                return
+            }
+            cardContainer.alpha = 0
+            cardContainer.transform = bottomLeadingScaleTransform(0.88)
+            UIView.animate(
+                withDuration: 0.15,
+                delay: 0,
+                usingSpringWithDamping: 0.88,
+                initialSpringVelocity: 0.6,
+                options: [.allowUserInteraction, .beginFromCurrentState]
+            ) {
+                self.cardContainer.alpha = 1
+                self.cardContainer.transform = .identity
+            }
+        }
+
+        func animateOut(completion: @escaping () -> Void) {
+            isUserInteractionEnabled = false
+            UIView.animate(
+                withDuration: 0.10,
+                delay: 0,
+                options: [.beginFromCurrentState, .curveEaseOut]
+            ) {
+                self.cardContainer.alpha = 0
+                if !UIAccessibility.isReduceMotionEnabled {
+                    self.cardContainer.transform = self.bottomLeadingScaleTransform(0.94)
+                }
+            } completion: { _ in
+                completion()
+            }
+        }
+
+        @objc private func handleBackdropTap() {
+            onDismiss()
+        }
+    }
+}
+
+struct ComposerAttachmentPopupCard: View {
+    let colorScheme: ColorScheme
+    let onCamera: () -> Void
+    let onPhotos: () -> Void
+    let onFiles: () -> Void
+
+    private var isDark: Bool { colorScheme == .dark }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
+        let specularRim = LinearGradient(
+            colors: [
+                Color.white.opacity(isDark ? 0.24 : 0.82),
+                Color.white.opacity(isDark ? 0.06 : 0.26),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        let content = VStack(alignment: .leading, spacing: 4) {
+            popupRow(title: String(localized: "Camera"), systemImage: "camera", identifier: "chat.attachment-popup.camera", action: onCamera)
+            popupRow(title: String(localized: "Photos"), systemImage: "photo", identifier: "chat.attachment-popup.photos", action: onPhotos)
+            popupRow(title: String(localized: "Files"), systemImage: "paperclip", identifier: "chat.attachment-popup.files", action: onFiles)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Group {
+            if #available(iOS 26.0, *) {
+                content
+                    .background(shape.fill(isDark ? Color(white: 0.16).opacity(0.76) : Color.white.opacity(0.78)))
+                    .clipShape(shape)
+                    .glassEffect(.regular, in: shape)
+                    .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
+            } else {
+                content
+                    .background {
+                        shape.fill(.ultraThinMaterial)
+                            .overlay(shape.fill(isDark ? Color(white: 0.15).opacity(0.70) : Color.white.opacity(0.78)))
+                    }
+                    .clipShape(shape)
+                    .overlay(shape.strokeBorder(specularRim, lineWidth: 0.75))
+            }
+        }
+        .preferredColorScheme(colorScheme)
+    }
+
+    private func popupRow(title: String, systemImage: String, identifier: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Circle()
+                    .fill(isDark ? Color.white.opacity(0.11) : Color.black.opacity(0.055))
+                    .frame(width: 38, height: 38)
+                    .overlay {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 16.5, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                Text(verbatim: title)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(AttachmentPopupRowButtonStyle(isDark: isDark))
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct AttachmentPopupRowButtonStyle: ButtonStyle {
+    let isDark: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(configuration.isPressed
+                          ? (isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06))
+                          : Color.clear)
+            )
+            .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+    }
+}
+#endif
