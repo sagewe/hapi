@@ -43,6 +43,7 @@ public actor HubConnectionRouter {
         mode = value
         defaults?.set(value.rawValue, forKey: key + ".mode")
         flight?.cancel(); flight = nil
+        lastDiscovery = .distantPast
         lastProbe = .distantPast; failuresUntil = .distantPast; initialized = false; successes = 0
         if value == .publicOnly { selected = canonicalURL }
     }

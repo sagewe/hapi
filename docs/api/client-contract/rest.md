@@ -25,6 +25,26 @@ Source: `hub/src/web/server.ts`.
 |---|---|---|
 | `GET /health` (no auth) | — | `{status: 'ok', protocolVersion: number, capabilities: {workGraph?, titleSuggestion?}}` — additive capabilities, ignore unknown keys |
 
+### Connection discovery
+
+`GET /health` additionally returns a public `hubId`, persisted in the private Hub
+data directory as `connection-id`; it is unrelated to authentication credentials.
+`GET /api/connection` requires the normal client JWT and returns
+`{hubId, privateUrl: string | null}` with `Cache-Control: no-store`. The optional
+private HTTPS origin comes from `HAPI_DIRECT_URL`; credentials, paths, query
+parameters and non-HTTPS values are rejected. The public health endpoint does
+not advertise the private address.
+
+Apple clients retain the paired origin as their credential/cache/draft identity.
+Before sending credentials to the discovered private origin, they probe its
+unauthenticated health endpoint and require the same `hubId` and valid TLS.
+Reads and auth exchanges may retry on another verified endpoint after a network
+failure; ordinary mutations are never automatically replayed by routing.
+Resumable uploads recover via their existing acknowledged offsets. SSE reconnects
+retain their cursors. Existing voice/terminal sockets stay on their selected
+origin until closed/reconnected; terminal commands are never replayed on a route
+change. Preview pages continue to use their existing published preview URLs.
+
 ### Sessions — list & detail
 
 Source: `hub/src/web/routes/sessions.ts`; shapes `SessionSchema` (`shared/src/schemas.ts`), `SessionSummary` (`shared/src/sessionSummary.ts`).

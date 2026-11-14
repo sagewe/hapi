@@ -52,6 +52,23 @@ normalizer. It does not embed attachment binaries. The existing large-export
 confirmation and hard size limit remain in force; confirmation retains the
 chosen format. Files receives a `.md` document with Markdown content type.
 
+## Automatic Tailscale access
+
+The Hub advertises its private HTTPS origin through authenticated
+`GET /api/connection` when configured with `HAPI_DIRECT_URL`. Paired clients
+discover and cache it automatically, validate the same public Hub identity over
+TLS, and prefer it without changing their paired Hub, Keychain, drafts or caches.
+Settings → Connection offers Automatic, Tailscale only and Public relay only.
+Tailscale must already be reachable via the device's existing Tailscale/Surge
+connection; HAPI does not start a VPN or embed another Tailscale identity.
+
+Automatic mode probes private connectivity with a one-second request timeout,
+falls back on network failure, and requires two spaced successful probes before
+upgrading an established public route. Foreground event streams recheck every
+15 seconds; private probes are spaced 30 seconds. Background suspension stops
+those stream checks. Existing sockets are not transferred mid-operation.
+Mutation failures keep their normal uncertainty/reconciliation semantics.
+
 ## Resumable message attachments
 
 Prepared files of at least 512 KiB use 512 KiB binary chunks to the Hub. After a
