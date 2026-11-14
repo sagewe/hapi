@@ -70,7 +70,7 @@ struct SettingsView: View {
     @State private var languagePrefs: LanguagePrefs
     @State private var confirmSignOut = false
     @State private var connectionMode: HubConnectionMode = .automatic
-    @State private var usingPrivateConnection = false
+    @State private var usingPrivateConnection: Bool?
     @Environment(AppModel.self) private var appModel
     @Environment(ThemePrefs.self) private var themePrefs
     @Environment(\.dismiss) private var dismiss
@@ -114,8 +114,8 @@ struct SettingsView: View {
                 PushCoordinator.shared.refreshStatus()
                 while !Task.isCancelled {
                     if let connection = session.api.connection {
-                        let status = await connection.status()
-                        connectionMode = status.mode; usingPrivateConnection = status.isPrivate
+                        let status = await connection.diagnostics()
+                        connectionMode = status.mode; usingPrivateConnection = status.activeEventIsPrivate
                     }
                     do { try await Task.sleep(for: .seconds(2)) } catch { break }
                 }
@@ -136,9 +136,12 @@ struct SettingsView: View {
                 Text("Tailscale only").tag(HubConnectionMode.privateOnly)
                 Text("Public relay only").tag(HubConnectionMode.publicOnly)
             }
-            LabeledContent("Current connection", value: connectionMode == .privateOnly && !usingPrivateConnection
-                           ? String(localized: "Unavailable")
-                           : usingPrivateConnection ? "Tailscale" : String(localized: "Public relay"))
+            LabeledContent("Current connection", value: usingPrivateConnection.map {
+                $0 ? "Tailscale" : String(localized: "Public relay")
+            } ?? String(localized: "Disconnected"))
+            if let router = session.api.connection {
+                NavigationLink("Connection details") { ConnectionDiagnosticsView(router: router) }
+            }
         }
     }
 

@@ -23,6 +23,15 @@ public actor HubConnectionRouter {
     private var successes = 0
     private var initialized = false
     private var flight: Task<URL, Error>?
+    private var diagnosticsFlight: Task<Void, Never>?
+    private var lastDiagnostics = Date.distantPast
+    private var privateMeasurement: HubEndpointMeasurement?
+    private var publicMeasurement: HubEndpointMeasurement?
+    private var reason: HubConnectionDiagnostics.Reason = .starting {
+        didSet { if reason != oldValue { reasonUpdatedAt = now() } }
+    }
+    private var reasonUpdatedAt: Date?
+    private var activeGlobalStream: (id: UUID, origin: URL)?
 
     public init(canonicalURL: URL, performer: any HTTPPerforming = URLSessionHTTPPerformer.shared,
                 persistent: Bool = true, now: @escaping @Sendable () -> Date = { Date() }) {
@@ -38,6 +47,60 @@ public actor HubConnectionRouter {
     }
 
     public func status() -> (mode: HubConnectionMode, isPrivate: Bool) { (mode, selected != canonicalURL) }
+
+    public func diagnostics() -> HubConnectionDiagnostics {
+        HubConnectionDiagnostics(mode: mode, isPrivate: selected != canonicalURL, reason: reason,
+                                 privateMeasurement: privateMeasurement, publicMeasurement: publicMeasurement,
+                                 activeEventIsPrivate: activeGlobalStream.map { $0.origin != canonicalURL }, reasonUpdatedAt: reasonUpdatedAt)
+    }
+
+    func eventStreamOpened(id: UUID, origin: URL) { activeGlobalStream = (id, origin) }
+    func eventStreamClosed(id: UUID) { if activeGlobalStream?.id == id { activeGlobalStream = nil } }
+
+    /// Read-only diagnostics never count toward routing hysteresis or force a
+    /// route change. Callers own the foreground-only refresh loop.
+    public func refreshDiagnostics(force: Bool = false) async {
+        if let diagnosticsFlight { await diagnosticsFlight.value; return }
+        guard force || now().timeIntervalSince(lastDiagnostics) >= 15 else { return }
+        lastDiagnostics = now()
+        let task = Task {
+            if self.mode != .privateOnly { _ = await self.probe(self.canonicalURL, timeout: 3) }
+            if self.mode != .publicOnly, let direct = self.advertisement?.privateUrl, Self.validPrivateOrigin(direct) {
+                _ = await self.probe(direct, timeout: 3)
+            }
+        }
+        diagnosticsFlight = task
+        await task.value
+        if diagnosticsFlight == task { diagnosticsFlight = nil }
+    }
+
+    private func probe(_ origin: URL, timeout: TimeInterval) async -> Bool {
+        var request = URLRequest(url: origin.appendingPathComponent("health"))
+        request.timeoutInterval = timeout
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpShouldHandleCookies = false
+        let started = ProcessInfo.processInfo.systemUptime
+        var outcome: HubEndpointMeasurement.Outcome = .unavailable
+        var reused: Bool?
+        do {
+            let data: Data; let response: HTTPURLResponse
+            if let performer = performer as? URLSessionHTTPPerformer {
+                (data, response, reused) = try await performer.measuredProbe(request)
+            } else { (data, response) = try await performer.perform(request) }
+            struct Health: Decodable { let status: String; let hubId: String? }
+            if response.statusCode != 200 { outcome = .httpError(response.statusCode) }
+            else if let health = try? JSONDecoder().decode(Health.self, from: data), health.status == "ok" {
+                if let expected = advertisement?.hubId, health.hubId != expected { outcome = .identityMismatch }
+                else { outcome = .reachable }
+            }
+        } catch {
+            if (error as? URLError)?.code == .timedOut { outcome = .timeout }
+        }
+        let measurement = HubEndpointMeasurement(url: origin, checkedAt: now(),
+            milliseconds: Int((ProcessInfo.processInfo.systemUptime - started) * 1000), outcome: outcome, reusedConnection: reused)
+        if origin == canonicalURL { publicMeasurement = measurement } else { privateMeasurement = measurement }
+        return outcome == .reachable
+    }
 
     /// A new pairing must not inherit endpoint trust from previous credentials
     /// at the same public address. The old session is torn down by AppModel.
@@ -55,6 +118,7 @@ public actor HubConnectionRouter {
         lastDiscovery = .distantPast
         lastProbe = .distantPast; failuresUntil = .distantPast; initialized = false; successes = 0
         if value == .publicOnly { selected = canonicalURL }
+        reason = value == .publicOnly ? .forcedPublic : value == .privateOnly ? .forcedPrivate : .starting
     }
 
     public func resolve(token: String? = nil) async throws -> URL {
@@ -89,26 +153,22 @@ public actor HubConnectionRouter {
             }
         }
         guard let advertisement, let direct = advertisement.privateUrl, Self.validPrivateOrigin(direct) else {
+            reason = .noPrivateEndpoint
             if mode == .privateOnly { throw URLError(.cannotConnectToHost) }
             return canonicalURL
         }
         if reference >= failuresUntil && reference.timeIntervalSince(lastProbe) >= 30 {
             lastProbe = reference
-            var request = URLRequest(url: direct.appendingPathComponent("health"))
-            request.timeoutInterval = 1
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            struct Health: Decodable { let status: String; let hubId: String }
-            let verified: Bool
-            if let (data, response) = try? await performer.perform(request), response.statusCode == 200,
-               let health = try? JSONDecoder().decode(Health.self, from: data) {
-                verified = health.status == "ok" && health.hubId == advertisement.hubId
-            } else { verified = false }
+            let verified = await probe(direct, timeout: 1)
             try Task.checkCancellation()
             if verified {
                 successes += 1
-                if !initialized || selected == direct || successes >= 2 || mode == .privateOnly { selected = direct }
+                if !initialized || selected == direct || successes >= 2 || mode == .privateOnly {
+                    selected = direct; reason = mode == .privateOnly ? .forcedPrivate : .privateVerified
+                } else { reason = .awaitingRecovery }
             } else {
                 successes = 0; selected = canonicalURL
+                reason = .privateUnavailable
             }
             initialized = true
         }
@@ -122,6 +182,7 @@ public actor HubConnectionRouter {
             failuresUntil = now().addingTimeInterval(15)
             lastProbe = .distantPast
             if origin == canonicalURL { initialized = false; failuresUntil = .distantPast }
+            reason = origin == canonicalURL ? .publicNetworkFailure : .privateNetworkFailure
         }
     }
 
@@ -205,14 +266,21 @@ public struct RoutingSSETransport: SSETransport {
         AsyncThrowingStream { continuation in
             let task = Task {
                 var origin: URL?
+                let streamId = UUID()
+                let query = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
+                let isGlobal = query.contains { $0.name == "all" && $0.value == "true" }
                 do {
                     let token = request.value(forHTTPHeaderField: "Authorization").map { String($0.dropFirst(7)) }
+                        ?? query.first { $0.name == "token" }?.value
                     let selected = try await router.resolve(token: token)
                     origin = selected
                     try await withThrowingTaskGroup(of: Void.self) { group in
                         group.addTask {
                             for try await event in underlying.connect(router.rewrite(request, to: selected)) {
                                 try Task.checkCancellation()
+                                if isGlobal, case .connected(let response) = event, response.statusCode == 200 {
+                                    await router.eventStreamOpened(id: streamId, origin: selected)
+                                }
                                 continuation.yield(event)
                             }
                         }
@@ -225,8 +293,10 @@ public struct RoutingSSETransport: SSETransport {
                         defer { group.cancelAll() }
                         _ = try await group.next()
                     }
+                    if isGlobal { await router.eventStreamClosed(id: streamId) }
                     continuation.finish()
                 } catch {
+                    if isGlobal { await router.eventStreamClosed(id: streamId) }
                     // A deliberate route change must not mark the newly selected
                     // endpoint down. Actual transport failures invalidate only it.
                     if let origin, HubConnectionRouter.isNetworkFailure(error),

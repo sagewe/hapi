@@ -47,6 +47,47 @@ private struct ConnectedSSE: SSETransport {
 struct HubConnectionRouterTests {
     private let canonical = URL(string: "https://public.example.test")!
 
+    @Test func measurementsAreReadOnlyAndRespectForcedModes() async throws {
+        let http = RouteHTTP()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
+        let direct = try await router.resolve(token: "test-only")
+        let first = await router.diagnostics()
+        #expect(first.privateMeasurement?.outcome == .reachable)
+        #expect((first.privateMeasurement?.milliseconds ?? -1) >= 0)
+        await http.direct(false)
+        await router.refreshDiagnostics(force: true)
+        let measured = await router.diagnostics()
+        #expect(measured.isPrivate)
+        #expect(measured.privateMeasurement?.outcome == .unavailable)
+        #expect(measured.publicMeasurement?.outcome == .reachable)
+        #expect(measured.reason == first.reason)
+        await router.setMode(.publicOnly)
+        let count = await http.requests.filter { $0.url?.host == direct.host }.count
+        await router.refreshDiagnostics(force: true)
+        #expect(await http.requests.filter { $0.url?.host == direct.host }.count == count)
+        await router.setMode(.privateOnly)
+        let publicCount = await http.requests.filter { $0.url?.host == canonical.host }.count
+        await router.refreshDiagnostics(force: true)
+        #expect(await http.requests.filter { $0.url?.host == canonical.host }.count == publicCount)
+    }
+
+    @Test func activeEventRouteIsDistinguishedFromTheNextSelectedRoute() async throws {
+        let http = RouteHTTP()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
+        let direct = try await router.resolve(token: "test-only")
+        let id = UUID()
+        await router.eventStreamOpened(id: id, origin: direct)
+        await router.setMode(.publicOnly)
+        let snapshot = await router.diagnostics()
+        #expect(!snapshot.isPrivate)
+        #expect(snapshot.activeEventIsPrivate == true)
+        #expect(snapshot.currentMeasurement?.url == direct)
+        await router.eventStreamClosed(id: UUID())
+        #expect(await router.diagnostics().activeEventIsPrivate == true)
+        await router.eventStreamClosed(id: id)
+        #expect(await router.diagnostics().activeEventIsPrivate == nil)
+    }
+
     @Test func verifiesIdentityBeforePrivateAuthAndPreservesRequestBytes() async throws {
         let http = RouteHTTP()
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
@@ -131,17 +172,18 @@ struct HubConnectionRouterTests {
     @Test func routeChangeClosesTheOldEventStreamForCursorPreservingReconnect() async throws {
         let http = RouteHTTP()
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
-        _ = try await router.resolve(token: "test-only")
         let transport = RoutingSSETransport(router: router, underlying: ConnectedSSE(), recheckInterval: .milliseconds(5))
-        var request = URLRequest(url: canonical.appendingPathComponent("api/events"))
+        var request = URLRequest(url: URL(string: canonical.absoluteString + "/api/events?all=true&token=test-only")!)
         request.setValue("old-event-cursor", forHTTPHeaderField: "Last-Event-ID")
         var iterator = transport.connect(request).makeAsyncIterator()
         if case .connected(let response) = try await iterator.next() {
             #expect(response.url?.host == "direct.example.test")
         } else { Issue.record("Missing SSE handshake") }
+        #expect(await router.diagnostics().activeEventIsPrivate == true)
         await router.setMode(.publicOnly)
         let error = await capturedError { try await iterator.next() }
         #expect(error is URLError)
+        #expect(await router.diagnostics().activeEventIsPrivate == nil)
         #expect(router.rewrite(request, to: canonical).value(forHTTPHeaderField: "Last-Event-ID") == "old-event-cursor")
     }
 

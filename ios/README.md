@@ -69,6 +69,16 @@ upgrading an established public route. Foreground event streams recheck every
 those stream checks. Existing sockets are not transferred mid-operation.
 Mutation failures keep their normal uncertainty/reconciliation semantics.
 
+The session-list connection capsule shows the actual established global event
+route, with a house/cloud icon and recent HTTP health latency. Tap it for both
+endpoints, timestamps, connection reuse/new-handshake information and the last
+routing reason; Settings → Connection opens the same details. Samples over 60
+seconds old and failed probes never appear as a current numeric latency. New
+request selection is shown separately while a live stream is changing routes.
+Diagnostics refresh at most every 15 seconds while the view is foregrounded,
+respect forced routing modes and never force route selection. These are HTTP
+round trips, not ICMP ping or a measure of upload throughput.
+
 ## Resumable message attachments
 
 Prepared files of at least 512 KiB use 512 KiB binary chunks to the Hub. After a

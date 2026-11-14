@@ -175,6 +175,11 @@ struct HomeView: View {
                 authFailureBanner(failedHub: failedHub)
             }
             connectionNotice
+            if let router = session.api.connection {
+                HStack { ConnectionCapsule(router: router); Spacer(minLength: 0) }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+            }
             SessionListView(
                 model: listModel,
                 selectedSessionId: currentSelectedId,
