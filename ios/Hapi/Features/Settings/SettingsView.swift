@@ -69,6 +69,8 @@ struct SettingsView: View {
     @State private var model: SettingsModel
     @State private var languagePrefs: LanguagePrefs
     @State private var confirmSignOut = false
+    @State private var connectionMode: HubConnectionMode = .automatic
+    @State private var usingPrivateConnection = false
     @Environment(AppModel.self) private var appModel
     @Environment(ThemePrefs.self) private var themePrefs
     @Environment(\.dismiss) private var dismiss
@@ -86,6 +88,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 hubsSection
+                if session.api.connection != nil { connectionSection }
                 appearanceSection
                 #if targetEnvironment(macCatalyst)
                 shortcutsSection
@@ -109,11 +112,34 @@ struct SettingsView: View {
             .task {
                 model.start()
                 PushCoordinator.shared.refreshStatus()
+                while !Task.isCancelled {
+                    if let connection = session.api.connection {
+                        let status = await connection.status()
+                        connectionMode = status.mode; usingPrivateConnection = status.isPrivate
+                    }
+                    do { try await Task.sleep(for: .seconds(2)) } catch { break }
+                }
             }
         }
         // The sheet is its own presentation; re-apply the explicit override
         // so it does not fall back to the system scheme.
         .preferredColorScheme(themePrefs.mode.preferredColorScheme)
+    }
+
+    private var connectionSection: some View {
+        Section("Connection") {
+            Picker("Connection", selection: Binding(get: { connectionMode }, set: { value in
+                connectionMode = value
+                Task { await session.api.connection?.setMode(value) }
+            })) {
+                Text("Automatic").tag(HubConnectionMode.automatic)
+                Text("Tailscale only").tag(HubConnectionMode.privateOnly)
+                Text("Public relay only").tag(HubConnectionMode.publicOnly)
+            }
+            LabeledContent("Current connection", value: connectionMode == .privateOnly && !usingPrivateConnection
+                           ? String(localized: "Unavailable")
+                           : usingPrivateConnection ? "Tailscale" : String(localized: "Public relay"))
+        }
     }
 
     // MARK: - Sections

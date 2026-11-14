@@ -74,16 +74,47 @@ public final class APIClient: Sendable {
     /// Origin of the active hub (from ``HubRegistry``).
     public let baseURL: URL
     public let authManager: AuthManager
+    public let connection: HubConnectionRouter?
     private let performer: any HTTPPerforming
 
     public init(
         baseURL: URL,
         authManager: AuthManager,
-        performer: any HTTPPerforming = URLSessionHTTPPerformer.shared
+        performer: any HTTPPerforming = URLSessionHTTPPerformer.shared,
+        connection: HubConnectionRouter? = nil
     ) {
         self.baseURL = baseURL
         self.authManager = authManager
         self.performer = performer
+        self.connection = connection
+    }
+
+    /// A snapshot for a new WebSocket/terminal. Existing sockets keep their
+    /// endpoint until they close; credential/cache identity remains `baseURL`.
+    public func connectionURL() async throws -> URL {
+        guard let connection else { return baseURL }
+        let token = try await authManager.validToken()
+        return try await connection.resolve(token: token)
+    }
+
+    public var eventTransport: any SSETransport {
+        if let connection { return RoutingSSETransport(router: connection) }
+        return URLSessionSSETransport()
+    }
+
+    public var eventPathObserver: (any NetworkPathObserving)? {
+        #if canImport(Network)
+        if let connection { return RoutingNetworkPathObserver(router: connection, underlying: NWPathObserver()) }
+        return NWPathObserver()
+        #else
+        return nil
+        #endif
+    }
+
+    public func connectionRequest(_ request: URLRequest) async throws -> URLRequest {
+        guard let connection else { return request }
+        let origin = try await connectionURL()
+        return connection.rewrite(request, to: origin)
     }
 
     // MARK: - Typed request surface

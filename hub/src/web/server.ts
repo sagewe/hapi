@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { serveStatic } from 'hono/bun'
 import { getConfiguration } from '../configuration'
+import { hubIdentity, privateConnectionURL } from './connectionInfo'
 import { PROTOCOL_VERSION } from '@hapi/protocol'
 import { buildGeminiLiveSetupMessage, QWEN_REALTIME_MODEL, resolveHomeGatewayConfig } from '@hapi/protocol/voice'
 import { getProviderEnvironment } from '../config/providerCredentials'
@@ -238,6 +239,7 @@ function createWebApp(options: {
     app.use('*', logger())
 
     const configuration = getConfiguration()
+    const connectionId = hubIdentity(configuration.dataDir)
     const corsOrigins = options.corsOrigins ?? configuration.corsOrigins
     const corsOriginOption = corsOrigins.includes('*') ? '*' : corsOrigins
     const corsMiddleware = cors({
@@ -256,6 +258,7 @@ function createWebApp(options: {
     app.get('/health', (c) => c.json({
         status: 'ok',
         protocolVersion: PROTOCOL_VERSION,
+        hubId: connectionId,
         capabilities: {
             workGraph: true,
             titleSuggestion: readTitleProviderConfig() !== null
@@ -289,6 +292,10 @@ function createWebApp(options: {
     app.route('/api', createBindRoutes(options.jwtSecret, options.store))
 
     app.use('/api/*', createAuthMiddleware(options.jwtSecret))
+    app.get('/api/connection', c => {
+        c.header('Cache-Control', 'no-store')
+        return c.json({ hubId: connectionId, privateUrl: privateConnectionURL() })
+    })
     app.route('/api', createEventsRoutes(options.getSseManager, options.getSyncEngine, options.getVisibilityTracker))
     app.route('/api', createSessionsRoutes(options.getSyncEngine))
     app.route('/api', createMessagesRoutes(options.getSyncEngine))

@@ -48,6 +48,8 @@ final class ChatSession {
     @ObservationIgnored var onSessionRemoved: (@MainActor () -> Void)?
 
     private let baseURL: URL
+    private let transport: any SSETransport
+    private let pathObserver: (any NetworkPathObserving)?
     private let authManager: AuthManager
     private let windows: MessageWindowControllers
     private let sessionStore: SessionListStore
@@ -68,6 +70,8 @@ final class ChatSession {
     init(
         sessionId: String,
         baseURL: URL,
+        transport: any SSETransport = URLSessionSSETransport(),
+        pathObserver: (any NetworkPathObserving)? = NWPathObserver(),
         authManager: AuthManager,
         windows: MessageWindowControllers,
         sessionStore: SessionListStore,
@@ -80,6 +84,8 @@ final class ChatSession {
     ) {
         self.sessionId = sessionId
         self.baseURL = baseURL
+        self.transport = transport
+        self.pathObserver = pathObserver
         self.authManager = authManager
         self.windows = windows
         self.sessionStore = sessionStore
@@ -174,7 +180,7 @@ final class ChatSession {
             },
             scope: .session(sessionId)
         )
-        let client = SSEClient(configuration: configuration, pathObserver: NWPathObserver())
+        let client = SSEClient(configuration: configuration, transport: transport, pathObserver: pathObserver)
         sse = client
         let cursor = initialCursor
         consumeTask = Task { [weak self] in

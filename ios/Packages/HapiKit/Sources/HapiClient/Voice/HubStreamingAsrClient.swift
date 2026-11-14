@@ -29,6 +29,7 @@ public final class HubStreamingAsrClient: HoldAsrStreaming, Sendable {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(Data(context.draft.utf8).base64EncodedString(), forHTTPHeaderField: "X-ASR-Draft")
         request.timeoutInterval = 45
+        request = try await api.connectionRequest(request)
 
         let task = URLSession.shared.webSocketTask(with: request)
         let session = WebSocketAsrStreamSession(task: task, onPartial: onPartial)

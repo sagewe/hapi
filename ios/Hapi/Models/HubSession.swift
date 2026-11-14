@@ -101,13 +101,17 @@ final class HubSession {
         guard let baseURL = URL(string: hubUrl) else { return nil }
         self.hubUrl = hubUrl
         self.baseURL = baseURL
+        let connection = performer is URLSessionHTTPPerformer ? HubConnectionRouter(canonicalURL: baseURL, performer: performer) : nil
+        let routed: any HTTPPerforming
+        if let connection { routed = RoutingHTTPPerformer(router: connection, underlying: performer) }
+        else { routed = performer }
         let authManager = AuthManager(
             baseURL: baseURL,
             credentialStore: credentialStore,
-            performer: performer
+            performer: routed
         )
         self.authManager = authManager
-        let api = APIClient(baseURL: baseURL, authManager: authManager, performer: performer)
+        let api = APIClient(baseURL: baseURL, authManager: authManager, performer: routed, connection: connection)
         self.api = api
 
         // Per-hub snapshot directory: cold starts render the last known list
@@ -207,6 +211,8 @@ final class HubSession {
         ChatSession(
             sessionId: sessionId,
             baseURL: baseURL,
+            transport: api.eventTransport,
+            pathObserver: api.eventPathObserver,
             authManager: authManager,
             windows: windows,
             sessionStore: sessionStore,
@@ -387,7 +393,8 @@ final class HubSession {
             },
             scope: .global
         )
-        let client = SSEClient(configuration: configuration, pathObserver: NWPathObserver())
+        let transport = api.eventTransport
+        let client = SSEClient(configuration: configuration, transport: transport, pathObserver: api.eventPathObserver)
         sse = client
         consumeTask = Task { [weak self] in
             let stream = await client.start()

@@ -13,6 +13,7 @@ final class RemoteTerminalModel: NSObject, WKNavigationDelegate {
     var commandSending = false
     private let api: APIClient
     private let sessionID: String
+    private var transportOrigin: URL
     private var terminalID = UUID().uuidString
     @ObservationIgnored private var web: WKWebView?
     @ObservationIgnored private var credentialsTask: Task<Void, Never>?
@@ -21,7 +22,7 @@ final class RemoteTerminalModel: NSObject, WKNavigationDelegate {
     @ObservationIgnored private var loaded = false
     @ObservationIgnored private var authRetries = 0
 
-    init(api: APIClient, sessionID: String) { self.api = api; self.sessionID = sessionID }
+    init(api: APIClient, sessionID: String) { self.api = api; self.sessionID = sessionID; transportOrigin = api.baseURL }
 
     func makeWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -63,9 +64,15 @@ final class RemoteTerminalModel: NSObject, WKNavigationDelegate {
                     authRetries += 1
                     token = try await api.authManager.refreshAfterUnauthorized(failedToken: token)
                 } else { token = try await api.authManager.validToken() }
+                let endpoint = try await api.connectionURL()
                 try Task.checkCancellation()
                 guard active, let token else { return }
-                _ = try await web?.callAsyncJavaScript("window.HapiTerminal.start(options); window.HapiTerminal.mode(direct)", arguments: ["direct": direct, "options": ["baseURL": api.baseURL.absoluteString, "token": token, "sessionId": sessionID, "terminalId": terminalID]], in: nil, contentWorld: .page)
+                if endpoint != transportOrigin {
+                    transportOrigin = endpoint; loaded = false
+                    web?.loadHTMLString(try TerminalAssets.html(hub: endpoint), baseURL: endpoint)
+                    return
+                }
+                _ = try await web?.callAsyncJavaScript("window.HapiTerminal.start(options); window.HapiTerminal.mode(direct)", arguments: ["direct": direct, "options": ["baseURL": transportOrigin.absoluteString, "token": token, "sessionId": sessionID, "terminalId": terminalID]], in: nil, contentWorld: .page)
             } catch is CancellationError {} catch { self.error = error.localizedDescription; state = "error" }
         }
     }
@@ -116,11 +123,11 @@ final class RemoteTerminalModel: NSObject, WKNavigationDelegate {
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         loaded = false; state = "error"; error = String(localized: "Terminal renderer stopped")
-        do { webView.loadHTMLString(try TerminalAssets.html(hub: api.baseURL), baseURL: api.baseURL) } catch { self.error = error.localizedDescription }
+        do { webView.loadHTMLString(try TerminalAssets.html(hub: transportOrigin), baseURL: transportOrigin) } catch { self.error = error.localizedDescription }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         let url = navigationAction.request.url
-        let initialOrigin = url?.scheme == api.baseURL.scheme && url?.host == api.baseURL.host && url?.port == api.baseURL.port && ["", "/"].contains(url?.path ?? "")
+        let initialOrigin = url?.scheme == transportOrigin.scheme && url?.host == transportOrigin.host && url?.port == transportOrigin.port && ["", "/"].contains(url?.path ?? "")
         return !loaded && navigationAction.navigationType == .other && (url?.absoluteString == "about:blank" || initialOrigin) ? .allow : .cancel
     }
 }
