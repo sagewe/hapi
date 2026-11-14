@@ -8,6 +8,25 @@ import XCTest
 @MainActor
 final class SessionConfigTests: XCTestCase {
     #if !targetEnvironment(macCatalyst)
+    func testCompactControlsWrapLongModelName() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        await harness.http.setModels([
+            CodexModelSummary(id: "long", displayName: "GPT-6.1 — Long Model Name With Provider And Service Tier", isDefault: true,
+                              supportedReasoningEfforts: ["high", "xhigh"]),
+        ])
+        harness.model.loadModels()
+        try await configEventually { harness.model.showsEffort }
+        let host = UIHostingController(rootView: ComposerSessionControlsPopupCard(
+            model: harness.model, colorScheme: .light
+        ).environment(\.locale, Locale(identifier: "zh-Hans")))
+        let narrow = host.sizeThatFits(in: CGSize(width: 296, height: 700))
+        let wide = host.sizeThatFits(in: CGSize(width: 600, height: 700))
+        XCTAssertLessThanOrEqual(narrow.width, 297)
+        XCTAssertGreaterThan(narrow.height, wide.height + 15,
+                             "Narrow cards must grow to show the model name instead of truncating it")
+        XCTAssertLessThan(narrow.height, 400)
+    }
+
     func testCompactControlsFitNarrowScreenAndLargeText() async throws {
         let harness = try await SessionConfigTestHarness(flavor: "codex")
         harness.model.loadModels()

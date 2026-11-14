@@ -587,7 +587,8 @@ struct ChatComposerView: View {
     private func togglePopup(_ kind: ComposerPopupKind) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let opening = activePopup != kind
-        if opening && kind == .sessionControls { textFocused = false }
+        // Toolbar popups preserve the editor focus, including session controls.
+        // Dismissing it here moves both the composer and its popup under the tap.
         activePopup = opening ? kind : nil
     }
 
@@ -3951,7 +3952,7 @@ struct ComposerSessionControlsPopupCard: View {
             }
             if model.showsModel || model.canDiscoverModels {
                 Button { page = .model } label: {
-                    row("Model", icon: "cube", value: Text(verbatim: model.modelLabel))
+                    row("Model", icon: "cube", value: Text(verbatim: model.modelLabel), stacked: true)
                 }
                 .accessibilityIdentifier("session-controls-model")
             }
@@ -3975,12 +3976,22 @@ struct ComposerSessionControlsPopupCard: View {
         }
     }
 
-    private func row(_ title: LocalizedStringKey, icon: String, value: Text) -> some View {
+    private func row(_ title: LocalizedStringKey, icon: String, value: Text, stacked: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).font(.body).frame(width: 22)
-            Text(title).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            value.foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            if stacked {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                    value.foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+            } else {
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                value.foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
         }
         .font(.subheadline)
