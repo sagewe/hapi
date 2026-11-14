@@ -23,7 +23,7 @@ extension APIClient {
         return (data, response.value(forHTTPHeaderField: "Content-Type"))
     }
 
-    /// `POST /api/sessions/:id/upload` — JSON + base64, **not** multipart.
+    /// Files ≥512 KiB use binary, resumable uploads. Smaller files use JSON + base64.
     /// Decoded size limit 50 MB (413 above). Requires an active session.
     /// Pass the returned `path` in the `attachments` metadata of a
     /// subsequent send-message.
@@ -33,6 +33,13 @@ extension APIClient {
         data: Data,
         mimeType: String
     ) async throws -> UploadFileResponse {
+        if data.count >= 512 * 1024 {
+            return try await resumableUpload(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType)
+        }
+        return try await legacyUploadFile(sessionId: sessionId, filename: filename, data: data, mimeType: mimeType)
+    }
+
+    func legacyUploadFile(sessionId: String, filename: String, data: Data, mimeType: String) async throws -> UploadFileResponse {
         try await request(
             .post,
             "/api/sessions/\(encodePathComponent(sessionId))/upload",

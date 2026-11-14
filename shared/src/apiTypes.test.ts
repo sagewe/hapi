@@ -5,8 +5,19 @@ import {
     ListCodexSessionsRpcResponseSchema,
     ListPiSessionsRpcResponseSchema,
     MessagesQuerySchema,
+    ResumableUploadRequestSchema,
     SendMessageRequestSchema
 } from './apiTypes'
+
+describe('ResumableUploadRequestSchema', () => {
+    it('bounds file size and validates the complete-file digest', () => {
+        const metadata = { filename: 'movie.mp4', mimeType: 'video/mp4', size: 50 * 1024 * 1024, sha256: 'a'.repeat(64) }
+        expect(ResumableUploadRequestSchema.safeParse(metadata).success).toBe(true)
+        for (const change of [{ size: 0 }, { size: metadata.size + 1 }, { size: 1.5 }, { sha256: '../file' }, { filename: '' }, { unexpected: true }]) {
+            expect(ResumableUploadRequestSchema.safeParse({ ...metadata, ...change }).success).toBe(false)
+        }
+    })
+})
 
 describe('ListCodexSessionsRpcResponseSchema', () => {
     it('preserves Codex session messages when parsing runner RPC responses', () => {

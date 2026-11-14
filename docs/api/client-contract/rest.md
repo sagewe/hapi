@@ -10,7 +10,7 @@ does not mean the app offers that feature.
 
 - All paths below are relative to the hub base URL. `/api` routes require `Authorization: Bearer <JWT>` except the `/api/auth` exchange and Telegram `/api/bind` ([Auth](./auth.md)).
 - Path params (`:id`, `:messageId`, …) must be URL-encoded (the web client uses `encodeURIComponent` throughout).
-- Request bodies are JSON (`content-type: application/json`) with **one exception**: `POST /api/voice/transcription` is `multipart/form-data`. Responses are JSON unless noted (generated images and scratchlist attachments return raw bytes).
+- Request bodies are JSON (`content-type: application/json`) except voice transcription (`multipart/form-data`) and resumable upload chunks (`application/octet-stream`). Responses are JSON unless noted (generated images and scratchlist attachments return raw bytes).
 - Bodies are validated with Zod; failures return `400` (see [Errors](./errors.md)).
 - **gzip:** the hub gzips `/api/*` JSON responses when `Accept-Encoding` accepts gzip. Negotiation is q-value aware (`acceptsGzip` in `hub/src/web/sseCompression.ts`): `gzip;q=0` is honored as a refusal, `*` counts unless a `gzip` entry overrides it. Send a normal `Accept-Encoding: gzip` and decompress transparently. The SSE stream is gzip-compressed separately with per-event flush — see [SSE](./sse.md). Source: `hub/src/web/server.ts`.
 - Several endpoints are **RPC-wrapped**: the hub forwards to the session's CLI process over Socket.IO and relays the result. These can fail with HTTP 200 + `{success: false, error}` or with 503 — see [Errors](./errors.md#rpc-wrapped-endpoints).
@@ -242,6 +242,37 @@ Source: `hub/src/web/routes/sessions.ts` (`UploadFileRequestSchema`).
 | `POST /api/sessions/:id/upload/delete` | `{path}` | `{success, error?}` |
 
 Uploads are JSON+base64, **not** multipart. Both require an active session.
+
+For large message attachments, Apple clients use binary resumable staging on the
+Hub. Metadata uses `ResumableUploadRequestSchema` in `shared/src/apiTypes.ts`;
+routes are in `hub/src/web/routes/resumableUploads.ts`.
+
+| Method & path | Request | Response |
+|---|---|---|
+| `POST /api/sessions/:id/uploads/:uploadId` | `{filename, mimeType, size, sha256}`; 64 lowercase hex upload id | `{offset, chunkSize, result?}`; creates or resumes the upload |
+| `PUT /api/sessions/:id/uploads/:uploadId/chunk?offset=N` | Binary bytes, at most 512 KiB | `{offset, chunkSize, result?}`; offset advances only after disk sync |
+| `POST /api/sessions/:id/uploads/:uploadId/complete` | Empty | `{success: true, path}` after whole-file SHA-256 validation and Runner handoff |
+
+Every call rechecks namespace/session access and requires an active session.
+Offsets count raw bytes, not base64 characters; a stale offset returns `409`.
+After a lost response, repeat the metadata POST and resume from its offset.
+Completion responses are cached, so a lost completion response does not trigger
+another handoff during ordinary retries. Runner handoff failure keeps accepted
+bytes; a Hub crash during handoff can leave an unreferenced Runner file, but
+does not send a message or execute an agent operation.
+
+Files remain capped at 50 MiB. Incomplete files are private Hub files (directories
+0700, files 0600), expire after 24 hours without activity, and are pruned on the
+next initialization. Staging reserves at most 512 MiB across incomplete uploads
+and at most 256 recent upload records; quota exhaustion returns `429`. SHA-256
+mismatch removes corrupt staging and returns `409`. Successful handoff removes
+staged bytes, retaining the small completion record until expiry. The existing
+`upload/delete` endpoint owns removal of the completed Runner file.
+
+The final Hub→Runner transfer still uses the existing base64 RPC. Binary chunks
+remove base64 overhead on the phone→relay→Hub path. Scratchlist and Web/Android
+upload paths are unchanged. iOS background suspension may pause transfers; this
+is not a background `URLSession` uploader.
 
 ### Scratchlist
 

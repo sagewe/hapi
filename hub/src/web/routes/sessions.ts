@@ -45,6 +45,7 @@ import {
 } from '../../store/messageContentSearch'
 import { ArchiveCleanupError } from '../../sync/archiveCleanupError'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
+import { createResumableUploadRoutes } from './resumableUploads'
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 // Leave room for the query, limit, and JSON envelope; the serialized session
@@ -85,6 +86,7 @@ function estimateBase64Bytes(base64: string): number {
 
 export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
+    app.route('/', createResumableUploadRoutes(getSyncEngine))
 
     app.get('/sessions', (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)

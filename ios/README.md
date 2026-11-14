@@ -52,6 +52,27 @@ normalizer. It does not embed attachment binaries. The existing large-export
 confirmation and hard size limit remain in force; confirmation retains the
 chosen format. Files receives a `.md` document with Markdown content type.
 
+## Resumable message attachments
+
+Prepared files of at least 512 KiB use 512 KiB binary chunks to the Hub. After a
+network failure, the client reads the server checkpoint before sending more
+bytes; three short retries precede the existing attachment Retry action.
+Completion checks the whole-file SHA-256, and uncertain completion responses
+recover the saved result. Smaller files and Scratchlist retain their current
+upload endpoints. The 50 MiB file limit still applies.
+
+Unfinished upload identifiers and content fingerprints persist locally without
+file bytes or credentials. After restarting the app, selecting the same prepared
+file for the same Hub/session can resume within the server's 24-hour retention.
+The attachment tray itself is not restored automatically. Concurrent copies get
+distinct upload ids, and successful uploads retire their local receipt, so a
+later copy cannot reuse an already-deleted attachment path. Changing sessions
+starts a separately scoped upload. iOS may suspend work in the background.
+
+Focused tests: `swift test --filter ResumableUploadTests`; Hub tests are
+`hub/src/uploads/resumable.test.ts` and
+`hub/src/web/routes/resumableUploads.test.ts`.
+
 ## Remote terminal
 
 The chat menu opens Terminal for an active session whose terminal capability is

@@ -592,6 +592,21 @@ export const UploadFileRequestSchema = z.object({
 
 export type UploadFileRequest = z.infer<typeof UploadFileRequestSchema>
 
+export const ResumableUploadRequestSchema = z.object({
+    filename: z.string().min(1).max(255),
+    mimeType: z.string().min(1).max(255),
+    size: z.number().int().min(1).max(50 * 1024 * 1024),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/)
+}).strict()
+
+export type ResumableUploadRequest = z.infer<typeof ResumableUploadRequestSchema>
+
+export type ResumableUploadStatus = {
+    offset: number
+    chunkSize: number
+    result?: UploadFileResponse
+}
+
 export const DeleteUploadRequestSchema = z.object({
     path: z.string().min(1)
 })
