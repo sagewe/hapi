@@ -436,3 +436,7 @@ the [upstream signing fix](https://github.com/oven-sh/bun/pull/39837).
 
 - `../hub/README.md`
 - `../web/README.md`
+
+## Personal upstream integration
+
+The [2026-11-15 overlap review](../docs/upstream-overlap-2026-11-15.md) records the selected agy and upload adaptations, preserved personal guarantees, and remaining quota/card integration differences.
