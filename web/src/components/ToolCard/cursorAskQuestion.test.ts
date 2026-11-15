@@ -31,6 +31,7 @@ describe('cursorAskQuestion', () => {
             header: 'Choose approach',
             question: 'Which approach?',
             multiSelect: false,
+            allowFreeText: true,
             options: [
                 { id: 'a', label: 'Option A', description: null },
                 { id: 'b', label: 'Option B', description: null }

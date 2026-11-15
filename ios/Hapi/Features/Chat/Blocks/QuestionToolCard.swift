@@ -252,7 +252,7 @@ struct QuestionAnswerFormView: View {
                 .accessibilityLabel("Previous question")
                 .accessibilityIdentifier("question-previous")
             }
-            if !form.fields[index].options.isEmpty {
+            if !form.fields[index].options.isEmpty && form.fields[index].allowsText {
                 let expanded = draft.showsText(at: index, in: form)
                 Button {
                     draft.toggleText(at: index, in: form)

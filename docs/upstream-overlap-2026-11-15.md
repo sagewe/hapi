@@ -60,3 +60,14 @@ Upstream adds round counts and running command snapshots. The personal driver al
 - CLI, Hub, Web and relay TypeScript checks passed after the upload adaptation.
 - The larger agy and quota suites passed: 202 tests across 14 files. After the form lifecycle adaptation, adapter/driver regressions passed: 29 tests across 2 files; CLI typecheck was repeated.
 - No database migration, production configuration read, binary replacement, service restart, push or deployment is part of these changes.
+
+
+## Follow-up: form semantics across the executing personal path
+
+The previous review's free-text/empty-answer gap is now addressed in the personal `acp/agyElicitationAdapter.ts`, not by attaching another upstream driver. A form explicitly advertises whether each question has a string-valued `qN_other` answer channel. Unsupported modes and forms with an unanswerable question decline before queueing. Single/multiple choice `oneOf` and `anyOf` aliases map displayed labels back to native values. A blank or unknown fixed-choice approval resolves `decline`, records a denied decision, and never stores a successful empty answer.
+
+Web, iOS and Mac Catalyst now parse `allowFreeText`, hide forbidden custom-answer controls, and filter forbidden text from retained drafts at serialization. Missing flags keep the legacy permissive behavior for Claude/Cursor/older messages; Codex `request_user_input` notes and stable IDs are unchanged. A tool call can precede its form: the reducers enrich only missing per-question flags from the pending/completed permission input, preserving explicit input flags. Three Web-generated fixtures cover fixed-choice pending/completed calls and text-only synthesized cards. The Android protocol reducer has the same projection for fixture conformance; Android app UI is not changed in this batch.
+
+The existing Stop admission gate and explicit reopening on the next foreground prompt stay in place. Request map keys remain unchanged; when the native form supplies a toolCallId, the request and completed record now retain that correlation metadata.
+
+Verification for this follow-up: 34 adapter/driver tests, 646 Web question/tool-card/reducer/fixture tests, all 82 Swift chat golden cases plus parser/fixture decoding checks, 411 Android protocol tests, and 17 isolated iOS Simulator draft/card tests passed. The simulator suite includes an actual editable-field check for fixed-choice versus text-only forms, and existing recycling/anchor/theme tests. Tests used private HAPI_HOME/TMPDIR and sanitized environments. No device, production account, deployment, push or service restart was used.

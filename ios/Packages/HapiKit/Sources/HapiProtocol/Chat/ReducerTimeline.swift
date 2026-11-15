@@ -4,6 +4,21 @@ import Foundation
 // pairing, stream coalescing, agent-run cards, title-changed synthesis,
 // sentinel suppression.
 
+/// Port of the Web reducer's form-policy enrichment; preserve explicit input flags.
+private func withRequestFreeTextFlags(_ input: JSONValue?, _ requestInput: JSONValue?) -> JSONValue? {
+    guard var object = input?.objectValue,
+          let questions = object["questions"]?.arrayValue,
+          let requested = requestInput?.objectValue?["questions"]?.arrayValue else { return input }
+    object["questions"] = .array(questions.enumerated().map { index, question in
+        guard var entry = question.objectValue, entry["allowFreeText"] == nil,
+              requested.indices.contains(index),
+              let flag = requested[index].objectValue?["allowFreeText"]?.boolValue else { return question }
+        entry["allowFreeText"] = .bool(flag)
+        return .object(entry)
+    })
+    return .object(object)
+}
+
 // MARK: - Event record helpers
 
 private func getEventString(_ event: [String: JSONValue], _ key: String) -> String? {
@@ -918,7 +933,8 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         continue
                     }
 
-                    let permission = context.permissionsById[toolCall.id]?.permission
+                    let permissionEntry = context.permissionsById[toolCall.id]
+                    let permission = permissionEntry?.permission
 
                     let box = ensureToolBlock(&blocks, &toolBlocksById, id: toolCall.id, seed: ToolBlockSeed(
                         createdAt: msg.createdAt,
@@ -928,7 +944,7 @@ func reduceTimeline(_ messages: [NormalizedMessage], context: ReducerContext) ->
                         localId: msg.localId,
                         meta: msg.meta,
                         name: toolCall.name,
-                        input: toolCall.input,
+                        input: withRequestFreeTextFlags(toolCall.input, permissionEntry?.input),
                         description: toolCall.description,
                         nativeTitle: toolCall.nativeTitle,
                         nativeKind: toolCall.nativeKind,

@@ -27,13 +27,15 @@ public struct AskQuestion: Equatable, Sendable {
     public let question: String
     public let options: [AskOption]
     public let multiSelect: Bool
+    public let allowFreeText: Bool
 
-    public init(id: String?, header: String?, question: String, options: [AskOption], multiSelect: Bool) {
+    public init(id: String?, header: String?, question: String, options: [AskOption], multiSelect: Bool, allowFreeText: Bool = true) {
         self.id = id
         self.header = header
         self.question = question
         self.options = options
         self.multiSelect = multiSelect
+        self.allowFreeText = allowFreeText
     }
 
     /// The flat-answers key: stable id when present, else the index (web parity).
@@ -121,7 +123,8 @@ public func parseAskUserQuestions(_ input: JSONValue?, cursorDialect: Bool) -> [
             header: effectiveHeader,
             question: question,
             options: options,
-            multiSelect: multiSelect
+            multiSelect: multiSelect,
+            allowFreeText: object["allowFreeText"]?.boolValue != false
         ))
     }
     return questions

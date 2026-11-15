@@ -14,6 +14,8 @@ export type AskUserQuestionQuestion = {
     question: string
     options: AskUserQuestionOption[]
     multiSelect: boolean
+    /** Explicit false means the agent form cannot accept a typed answer. */
+    allowFreeText: boolean
 }
 
 export type AskUserQuestionQuestionInfo = {
@@ -66,7 +68,8 @@ export function parseAskUserQuestionInput(input: unknown): { questions: AskUserQ
             header: header.length > 0 ? header : null,
             question,
             options,
-            multiSelect
+            multiSelect,
+            allowFreeText: raw.allowFreeText !== false
         })
     }
 

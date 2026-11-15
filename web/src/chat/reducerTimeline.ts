@@ -6,6 +6,20 @@ import { collectTitleChanges, ensureToolBlock, extractTitleFromChangeTitleInput,
 import { isSubagentToolName } from '@/chat/subagentTool'
 import { asString, isObject } from '@hapi/protocol'
 
+/** A tool call can arrive before the elicitation form reveals its text policy. */
+function withRequestFreeTextFlags(input: unknown, requestInput: unknown): unknown {
+    if (!isObject(input) || !isObject(requestInput)) return input
+    const requested = requestInput.questions
+    if (!Array.isArray(input.questions) || !Array.isArray(requested)) return input
+    const questions = input.questions.map((question, index) => {
+        const formQuestion: unknown = requested[index]
+        if (!isObject(question) || 'allowFreeText' in question) return question
+        if (!isObject(formQuestion) || typeof formQuestion.allowFreeText !== 'boolean') return question
+        return { ...question, allowFreeText: formQuestion.allowFreeText }
+    })
+    return { ...input, questions }
+}
+
 function getEventString(event: Record<string, unknown>, key: string): string | null {
     return asString(event[key])
 }
@@ -1025,7 +1039,8 @@ export function reduceTimeline(
                         continue
                     }
 
-                    const permission = context.permissionsById.get(c.id)?.permission
+                    const permissionEntry = context.permissionsById.get(c.id)
+                    const permission = permissionEntry?.permission
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
                         createdAt: msg.createdAt,
@@ -1035,7 +1050,7 @@ export function reduceTimeline(
                         localId: msg.localId,
                         meta: msg.meta,
                         name: c.name,
-                        input: c.input,
+                        input: withRequestFreeTextFlags(c.input, permissionEntry?.input),
                         description: c.description,
                         nativeTitle: c.nativeTitle,
                         nativeKind: c.nativeKind,

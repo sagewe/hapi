@@ -653,11 +653,13 @@ describe('Antigravity ACP delivery', () => {
                         {
                             question: 'Which environment?',
                             multiSelect: false,
+                            allowFreeText: true,
                             options: [{ label: '(Recommended) Staging' }, { label: 'Production' }]
                         },
                         {
                             question: 'Which features?',
                             multiSelect: true,
+                            allowFreeText: true,
                             options: [{ label: 'Auth' }, { label: 'Metrics' }]
                         }
                     ]

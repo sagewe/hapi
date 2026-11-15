@@ -57,8 +57,13 @@ struct QuestionAnswerForm: Equatable {
         }
 
         var allowsCustomAnswer: Bool {
-            if case .ask = self { return true }
+            if case .ask(let question, _, _) = self { return question.allowFreeText }
             return false
+        }
+
+        var allowsText: Bool {
+            if case .ask(let question, _, _) = self { return question.allowFreeText }
+            return true // Codex request_user_input keeps its optional notes.
         }
 
         var prefill: String {
@@ -81,7 +86,7 @@ struct QuestionAnswerForm: Equatable {
                 return requestUserInputAnswerValues(selected: picked, note: text)
             }
             let custom = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return picked + (custom.isEmpty ? [] : [custom])
+            return picked + (!allowsCustomAnswer || custom.isEmpty ? [] : [custom])
         }
 
         func isAnswered(selected: Set<Int>, text: String) -> Bool {
@@ -139,7 +144,7 @@ struct QuestionAnswerDraft: Equatable {
     }
 
     func showsText(at index: Int, in form: QuestionAnswerForm) -> Bool {
-        form.fields[index].options.isEmpty || (expanded[index] ?? !text(at: index, in: form).isEmpty)
+        form.fields[index].allowsText && (form.fields[index].options.isEmpty || (expanded[index] ?? !text(at: index, in: form).isEmpty))
     }
 
     func isAnswered(at index: Int, in form: QuestionAnswerForm) -> Bool {
@@ -147,11 +152,12 @@ struct QuestionAnswerDraft: Equatable {
     }
 
     mutating func toggleText(at index: Int, in form: QuestionAnswerForm) {
+        guard form.fields.indices.contains(index), form.fields[index].allowsText else { return }
         expanded[index] = !showsText(at: index, in: form)
     }
 
     mutating func setText(_ text: String, at index: Int, in form: QuestionAnswerForm) {
-        guard form.fields.indices.contains(index) else { return }
+        guard form.fields.indices.contains(index), form.fields[index].allowsText else { return }
         texts[index] = text
         let field = form.fields[index]
         if field.allowsCustomAnswer && !field.multiple && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

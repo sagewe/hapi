@@ -254,6 +254,31 @@ final class QuestionCardPresentationTests: XCTestCase {
         XCTAssertEqual(anchorOffsetAfterCollapse, anchorOffset, accuracy: 1)
     }
 
+    func testAgyFixedChoiceNeverShowsAFieldWhileTextOnlyFormDoes() async throws {
+        for allowFreeText in [false, true] {
+            var tool = try makeTool(allowFreeText
+                ? #"{"questions":[{"question":"Explain?","options":[],"allowFreeText":true}]}"#
+                : #"{"questions":[{"question":"Choose","options":[{"label":"One"}],"allowFreeText":false}]}"#)
+            tool.name = "AskUserQuestion"
+            let driver = Driver(tool: tool)
+            let (window, host) = try host(Card(driver: driver), width: 390)
+            defer { window.isHidden = true }
+            try await settle { driver.height > 100 }
+            let form = QuestionAnswerForm(tool: tool)
+            driver.draft.toggleText(at: 0, in: form)
+            driver.draft.setText("Attempted custom answer", at: 0, in: form)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertEqual(draftTextFields(host.view).isEmpty, !allowFreeText)
+            if !allowFreeText { XCTAssertNil(driver.draft.submission(in: form)) }
+        }
+    }
+
+    private func draftTextFields(_ view: UIView) -> [UIView] {
+        if view is UITextField { return [view] }
+        if let text = view as? UITextView, text.isEditable { return [view] }
+        return view.subviews.flatMap(draftTextFields)
+    }
+
     private func host<V: View>(_ view: V, width: CGFloat) throws -> (UIWindow, UIHostingController<V>) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)

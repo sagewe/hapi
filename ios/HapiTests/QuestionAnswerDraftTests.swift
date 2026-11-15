@@ -200,4 +200,29 @@ final class QuestionAnswerDraftTests: XCTestCase {
         XCTAssertEqual(state(), .failed)
         XCTAssertEqual(questionAnswerSummary(questionToolDetails(call).questions[0]), "A")
     }
+    func testExplicitlyFixedChoiceHidesAndRejectsRestoredCustomAnswers() throws {
+        let legacy = try QuestionAnswerForm(tool: tool(#"{"questions":[{"question":"Choose","options":[{"label":"One"}]}]}"#, name: "AskUserQuestion"))
+        let fixed = try QuestionAnswerForm(tool: tool(#"{"questions":[{"question":"Choose","options":[{"label":"One"}],"allowFreeText":false}]}"#, name: "AskUserQuestion"))
+        var draft = QuestionAnswerDraft()
+        draft.setText("Restored custom", at: 0, in: legacy)
+        XCTAssertTrue(draft.showsText(at: 0, in: legacy))
+        XCTAssertEqual(draft.submission(in: legacy), .flatAnswers(["0": ["Restored custom"]]))
+        XCTAssertFalse(fixed.fields[0].allowsCustomAnswer)
+        XCTAssertFalse(draft.showsText(at: 0, in: fixed))
+        XCTAssertNil(draft.submission(in: fixed))
+        draft.toggleText(at: 0, in: fixed)
+        XCTAssertFalse(draft.showsText(at: 0, in: fixed))
+        draft.select(0, at: 0, in: fixed)
+        XCTAssertEqual(draft.submission(in: fixed), .flatAnswers(["0": ["One"]]))
+    }
+
+    func testAgyTextOnlyFormStartsWithTextAndSubmitsTrimmedAnswer() throws {
+        let form = try QuestionAnswerForm(tool: tool(#"{"questions":[{"question":"Explain?","options":[],"allowFreeText":true}]}"#, name: "AskUserQuestion"))
+        var draft = QuestionAnswerDraft()
+        XCTAssertTrue(draft.showsText(at: 0, in: form))
+        XCTAssertNil(draft.submission(in: form))
+        draft.setText("  explanation  ", at: 0, in: form)
+        XCTAssertEqual(draft.submission(in: form), .flatAnswers(["0": ["explanation"]]))
+    }
+
 }

@@ -1,0 +1,138 @@
+{
+    "description": "A pending agy form adds the missing allowFreeText=false flag to an earlier tool call; labels and input are retained.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-question",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-question",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "running"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-question",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-question",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "running"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "requests": {
+                "agy-question": {
+                    "arguments": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "createdAt": 1755000000001,
+                    "tool": "AskUserQuestion"
+                }
+            }
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "message": {
+                                "content": [
+                                    {
+                                        "id": "agy-question",
+                                        "input": {
+                                            "questions": [
+                                                {
+                                                    "multiSelect": false,
+                                                    "options": [
+                                                        {
+                                                            "label": "One"
+                                                        }
+                                                    ],
+                                                    "question": "Which mode?"
+                                                }
+                                            ]
+                                        },
+                                        "name": "AskUserQuestion",
+                                        "type": "tool_use"
+                                    }
+                                ],
+                                "role": "assistant"
+                            },
+                            "parentUuid": null,
+                            "type": "assistant",
+                            "uuid": "agy-form-call"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-form-call",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-form-fixed-choice-pending"
+}

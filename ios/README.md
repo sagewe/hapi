@@ -891,6 +891,9 @@ Selecting it stays on the current question and focuses optional notes; empty
 notes are valid. Its wire value remains `None of the above` in every language,
 and recorded answers/notes appear in summaries and details. Requests without
 `isOther` (including Pi and MCP forms) keep their existing choices.
+Agent question forms that explicitly disallow free text hide the custom-answer
+field and omit incompatible retained text drafts on submit. Missing policies
+retain the earlier free-text behavior; Codex notes keep their existing semantics.
 All form state survives transcript-cell recycling for the retained request.
 Successful records collapse to answer summaries; missing recorded answers are
 shown as handled, not inferred from local drafts. Ordinary approvals retain their approval footer.

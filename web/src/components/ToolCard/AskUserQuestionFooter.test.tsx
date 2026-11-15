@@ -11,6 +11,7 @@ vi.mock('@/lib/use-translation', () => ({
     useTranslation: () => ({ t: (key: string) => key })
 }))
 
+import { askUserQuestionDraftKey, saveAskUserQuestionDraft } from '@/lib/ask-user-question-drafts'
 import { AskUserQuestionFooter } from './AskUserQuestionFooter'
 
 function makeTool(id: string): ChatToolCall {
@@ -117,5 +118,42 @@ describe('AskUserQuestionFooter draft persistence (hapi#1734)', () => {
         // Re-mount the same session/tool pair as if the widget were shown again
         rerender(<SessionKeyedWrapper sessionId="session-A" tool={tool} />)
         expect(screen.getByRole('radio', { name: /Alpha/ })).toHaveAttribute('aria-checked', 'false')
+    })
+})
+
+
+describe('AskUserQuestionFooter form text policy', () => {
+    it('keeps legacy questions without a policy open to typed answers', async () => {
+        const { approvePermission } = renderFooter('legacy-form', makeTool('legacy'))
+        fireEvent.click(screen.getByRole('radio', { name: /tool.other/ }))
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Custom' } })
+        fireEvent.click(screen.getByRole('button', { name: 'tool.submit' }))
+        await vi.waitFor(() => expect(approvePermission).toHaveBeenCalledWith('legacy-form', 'permission-1', { answers: { '0': ['Custom'] } }))
+    })
+
+    it('hides unsupported free text and never submits text from a previously restored draft', async () => {
+        const sessionId = 'fixed-form', tool = makeTool('fixed')
+        tool.input = { questions: [{ question: 'Pick one', options: [{ label: 'Alpha' }], allowFreeText: false }] }
+        saveAskUserQuestionDraft(askUserQuestionDraftKey(sessionId, tool.id), {
+            step: 0, selectedByQuestion: [[]], otherSelectedByQuestion: [true], otherTextByQuestion: ['Stale custom'], fallbackText: ''
+        })
+        const { approvePermission } = renderFooter(sessionId, tool)
+        expect(screen.queryByRole('textbox')).toBeNull()
+        expect(screen.queryByRole('radio', { name: /tool.other/ })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: 'tool.submit' }))
+        expect(approvePermission).not.toHaveBeenCalled()
+        fireEvent.click(screen.getByRole('radio', { name: /Alpha/ }))
+        fireEvent.click(screen.getByRole('button', { name: 'tool.submit' }))
+        await vi.waitFor(() => expect(approvePermission).toHaveBeenCalledWith(sessionId, 'permission-1', { answers: { '0': ['Alpha'] } }))
+    })
+
+    it('submits text-only forms without inventing an option', async () => {
+        const tool = makeTool('text-only')
+        tool.input = { questions: [{ question: 'Explain?', options: [], allowFreeText: true }] }
+        const { approvePermission } = renderFooter('text-form', tool)
+        fireEvent.click(screen.getByRole('radio', { name: /tool.other/ }))
+        fireEvent.change(screen.getByRole('textbox'), { target: { value: '  explanation  ' } })
+        fireEvent.click(screen.getByRole('button', { name: 'tool.submit' }))
+        await vi.waitFor(() => expect(approvePermission).toHaveBeenCalledWith('text-form', 'permission-1', { answers: { '0': ['explanation'] } }))
     })
 })

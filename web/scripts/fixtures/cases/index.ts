@@ -10,6 +10,7 @@ import { toolGroupCases } from './toolGroups'
 import { sidechainCases } from './sidechain'
 import { cliOutputCases } from './cliOutput'
 import { agyCases } from './agy'
+import { agyFormCases } from './agyForms'
 import { cursorCases } from './cursor'
 
 /** Batches 1 + 2. Each case becomes shared/fixtures/chat/<name>.json. */
@@ -25,5 +26,6 @@ export const fixtureCases: FixtureCase[] = [
     ...sidechainCases,
     ...cliOutputCases,
     ...agyCases,
+    ...agyFormCases,
     ...cursorCases
 ]

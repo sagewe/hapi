@@ -1,5 +1,7 @@
 package app.hapi.protocol.chat
 
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -8,6 +10,22 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /** Port of `web/src/chat/reducerTimeline.ts` — tool pairing, stream coalescing, agent-run cards. */
+
+/** Enrich an earlier question call with the text policy learned from its form. */
+private fun withRequestFreeTextFlags(input: JsonElement?, requestInput: JsonElement?): JsonElement? {
+    val root = input as? JsonObject ?: return input
+    val questions = root["questions"] as? JsonArray ?: return input
+    val requested = (requestInput as? JsonObject)?.get("questions") as? JsonArray ?: return input
+    val enriched = questions.mapIndexed { index, question ->
+        val entry = question as? JsonObject ?: return@mapIndexed question
+        if (entry.containsKey("allowFreeText")) return@mapIndexed question
+        val flag = (requested.getOrNull(index) as? JsonObject)?.get("allowFreeText") as? JsonPrimitive
+            ?: return@mapIndexed question
+        if (flag.isString || flag.booleanOrNull == null) return@mapIndexed question
+        JsonObject(entry + ("allowFreeText" to flag))
+    }
+    return JsonObject(root + ("questions" to JsonArray(enriched)))
+}
 
 class ReduceContext(
     val permissionsById: Map<String, PermissionEntry>,
@@ -1047,7 +1065,8 @@ fun reduceTimeline(
                             continue
                         }
 
-                        val permission = context.permissionsById[c.id]?.permission
+                        val permissionEntry = context.permissionsById[c.id]
+                        val permission = permissionEntry?.permission
 
                         val block = ensureToolBlock(
                             blocks, toolBlocksById, c.id,
@@ -1059,7 +1078,7 @@ fun reduceTimeline(
                                 localId = msg.localId,
                                 meta = msg.meta,
                                 name = c.name,
-                                input = c.input,
+                                input = withRequestFreeTextFlags(c.input, permissionEntry?.input),
                                 description = c.description,
                                 nativeTitle = c.nativeTitle,
                                 nativeKind = c.nativeKind,

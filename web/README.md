@@ -11,6 +11,7 @@ React Mini App / PWA for monitoring and controlling hapi sessions.
   focuses optional notes, supports empty notes, and preserves the canonical
   wire value across languages. Recorded other answers and notes remain visible
   in live and historical cards; Pi/MCP forms without the flag are unchanged.
+- Agent question forms with explicit `allowFreeText: false` hide Other and ignore incompatible restored text drafts; older inputs retain free text.
 - Permission mode and model selection.
 - Machine list and remote session spawn.
 - File browser and git status/diff views.

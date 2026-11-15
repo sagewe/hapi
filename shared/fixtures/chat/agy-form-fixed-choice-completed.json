@@ -1,0 +1,155 @@
+{
+    "description": "Historical completed form metadata retains the fixed-choice policy and the actual chosen label.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-question",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-question",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "answers": {
+                            "0": [
+                                "One"
+                            ]
+                        },
+                        "status": "approved"
+                    },
+                    "state": "running"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-question",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-question",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "answers": {
+                            "0": [
+                                "One"
+                            ]
+                        },
+                        "status": "approved"
+                    },
+                    "state": "running"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "completedRequests": {
+                "agy-question": {
+                    "answers": {
+                        "0": [
+                            "One"
+                        ]
+                    },
+                    "arguments": {
+                        "questions": [
+                            {
+                                "allowFreeText": false,
+                                "multiSelect": false,
+                                "options": [
+                                    {
+                                        "label": "One"
+                                    }
+                                ],
+                                "question": "Which mode?"
+                            }
+                        ]
+                    },
+                    "completedAt": 1755000000002,
+                    "createdAt": 1755000000001,
+                    "status": "approved",
+                    "tool": "AskUserQuestion"
+                }
+            }
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "message": {
+                                "content": [
+                                    {
+                                        "id": "agy-question",
+                                        "input": {
+                                            "questions": [
+                                                {
+                                                    "multiSelect": false,
+                                                    "options": [
+                                                        {
+                                                            "label": "One"
+                                                        }
+                                                    ],
+                                                    "question": "Which mode?"
+                                                }
+                                            ]
+                                        },
+                                        "name": "AskUserQuestion",
+                                        "type": "tool_use"
+                                    }
+                                ],
+                                "role": "assistant"
+                            },
+                            "parentUuid": null,
+                            "type": "assistant",
+                            "uuid": "agy-form-call"
+                        },
+                        "type": "output"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-form-call",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-form-fixed-choice-completed"
+}

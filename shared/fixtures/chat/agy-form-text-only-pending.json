@@ -1,0 +1,113 @@
+{
+    "description": "A free-text-only agy form has no choices and explicitly permits typed answers, including synthesized request-only cards.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1754999999999,
+                "id": "agy-text-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Ask me for an explanation."
+            },
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-text",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-text",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": true,
+                                "multiSelect": false,
+                                "options": [],
+                                "question": "Explain?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "pending"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1754999999999,
+                "id": "agy-text-user",
+                "kind": "user-text",
+                "localId": null,
+                "text": "Ask me for an explanation."
+            },
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-text",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-text",
+                    "input": {
+                        "questions": [
+                            {
+                                "allowFreeText": true,
+                                "multiSelect": false,
+                                "options": [],
+                                "question": "Explain?"
+                            }
+                        ]
+                    },
+                    "name": "AskUserQuestion",
+                    "permission": {
+                        "status": "pending"
+                    },
+                    "state": "pending"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": {
+            "requests": {
+                "agy-text": {
+                    "arguments": {
+                        "questions": [
+                            {
+                                "allowFreeText": true,
+                                "multiSelect": false,
+                                "options": [],
+                                "question": "Explain?"
+                            }
+                        ]
+                    },
+                    "createdAt": 1755000000000,
+                    "tool": "AskUserQuestion"
+                }
+            }
+        },
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "text": "Ask me for an explanation.",
+                        "type": "text"
+                    },
+                    "role": "user"
+                },
+                "createdAt": 1754999999999,
+                "id": "agy-text-user",
+                "localId": null,
+                "seq": 1
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-form-text-only-pending"
+}

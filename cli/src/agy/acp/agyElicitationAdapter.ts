@@ -28,6 +28,7 @@ interface PendingElicitationRequest {
         questions: Array<{
             question: string;
             multiSelect: boolean;
+            allowFreeText: boolean;
             options: Array<{ label: string }>;
         }>;
     };
@@ -85,16 +86,20 @@ export function parseAgyElicitationQuestions(
         let options: ParsedElicitationOption[] = [];
         if (choiceProp) {
             if (multiSelect && isObject(choiceProp.items)) {
-                options = parseEnumOptions(choiceProp.items.anyOf);
+                options = parseEnumOptions(choiceProp.items.anyOf ?? choiceProp.items.oneOf);
             } else {
-                options = parseEnumOptions(choiceProp.oneOf);
+                options = parseEnumOptions(choiceProp.oneOf ?? choiceProp.anyOf);
             }
         }
 
+        const freeTextProperty = otherProp?.type === 'string' ? otherProp : null;
+        // Do not queue an impossible question or silently approve a partial
+        // form after dropping one of its answer channels.
+        if (options.length === 0 && !freeTextProperty) return [];
         questions.push({
             qNum,
             choiceKey: choiceProp ? choiceKey : null,
-            otherKey: otherProp ? otherKey : null,
+            otherKey: freeTextProperty ? otherKey : null,
             question: questionText,
             multiSelect,
             options
@@ -131,6 +136,7 @@ export class AgyElicitationAdapter {
     ): Promise<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }> {
         if (!this.acceptingRequests) return { action: 'cancel' };
         const payload = isObject(params) ? params : {};
+        if (payload.mode !== undefined && payload.mode !== 'form') return { action: 'decline' };
         const sessionId = asString(payload.sessionId) ?? '';
         const toolCallId = asString(payload.toolCallId);
         const message = asString(payload.message);
@@ -146,6 +152,7 @@ export class AgyElicitationAdapter {
             questions: questions.map((q) => ({
                 question: q.question,
                 multiSelect: q.multiSelect,
+                allowFreeText: q.otherKey !== null,
                 options: q.options.map((opt) => ({ label: opt.label }))
             }))
         };
@@ -165,6 +172,7 @@ export class AgyElicitationAdapter {
                     ...currentState.requests,
                     [id]: {
                         tool: 'AskUserQuestion',
+                        ...(toolCallId ? { toolCallId } : {}),
                         arguments: toolArguments,
                         createdAt: Date.now()
                     }
@@ -182,7 +190,8 @@ export class AgyElicitationAdapter {
         }
 
         this.pending.delete(response.id);
-        const decision = response.decision ?? (response.approved ? 'approved' : 'denied');
+        let decision = response.decision ?? (response.approved ? 'approved' : 'denied');
+        let accepted = response.approved && decision !== 'abort' && decision !== 'denied';
 
         if (decision === 'abort') {
             pending.resolve({ action: 'cancel' });
@@ -229,16 +238,21 @@ export class AgyElicitationAdapter {
                 }
             });
 
-            pending.resolve({
-                action: 'accept',
-                content
-            });
+            // A stale or forged client can submit blank/unsupported values.
+            // Never acknowledge them as an answer that agy cannot consume.
+            if (Object.keys(content).length === 0) {
+                accepted = false;
+                decision = 'denied';
+                pending.resolve({ action: 'decline' });
+            } else {
+                pending.resolve({ action: 'accept', content });
+            }
         }
 
         this.session.updateAgentState((currentState) => {
             const requestEntry = currentState.requests?.[response.id];
             const { [response.id]: _, ...remaining } = currentState.requests ?? {};
-            const status = response.approved
+            const status = accepted
                 ? 'approved'
                 : decision === 'abort'
                     ? 'canceled'
@@ -251,18 +265,19 @@ export class AgyElicitationAdapter {
                     ...currentState.completedRequests,
                     [response.id]: {
                         tool: 'AskUserQuestion',
+                        ...(requestEntry?.toolCallId ? { toolCallId: requestEntry.toolCallId } : {}),
                         arguments: pending.toolArguments,
                         createdAt: requestEntry?.createdAt ?? Date.now(),
                         completedAt: Date.now(),
                         status,
                         decision,
-                        ...(response.answers ? { answers: response.answers } : {})
+                        ...(accepted && response.answers ? { answers: response.answers } : {})
                     }
                 }
             } satisfies AgentState;
         });
 
-        logger.debug(`[agy-acp] Elicitation response ${response.approved ? 'accepted' : 'declined'} (${response.id})`);
+        logger.debug(`[agy-acp] Elicitation response ${accepted ? 'accepted' : 'declined'} (${response.id})`);
         return true;
     }
 

@@ -82,7 +82,7 @@ function computeAnswersForQuestion(
     }
 
     const other = otherText.trim()
-    if (otherSelected && other.length > 0) {
+    if (question.allowFreeText && otherSelected && other.length > 0) {
         answers.push(other)
     }
 
@@ -290,7 +290,7 @@ export function AskUserQuestionFooter(props: {
 
     const toggleOther = (qIdx: number) => {
         const q = questions[qIdx]
-        if (!q) return
+        if (!q?.allowFreeText) return
         haptic.selection()
 
         if (!q.multiSelect) {
@@ -401,16 +401,16 @@ export function AskUserQuestionFooter(props: {
                             )
                         })}
 
-                        <OptionRow
+                        {questions[clampedStep].allowFreeText ? <OptionRow
                             checked={otherSelectedByQuestion[clampedStep] ?? false}
                             mode={mode}
                             disabled={props.disabled || loading}
                             title={t('tool.other')}
                             description={t('tool.otherDescription')}
                             onClick={() => toggleOther(clampedStep)}
-                        />
+                        /> : null}
 
-                        {(otherSelectedByQuestion[clampedStep] ?? false) ? (
+                        {questions[clampedStep].allowFreeText && (otherSelectedByQuestion[clampedStep] ?? false) ? (
                             <textarea
                                 value={otherTextByQuestion[clampedStep] ?? ''}
                                 onChange={(e) => updateOtherText(clampedStep, e.target.value)}
