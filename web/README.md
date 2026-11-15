@@ -174,8 +174,8 @@ supported set to preserve its embedded-language colors. Failed loads or renderin
 fall back to the current plain text instead of retaining an older code block.
 
 The PWA caches optional grammar/theme chunks after use, outside its install-time
-precache. Previously used grammars remain available offline; an unseen language
-falls back to plain text while offline. Only successful JavaScript responses are
+precache. Successfully cached grammars can be reused offline until eviction or
+expiry; an unseen language falls back to plain text while offline. Only successful JavaScript responses are
 cached, so SSO HTML/redirects cannot replace a grammar module.
 
 ## Stack
