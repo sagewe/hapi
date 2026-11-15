@@ -13,7 +13,10 @@ export function createAgyAcpBackend(cwd: string, mode: AgyMode): AcpSdkBackend {
     if (mode.permissionMode === 'always-proceed') args.push('--dangerously-skip-permissions');
     return new AcpSdkBackend({
         command: getAgentLaunchCommand('agy'), args, env, spawnCwd: cwd,
-        flavor: 'agy', acpModelSwitchViaConfigOption: true, textChunkMode: 'dedupe'
+        // ACP message chunks are deltas. Overlap deduplication eats valid repeated
+        // characters at boundaries (for example, '73-8' + '800'). The shared
+        // backend separately suppresses whole-reply duplicates during Steer.
+        flavor: 'agy', acpModelSwitchViaConfigOption: true, textChunkMode: 'delta'
     });
 }
 

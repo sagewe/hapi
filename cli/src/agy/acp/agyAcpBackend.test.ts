@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AcpSdkBackend } from '@/agent/backends/acp';
 import type { AgentMessage } from '@/agent/types';
-import { configureAgyAcpSession } from './agyAcpBackend';
+import { configureAgyAcpSession, createAgyAcpBackend } from './agyAcpBackend';
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -11,7 +11,7 @@ function deferred<T>() {
 describe('Antigravity ACP backend', () => {
     it('waits for both replies, deduplicates text and preserves steer-owned usage', async () => {
         const main = deferred<unknown>(); const steer = deferred<unknown>();
-        const backend = new AcpSdkBackend({ command: 'agy', flavor: 'agy', textChunkMode: 'dedupe' });
+        const backend = createAgyAcpBackend('/tmp', { permissionMode: 'request-review' });
         const internals = backend as unknown as { transport: unknown; handleSessionUpdate(params: unknown): void };
         internals.transport = {
             sendRequest: vi.fn(() => main.promise),
@@ -38,6 +38,23 @@ describe('Antigravity ACP backend', () => {
         expect(messages.filter((m) => m.type === 'usage')).toHaveLength(1);
         expect(messages.find((m) => m.type === 'usage')).toMatchObject({ inputTokens: 100, outputTokens: 12 });
         expect(messages.filter((m) => m.type === 'turn_complete')).toHaveLength(1);
+    });
+    it('preserves repeated characters and chunks in ordinary ACP delta streams', async () => {
+        const result = deferred<unknown>();
+        const backend = createAgyAcpBackend('/tmp', { permissionMode: 'request-review' });
+        const internals = backend as unknown as { transport: unknown; handleSessionUpdate(params: unknown): void };
+        internals.transport = { sendRequest: vi.fn(() => result.promise) };
+        const messages: AgentMessage[] = [];
+        const prompt = backend.prompt('native', [{ type: 'text', text: 'numbers' }], m => messages.push(m));
+        await vi.waitFor(() => expect(backend.isPromptRequestInFlight()).toBe(true));
+        for (const text of ['73-8', '800', '0', '0']) {
+            internals.handleSessionUpdate({ sessionId: 'native', update: {
+                sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }
+            } });
+        }
+        result.resolve({ stopReason: 'end_turn' });
+        await prompt;
+        expect(messages.filter(m => m.type === 'text')).toEqual([{ type: 'text', text: '73-880000' }]);
     });
     it('applies model and effort separately and refuses unsupported effort', async () => {
         const backend = {
