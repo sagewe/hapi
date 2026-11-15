@@ -427,6 +427,40 @@ export const SESSION_NAME_MAX_LENGTH = 255
 export const SESSION_TAG_MAX_LENGTH = 64
 export const SESSION_TAGS_MAX_COUNT = 20
 
+/** Agent suggestions append at most three tags without replacing user-owned tags. */
+export const SESSION_AGENT_TAGS_MAX_COUNT = 3
+export const SESSION_TAG_VOCABULARY_MAX_COUNT = 200
+const SessionTagValueSchema = z.string().trim().min(1).max(SESSION_TAG_MAX_LENGTH)
+
+export const AgentSessionTagsRequestSchema = z.object({
+    tags: z.array(SessionTagValueSchema).min(1).max(SESSION_AGENT_TAGS_MAX_COUNT).transform(tags => {
+        const seen = new Set<string>()
+        return tags.filter(tag => {
+            const key = tag.toLowerCase()
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+        })
+    })
+}).strict()
+export type AgentSessionTagsRequest = z.infer<typeof AgentSessionTagsRequestSchema>
+
+export const AgentSessionTagsResultSchema = z.object({
+    tags: z.array(SessionTagValueSchema).max(SESSION_TAGS_MAX_COUNT),
+    added: z.array(SessionTagValueSchema).max(SESSION_AGENT_TAGS_MAX_COUNT),
+    skipped: z.array(SessionTagValueSchema).max(SESSION_AGENT_TAGS_MAX_COUNT),
+    limitReached: z.boolean()
+})
+export type AgentSessionTagsResult = z.infer<typeof AgentSessionTagsResultSchema>
+
+export const SessionTagsContextSchema = z.object({
+    tags: z.array(SessionTagValueSchema).max(SESSION_TAGS_MAX_COUNT),
+    availableTags: z.array(SessionTagValueSchema).max(SESSION_TAG_VOCABULARY_MAX_COUNT),
+    titleLocked: z.boolean(),
+    truncated: z.boolean()
+})
+export type SessionTagsContext = z.infer<typeof SessionTagsContextSchema>
+
 export const RenameSessionRequestSchema = z.object({
     name: z.string().min(1).max(SESSION_NAME_MAX_LENGTH).optional(),
     titleLocked: z.boolean().optional(),
