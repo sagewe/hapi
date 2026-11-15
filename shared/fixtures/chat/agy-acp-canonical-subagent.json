@@ -1,0 +1,96 @@
+{
+    "description": "agy ACP canonical tool wire contract: stable callId, meaningful empty strings and canonical tool selection.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-subagent",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-subagent",
+                    "input": {
+                        "description": "Review",
+                        "prompt": "Inspect the changes",
+                        "subagent_type": "reviewer"
+                    },
+                    "name": "Task",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-subagent",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-subagent",
+                    "input": {
+                        "description": "Review",
+                        "prompt": "Inspect the changes",
+                        "subagent_type": "reviewer"
+                    },
+                    "name": "Task",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-subagent",
+                            "input": {
+                                "description": "Review",
+                                "prompt": "Inspect the changes",
+                                "subagent_type": "reviewer"
+                            },
+                            "name": "Task",
+                            "status": "completed",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-subagent-call",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-subagent",
+                            "is_error": false,
+                            "output": {},
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "agy-subagent-result",
+                "localId": null,
+                "seq": 2
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-canonical-subagent"
+}

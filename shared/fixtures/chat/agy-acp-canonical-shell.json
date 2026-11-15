@@ -1,0 +1,102 @@
+{
+    "description": "agy ACP canonical tool wire contract: stable callId, meaningful empty strings and canonical tool selection.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-shell",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-shell",
+                    "input": {
+                        "command": "printf done",
+                        "cwd": "/repo"
+                    },
+                    "name": "Bash",
+                    "result": {
+                        "exit_code": 0,
+                        "stdout": "done"
+                    },
+                    "state": "completed"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-shell",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-shell",
+                    "input": {
+                        "command": "printf done",
+                        "cwd": "/repo"
+                    },
+                    "name": "Bash",
+                    "result": {
+                        "exit_code": 0,
+                        "stdout": "done"
+                    },
+                    "state": "completed"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-shell",
+                            "input": {
+                                "command": "printf done",
+                                "cwd": "/repo"
+                            },
+                            "name": "Bash",
+                            "status": "completed",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-shell-call",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-shell",
+                            "is_error": false,
+                            "output": {
+                                "exit_code": 0,
+                                "stdout": "done"
+                            },
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "agy-shell-result",
+                "localId": null,
+                "seq": 2
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-canonical-shell"
+}

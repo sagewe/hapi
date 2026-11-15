@@ -1,0 +1,93 @@
+{
+    "description": "agy ACP canonical tool wire contract: stable callId, meaningful empty strings and canonical tool selection.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-empty-write",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-empty-write",
+                    "input": {
+                        "content": "",
+                        "file_path": "/repo/empty.txt"
+                    },
+                    "name": "Write",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-empty-write",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-empty-write",
+                    "input": {
+                        "content": "",
+                        "file_path": "/repo/empty.txt"
+                    },
+                    "name": "Write",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-empty-write",
+                            "input": {
+                                "content": "",
+                                "file_path": "/repo/empty.txt"
+                            },
+                            "name": "Write",
+                            "status": "completed",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-empty-write-call",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-empty-write",
+                            "is_error": false,
+                            "output": {},
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "agy-empty-write-result",
+                "localId": null,
+                "seq": 2
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-canonical-empty-write"
+}

@@ -1,0 +1,96 @@
+{
+    "description": "agy ACP canonical tool wire contract: stable callId, meaningful empty strings and canonical tool selection.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-delete-edit",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-delete-edit",
+                    "input": {
+                        "file_path": "/repo/a.txt",
+                        "new_string": "",
+                        "old_string": "remove me"
+                    },
+                    "name": "Edit",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-delete-edit",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-delete-edit",
+                    "input": {
+                        "file_path": "/repo/a.txt",
+                        "new_string": "",
+                        "old_string": "remove me"
+                    },
+                    "name": "Edit",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-delete-edit",
+                            "input": {
+                                "file_path": "/repo/a.txt",
+                                "new_string": "",
+                                "old_string": "remove me"
+                            },
+                            "name": "Edit",
+                            "status": "completed",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-delete-edit-call",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-delete-edit",
+                            "is_error": false,
+                            "output": {},
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "agy-delete-edit-result",
+                "localId": null,
+                "seq": 2
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-canonical-delete-edit"
+}

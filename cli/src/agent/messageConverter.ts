@@ -33,6 +33,8 @@ export type CodexMessage =
         nativeTitle?: string;
         nativeKind?: string;
         progress?: unknown;
+        nativeName?: string;
+        nativeArgs?: unknown;
     }
     | {
         type: 'tool-call-result';
@@ -119,7 +121,9 @@ export function convertAgentMessage(message: AgentMessage, model?: string | null
                 status: message.status,
                 ...(message.title ? { nativeTitle: message.title } : {}),
                 ...(message.kind ? { nativeKind: message.kind } : {}),
-                ...(message.progress !== undefined ? { progress: message.progress } : {})
+                ...(message.progress !== undefined ? { progress: message.progress } : {}),
+                ...(message.nativeName !== undefined ? { nativeName: message.nativeName } : {}),
+                ...(message.nativeArgs !== undefined ? { nativeArgs: message.nativeArgs } : {})
             };
         case 'tool_result':
             return {

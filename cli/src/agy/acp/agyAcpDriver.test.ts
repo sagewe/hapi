@@ -81,6 +81,59 @@ function harness(reactiveOptions?: AgyReactiveWakeupOptions) {
 }
 
 describe('Antigravity ACP delivery', () => {
+    it('canonicalizes live tools while preserving IDs, empty text and legacy names', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-canonical-live-'));
+        const h = harness({ brainDir }); const { running, getUpdate } = await h.start();
+        try {
+            const emit = getUpdate();
+            emit({ type: 'tool_call', id: 'delete-id', name: 'File a', status: 'in_progress',
+                input: {}, nativeName: 'edit_file', nativeArgs: { Path: '/tmp/a', Target: 'old', Replacement: '' } });
+            emit({ type: 'tool_call', id: 'empty-id', name: 'File b', status: 'in_progress',
+                input: {}, nativeName: 'write_file', nativeArgs: { Path: '/tmp/b', Content: '' } });
+            emit({ type: 'tool_call', id: 'bash-id', name: 'echo done', status: 'in_progress',
+                input: {}, nativeName: 'run_command', nativeArgs: { CommandLine: 'echo done' } });
+            emit({ type: 'tool_result', id: 'bash-id', status: 'completed',
+                output: { output: 'Command exited with code 0.\n\nCommand output:\ndone\n', exit_code: 0 } });
+            emit({ type: 'tool_call', id: 'old-id', name: 'Run write_file', status: 'in_progress', input: { Content: 'legacy' } });
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call',
+                callId: 'delete-id', name: 'Edit', input: { file_path: '/tmp/a', old_string: 'old', new_string: '' } }));
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call',
+                callId: 'empty-id', name: 'Write', input: { file_path: '/tmp/b', content: '' } }));
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call-result',
+                callId: 'bash-id', output: { stdout: 'done', exit_code: 0 } }));
+            expect(h.client.sendAgentMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'tool-call',
+                callId: 'old-id', name: 'Run write_file', input: { Content: 'legacy' } }));
+        } finally { await h.driver.stop(); await running; rmSync(brainDir, { recursive: true, force: true }); }
+    });
+
+    it('canonicalizes transcript continuations without changing reactive identities', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-canonical-reactive-'));
+        const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs'); mkdirSync(logsDir, { recursive: true });
+        const path = join(logsDir, 'transcript_full.jsonl'); writeFileSync(path, '');
+        const h = harness({ brainDir, pollIntervalMs: 5, quietPeriodMs: 5 }); const { running } = await h.start();
+        try {
+            writeFileSync(path, [
+                { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE' },
+                { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'working' },
+                { step_index: 2, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', content: 'wake' },
+                { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', tool_calls: [
+                    { name: 'edit_file', args: { Path: '/tmp/a', Target: 'old', Replacement: '' } },
+                    { name: 'write_file', args: { Path: '/tmp/b', Content: '' } } ] },
+                { step_index: 4, source: 'MODEL', type: 'GENERIC', status: 'DONE' },
+                { step_index: 5, source: 'MODEL', type: 'GENERIC', status: 'DONE' },
+                { step_index: 6, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', content: 'done' }
+            ].map(step => JSON.stringify(step)).join('\n') + '\n');
+            h.turn.resolve(); await vi.waitFor(() => expect(h.session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            const calls = h.client.sendAgentMessage.mock.calls.map(call => call[0]).filter(message => message.type === 'tool-call');
+            expect(calls).toEqual(expect.arrayContaining([
+                expect.objectContaining({ name: 'Edit', callId: 'call_reactive_3_0', status: 'in_progress', input: { file_path: '/tmp/a', old_string: 'old', new_string: '' } }),
+                expect.objectContaining({ name: 'Edit', callId: 'call_reactive_3_0', status: 'completed', input: { file_path: '/tmp/a', old_string: 'old', new_string: '' } }),
+                expect.objectContaining({ name: 'Write', callId: 'call_reactive_3_1', status: 'completed', input: { file_path: '/tmp/b', content: '' } }) ]));
+            const results = h.client.sendAgentMessage.mock.calls.map(call => call[0]).filter(message => message.type === 'tool-call-result');
+            expect(results.map(message => message.callId)).toEqual(['call_reactive_3_0', 'call_reactive_3_1']);
+        } finally { await h.driver.stop(); await running; rmSync(brainDir, { recursive: true, force: true }); }
+    });
+
     it('does not replay ordinary log growth or let a log-only RUNNING step own the session', async () => {
         const brainDir = mkdtempSync(join(tmpdir(), 'agy-source-ownership-'));
         const logsDir = join(brainDir, 'agy-native', '.system_generated', 'logs');
@@ -347,14 +400,15 @@ describe('Antigravity ACP delivery', () => {
             expect(sentPayloads).toContainEqual({
                 type: 'tool-call-result',
                 callId: 'call_bg_2',
-                output: { output: 'Command exited with code 0.\n\nCommand output:\ndone', exit_code: 0 },
+                output: { stdout: 'done', exit_code: 0 },
                 is_error: false
             });
             expect(h.client.sendClaudeSessionMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }));
             // Reactive read_file tool_call and final text message emitted
             expect(sentPayloads).toContainEqual(expect.objectContaining({
                 type: 'tool-call',
-                name: 'File README.md',
+                name: 'Read',
+                input: { file_path: '/tmp/README.md' },
                 nativeKind: 'read',
                 status: 'completed'
             }));

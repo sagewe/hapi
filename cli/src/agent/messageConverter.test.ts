@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { convertAgentMessage } from './messageConverter';
 
 describe('convertAgentMessage', () => {
+    it('preserves native identity and meaningful empty arguments on canonical tool wire rows', () => {
+        expect(convertAgentMessage({ type: 'tool_call', id: 'delete', name: 'Edit', status: 'in_progress',
+            input: { file_path: '/a', old_string: 'old', new_string: '' },
+            nativeName: 'edit_file', nativeArgs: { Path: '/a', Target: 'old', Replacement: '' } }))
+            .toMatchObject({ type: 'tool-call', callId: 'delete', name: 'Edit',
+                input: { file_path: '/a', old_string: 'old', new_string: '' },
+                nativeName: 'edit_file', nativeArgs: { Path: '/a', Target: 'old', Replacement: '' } });
+    });
+
     it('preserves a stable text stream id on the message wire payload', () => {
         const converted = convertAgentMessage({
             type: 'text',

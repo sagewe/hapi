@@ -25,6 +25,28 @@ describe('AcpMessageHandler', () => {
         vi.restoreAllMocks();
     });
 
+    it('retains native args through named, nameless and status-only ticks', () => {
+        const messages: AgentMessage[] = [];
+        const handler = new AcpMessageHandler(message => messages.push(message));
+        const start = { sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall, toolCallId: 'native-edit',
+            name: 'edit_file', args: { Path: '/tmp/a', Target: 'remove', Replacement: '' },
+            title: 'Free text title', kind: 'edit', status: 'in_progress' };
+        handler.handleUpdate(start);
+        handler.handleUpdate({ sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate, toolCallId: 'native-edit',
+            name: 'edit_file', status: 'in_progress' });
+        handler.handleUpdate({ sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate, toolCallId: 'native-edit',
+            args: { Path: '/tmp/a', Target: '', Replacement: 'insert' }, status: 'in_progress' });
+        handler.handleUpdate({ sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCallUpdate, toolCallId: 'native-edit', status: 'completed' });
+        const calls = messages.filter(message => message.type === 'tool_call');
+        expect(calls[1]).toMatchObject({ id: 'native-edit', nativeName: 'edit_file', nativeArgs: start.args });
+        expect(calls.at(-1)).toMatchObject({ id: 'native-edit', nativeName: 'edit_file',
+            nativeArgs: { Path: '/tmp/a', Target: '', Replacement: 'insert' }, status: 'in_progress' });
+        expect(getToolResult(messages, 'native-edit').status).toBe('completed');
+        handler.handleUpdate({ sessionUpdate: ACP_SESSION_UPDATE_TYPES.toolCall, toolCallId: 'native-edit',
+            title: 'Generic legacy tool', status: 'in_progress', rawInput: { Path: '/tmp/a' } });
+        expect(messages.filter(message => message.type === 'tool_call').at(-1)).not.toHaveProperty('nativeName');
+    });
+
     it('does not synthesize {status} output when tool completes without payload', () => {
         const messages: AgentMessage[] = [];
         const handler = new AcpMessageHandler((message) => messages.push(message));

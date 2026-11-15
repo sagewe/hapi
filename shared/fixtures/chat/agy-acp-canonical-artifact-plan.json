@@ -1,0 +1,90 @@
+{
+    "description": "agy ACP canonical tool wire contract: stable callId, meaningful empty strings and canonical tool selection.",
+    "expected": {
+        "blocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-artifact-plan",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-artifact-plan",
+                    "input": {
+                        "plan": "# Task plan\n\nCheck the test result."
+                    },
+                    "name": "ExitPlanMode",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ],
+        "hasReadyEvent": false,
+        "latestUsage": null,
+        "visibleBlocks": [
+            {
+                "createdAt": 1755000000000,
+                "id": "agy-artifact-plan",
+                "kind": "tool-call",
+                "localId": null,
+                "tool": {
+                    "id": "agy-artifact-plan",
+                    "input": {
+                        "plan": "# Task plan\n\nCheck the test result."
+                    },
+                    "name": "ExitPlanMode",
+                    "result": {},
+                    "state": "completed"
+                }
+            }
+        ]
+    },
+    "fixtureVersion": 1,
+    "input": {
+        "agentState": null,
+        "messages": [
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-artifact-plan",
+                            "input": {
+                                "plan": "# Task plan\n\nCheck the test result."
+                            },
+                            "name": "ExitPlanMode",
+                            "status": "completed",
+                            "type": "tool-call"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000000000,
+                "id": "agy-artifact-plan-call",
+                "localId": null,
+                "seq": 1
+            },
+            {
+                "content": {
+                    "content": {
+                        "data": {
+                            "callId": "agy-artifact-plan",
+                            "is_error": false,
+                            "output": {},
+                            "type": "tool-call-result"
+                        },
+                        "type": "codex"
+                    },
+                    "role": "agent"
+                },
+                "createdAt": 1755000001000,
+                "id": "agy-artifact-plan-result",
+                "localId": null,
+                "seq": 2
+            }
+        ],
+        "options": {
+            "hasMoreMessages": false
+        }
+    },
+    "name": "agy-acp-canonical-artifact-plan"
+}

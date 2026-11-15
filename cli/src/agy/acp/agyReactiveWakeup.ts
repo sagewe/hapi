@@ -38,6 +38,8 @@ interface TrackedToolCall {
     input: unknown;
     title?: string;
     kind?: string;
+    nativeName?: string;
+    nativeArgs?: unknown;
 }
 
 interface PendingBackgroundTask extends TrackedToolCall {
@@ -818,6 +820,8 @@ export class AgyReactiveWakeupTracker {
                 id: message.id,
                 name: message.name,
                 input: message.input,
+                ...(message.nativeName !== undefined ? { nativeName: message.nativeName } : {}),
+                ...(message.nativeArgs !== undefined ? { nativeArgs: message.nativeArgs } : {}),
                 ...(message.title ? { title: message.title } : {}),
                 ...(message.kind ? { kind: message.kind } : {})
             };
@@ -1079,7 +1083,8 @@ export class AgyReactiveWakeupTracker {
             if (step.source === 'MODEL' && step.type === 'GENERIC' && step.status === 'RUNNING') {
                 const taskId = extractRunningTaskId(step.content);
                 if (!taskId) continue;
-                const meta = toolCallMetaByStep.get(step.step_index) ?? {
+                const nativeMeta = toolCallMetaByStep.get(step.step_index);
+                const meta = nativeMeta ?? {
                     toolName: 'run_command',
                     args: {}
                 };
@@ -1092,6 +1097,8 @@ export class AgyReactiveWakeupTracker {
                     taskId,
                     stepIndex: step.step_index,
                     toolName: meta.toolName,
+                    nativeName: nativeMeta?.toolName ?? matchedOpenCall?.nativeName,
+                    nativeArgs: nativeMeta?.args ?? matchedOpenCall?.nativeArgs,
                     id: matchedOpenCall?.id ?? `call_reactive_${step.step_index}`,
                     name: matchedOpenCall?.name ?? fallbackFormatted.name,
                     input: matchedOpenCall?.input ?? fallbackFormatted.input,
@@ -1166,6 +1173,8 @@ export class AgyReactiveWakeupTracker {
             id: pending.id,
             name: pending.name,
             input: pending.input,
+            ...(pending.nativeName !== undefined ? { nativeName: pending.nativeName } : {}),
+            ...(pending.nativeArgs !== undefined ? { nativeArgs: pending.nativeArgs } : {}),
             status: 'failed',
             ...(pending.title ? { title: pending.title } : {}),
             ...(pending.kind ? { kind: pending.kind } : {})
@@ -1209,6 +1218,8 @@ export class AgyReactiveWakeupTracker {
                 id: pending.id,
                 name: pending.name,
                 input: pending.input,
+                ...(pending.nativeName !== undefined ? { nativeName: pending.nativeName } : {}),
+                ...(pending.nativeArgs !== undefined ? { nativeArgs: pending.nativeArgs } : {}),
                 status: 'failed',
                 ...(pending.title ? { title: pending.title } : {}),
                 ...(pending.kind ? { kind: pending.kind } : {})
@@ -1253,6 +1264,8 @@ export class AgyReactiveWakeupTracker {
             id: pending.id,
             name: pending.name,
             input: pending.input,
+            ...(pending.nativeName !== undefined ? { nativeName: pending.nativeName } : {}),
+            ...(pending.nativeArgs !== undefined ? { nativeArgs: pending.nativeArgs } : {}),
             status,
             ...(pending.title ? { title: pending.title } : {}),
             ...(pending.kind ? { kind: pending.kind } : {})
@@ -1279,6 +1292,8 @@ export class AgyReactiveWakeupTracker {
                 id: pending.id,
                 name: pending.name,
                 input: pending.input,
+                ...(pending.nativeName !== undefined ? { nativeName: pending.nativeName } : {}),
+                ...(pending.nativeArgs !== undefined ? { nativeArgs: pending.nativeArgs } : {}),
                 status: 'completed',
                 ...(pending.title ? { title: pending.title } : {}),
                 ...(pending.kind ? { kind: pending.kind } : {})
@@ -1384,6 +1399,8 @@ export class AgyReactiveWakeupTracker {
                             expectedStepIndex: resultStepIndex,
                             id: callId,
                             toolName: tc.name,
+                            nativeName: tc.name,
+                            nativeArgs: args,
                             args,
                             name: formatted.name,
                             input: formatted.input,
@@ -1401,7 +1418,9 @@ export class AgyReactiveWakeupTracker {
                             input: formatted.input,
                             status: 'in_progress',
                             title: formatted.title,
-                            kind: formatted.kind
+                            kind: formatted.kind,
+                            nativeName: tc.name,
+                            nativeArgs: args
                         });
                     });
                     if (typeof step.input_tokens === 'number' || typeof step.output_tokens === 'number') {
@@ -1430,6 +1449,8 @@ export class AgyReactiveWakeupTracker {
                         expectedStepIndex: step.step_index,
                         id: `call_reactive_${step.step_index}`,
                         toolName: 'run_command',
+                        nativeName: undefined,
+                        nativeArgs: undefined,
                         args: {},
                         name: 'Run tool',
                         input: {},
@@ -1451,6 +1472,8 @@ export class AgyReactiveWakeupTracker {
                                 taskId,
                                 stepIndex: step.step_index,
                                 toolName: meta.toolName,
+                                nativeName: meta.nativeName,
+                                nativeArgs: meta.nativeArgs,
                                 id: meta.id,
                                 name: meta.name,
                                 input: meta.input,
@@ -1510,6 +1533,8 @@ export class AgyReactiveWakeupTracker {
                             id: effectiveMeta.id,
                             name: effectiveMeta.name,
                             input: effectiveMeta.input,
+                            ...(effectiveMeta.nativeName !== undefined ? { nativeName: effectiveMeta.nativeName } : {}),
+                            ...(effectiveMeta.nativeArgs !== undefined ? { nativeArgs: effectiveMeta.nativeArgs } : {}),
                             status,
                             ...(effectiveMeta.title ? { title: effectiveMeta.title } : {}),
                             ...(effectiveMeta.kind ? { kind: effectiveMeta.kind } : {})

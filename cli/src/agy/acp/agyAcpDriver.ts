@@ -13,6 +13,7 @@ import { logger } from '@/ui/logger';
 import type { AgentMessage } from '@/agent/types';
 import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
+import { mapAgyToolCall, mapAgyToolResult } from '../agyToolCards';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
 import { AgyReactiveContinuationPendingError, AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
@@ -33,6 +34,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private aborting: Promise<void> | null = null;
     private generation = 0;
     private stopping = false;
+    private readonly nativeToolNames = new Map<string, string>();
     private backgroundTasksSignature = '[]';
 
     constructor(
@@ -52,6 +54,20 @@ export class AgyAcpDriver extends RemoteLauncherBase {
 
     public launch(): Promise<'switch' | 'exit'> {
         return this.start({ onExit: () => this.stop() });
+    }
+
+    /** One path for ACP-owned output and transcript-only continuations. */
+    private forwardAgentMessage(message: AgentMessage, model?: string | null): void {
+        let canonical = message;
+        if (message.type === 'tool_call') {
+            if (message.nativeName) this.nativeToolNames.set(message.id, message.nativeName);
+            canonical = mapAgyToolCall(message);
+        } else if (message.type === 'tool_result') {
+            canonical = mapAgyToolResult(message, this.nativeToolNames.get(message.id));
+            this.nativeToolNames.delete(message.id);
+        }
+        const converted = convertAgentMessage(canonical, model);
+        if (converted) this.session.client.sendAgentMessage(converted);
     }
 
     private steering(active: boolean): void {
@@ -75,6 +91,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         this.backend = null;
         this.backendModeHash = null;
         this.reactiveWakeup.reset();
+        this.nativeToolNames.clear();
         this.publishBackgroundTasks();
         const elicitation = this.elicitation;
         this.elicitation = null;
@@ -281,8 +298,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                             const backend = this.backend;
                             if (!backend || !session.sessionId || this.stopping || this.aborting) return;
                             const onUpdate = (message: AgentMessage) => {
-                                const converted = convertAgentMessage(message, mode.model);
-                                if (converted) session.client.sendAgentMessage(converted);
+                                this.forwardAgentMessage(message, mode.model);
                             };
                             await this.reactiveWakeup.afterIdleWakeup({
                                 sessionId: session.sessionId,
@@ -335,8 +351,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                                 acknowledge();
                             }
                             this.reactiveWakeup.observePromptUpdate(message);
-                            const converted = convertAgentMessage(message, msg.mode.model);
-                            if (converted) session.client.sendAgentMessage(converted);
+                            this.forwardAgentMessage(message, msg.mode.model);
                         };
                         this.elicitation?.beginPrompt();
                         await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
@@ -352,8 +367,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                             mode: msg.mode,
                             backend,
                             onUpdate: (message) => {
-                                const converted = convertAgentMessage(message, msg.mode.model);
-                                if (converted) session.client.sendAgentMessage(converted);
+                                this.forwardAgentMessage(message, msg.mode.model);
                             },
                             shouldYield: () => this.stopping || Boolean(this.aborting) || session.queue.size() > 0,
                             isAborted: () => this.stopping || Boolean(this.aborting)

@@ -59,6 +59,8 @@ export type AgentMessage =
         title?: string;
         kind?: string;
         progress?: unknown;
+        nativeName?: string;
+        nativeArgs?: unknown;
     }
     | { type: 'tool_result'; id: string; output: unknown; status: 'completed' | 'failed' }
     | {

@@ -501,6 +501,7 @@ function mayBeUnfinishedControlEnvelope(text: string): boolean {
 
 export class AcpMessageHandler {
     private readonly toolCalls = new Map<string, { name: string; input: unknown }>();
+    private readonly nativeTools = new Map<string, { nativeName: string; nativeArgs?: unknown }>();
     private acceptingUpdates = true;
     private bufferedText = '';
     // Stable stream id for a text segment that has already been emitted by an
@@ -956,9 +957,23 @@ export class AcpMessageHandler {
         return source;
     }
 
+    /** Preserve native identity/arguments through status-only ACP ticks. */
+    private nativeToolFields(id: string, update: Record<string, unknown>): { nativeName?: string; nativeArgs?: unknown } {
+        const previous = this.nativeTools.get(id);
+        const nativeName = asString(update.name) || previous?.nativeName;
+        if (!nativeName) return {};
+        const nativeArgs = update.args !== undefined ? update.args
+            : isUsableRawInput(update.rawInput) ? update.rawInput
+            : previous?.nativeName === nativeName ? previous.nativeArgs : undefined;
+        const fields = { nativeName, ...(nativeArgs !== undefined ? { nativeArgs } : {}) };
+        this.nativeTools.set(id, fields);
+        return fields;
+    }
+
     private handleToolCall(update: Record<string, unknown>): void {
         const toolCallId = asString(update.toolCallId);
         if (!toolCallId) return;
+        this.nativeTools.delete(toolCallId);
 
         // Initial tool_call events (in_progress) never carry a completed diff block,
         // so metaKind is always null here. Pass it explicitly to prevent a silent
@@ -1015,7 +1030,8 @@ export class AcpMessageHandler {
             input,
             status,
             ...(asString(update.title) ? { title: asString(update.title)! } : {}),
-            ...(asString(update.kind) ? { kind: asString(update.kind)! } : {})
+            ...(asString(update.kind) ? { kind: asString(update.kind)! } : {}),
+            ...this.nativeToolFields(toolCallId, update)
         });
     }
 
@@ -1027,7 +1043,8 @@ export class AcpMessageHandler {
         const existing = this.toolCalls.get(toolCallId);
         const presentation = {
             ...(asString(update.title) ? { title: asString(update.title)! } : {}),
-            ...(asString(update.kind) ? { kind: asString(update.kind)! } : {})
+            ...(asString(update.kind) ? { kind: asString(update.kind)! } : {}),
+            ...this.nativeToolFields(toolCallId, update)
         };
 
         if (isUsableRawInput(update.rawInput)) {
@@ -1092,7 +1109,8 @@ export class AcpMessageHandler {
                 }
             }
             const justEnriched = (!isUsableRawInput(existing.input) && isUsableRawInput(input)) || rederived;
-            if (status === 'in_progress' || status === 'pending' || justEnriched) {
+            if (status === 'in_progress' || status === 'pending' || justEnriched
+                || (presentation.nativeName !== undefined && update.args !== undefined)) {
                 this.onMessage({
                     type: 'tool_call',
                     id: toolCallId,
