@@ -5,7 +5,7 @@ describe('agent session tags protocol', () => {
     it('trims and deduplicates case-insensitively while retaining first spelling/order', () => {
         expect(AgentSessionTagsRequestSchema.parse({ tags: [' Work ', 'work', '家庭'] })).toEqual({ tags: ['Work', '家庭'] })
     })
-    it.each([[], [''], ['   '], ['x'.repeat(65)], ['a','b','c','d']])('rejects invalid suggestion array %j', tags => {
+    it.each([[], [''], ['   '], ['x'.repeat(65)], ['a','b','c','d']].map(tags => ({ tags })))('rejects invalid suggestion array %j', ({ tags }) => {
         expect(AgentSessionTagsRequestSchema.safeParse({ tags }).success).toBe(false)
     })
     it('does not permit raw title/lock fields in append requests', () => {
