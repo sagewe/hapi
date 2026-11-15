@@ -1444,19 +1444,14 @@ struct ChatComposerView: View {
     }
 
     private var composerControlsColor: Color {
-        if configModel.permission.tone == .danger || (configModel.quotaPeakUsedPercent ?? 0) >= 90 {
+        // The gauge represents quota; permission risk is shown in its own menu.
+        if (configModel.quotaPeakUsedPercent ?? 0) >= 90 {
             return .red
         }
-        if configModel.permission.tone == .warning || (configModel.quotaPeakUsedPercent ?? 0) >= 75 {
+        if (configModel.quotaPeakUsedPercent ?? 0) >= 75 {
             return .orange
         }
-        let hasCustomEffort = configModel.showsEffort && configModel.currentEffort != nil
-        let hasFastMode = configModel.showsFastMode && configModel.serviceTier == .fast
-        let hasCustomPermission = configModel.permission != .default
-            || (configModel.showsCollaborationMode && configModel.collaborationMode != .default)
-        if hasCustomEffort || hasFastMode || hasCustomPermission || isPopupOpen(.sessionControls) {
-            return .accentColor
-        }
+        if isPopupOpen(.sessionControls) { return .accentColor }
         return Color.primary.opacity(0.88)
     }
 
@@ -2185,7 +2180,7 @@ private struct ComposerQuotaPopoverView: View {
                     .font(.caption.monospaced().weight(.semibold))
                 Spacer(minLength: 4)
                 if let window {
-                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
+                    Text(String(format: String(localized: "%@%% used · %@%% left"), max(0, min(100, window.usedPercent)).formatted(.number.precision(.fractionLength(0...1))), max(0, min(100, 100 - window.usedPercent)).formatted(.number.precision(.fractionLength(0...1)))))
                         .font(.caption.monospacedDigit())
                     if window.resetsAt != nil {
                         Text(verbatim: "· ↻ \(window.formatResetCountdown())")
@@ -2199,7 +2194,7 @@ private struct ComposerQuotaPopoverView: View {
                 }
             }
             if let window {
-                let used = window.usedPercentInt
+                let used = max(0, min(100, window.usedPercent))
                 ProgressView(value: Double(used), total: 100)
                     .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
             }
@@ -2881,8 +2876,8 @@ private struct ComposerAccessibilityProbe: UIViewRepresentable {
 
 /// Open-bottom 240° dual-tone progress arc gauge with a central pivot needle,
 /// distinguishing quota/session controls from the leading `clock` schedule glyph.
-private struct ComposerQuotaGaugeIcon: View {
-    let usedPercent: Int?
+struct ComposerQuotaGaugeIcon: View {
+    let usedPercent: Double?
     let accentColor: Color
 
     #if targetEnvironment(macCatalyst)
@@ -2893,9 +2888,9 @@ private struct ComposerQuotaGaugeIcon: View {
     private let lineWidth: CGFloat = 1.95
     #endif
 
-    private var fraction: Double {
-        let value = Double(usedPercent ?? 32)
-        return min(1.0, max(0.18, value / 100.0))
+    var remainingFraction: Double? {
+        guard let usedPercent, usedPercent.isFinite else { return nil }
+        return 1 - min(1, max(0, usedPercent / 100))
     }
 
     var body: some View {
@@ -2908,47 +2903,49 @@ private struct ComposerQuotaGaugeIcon: View {
                 )
                 .rotationEffect(.degrees(150))
 
-            Circle()
-                .trim(from: 0, to: (240.0 / 360.0) * fraction)
-                .stroke(
-                    accentColor,
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(150))
+            if let fraction = remainingFraction {
+                Circle()
+                    .trim(from: 0, to: (240.0 / 360.0) * fraction)
+                    .stroke(
+                        accentColor,
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(150))
 
-            Canvas { context, size in
-                let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                let scale = size.width / 19.0
-                let rad = (150.0 + fraction * 240.0) * .pi / 180.0
-                let pivotRadius = 2.1 * scale
-                let needleLength = 5.8 * scale
-                let start = CGPoint(
-                    x: center.x + pivotRadius * cos(rad),
-                    y: center.y + pivotRadius * sin(rad)
-                )
-                let end = CGPoint(
-                    x: center.x + needleLength * cos(rad),
-                    y: center.y + needleLength * sin(rad)
-                )
-                var needle = Path()
-                needle.move(to: start)
-                needle.addLine(to: end)
-                context.stroke(
-                    needle,
-                    with: .color(accentColor),
-                    style: StrokeStyle(lineWidth: lineWidth * 0.92, lineCap: .round)
-                )
-                let pivotRect = CGRect(
-                    x: center.x - pivotRadius,
-                    y: center.y - pivotRadius,
-                    width: pivotRadius * 2,
-                    height: pivotRadius * 2
-                )
-                context.stroke(
-                    Path(ellipseIn: pivotRect),
-                    with: .color(accentColor),
-                    lineWidth: lineWidth * 0.88
-                )
+                Canvas { context, size in
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let scale = size.width / 19.0
+                    let rad = (150.0 + fraction * 240.0) * .pi / 180.0
+                    let pivotRadius = 2.1 * scale
+                    let needleLength = 5.8 * scale
+                    let start = CGPoint(
+                        x: center.x + pivotRadius * cos(rad),
+                        y: center.y + pivotRadius * sin(rad)
+                    )
+                    let end = CGPoint(
+                        x: center.x + needleLength * cos(rad),
+                        y: center.y + needleLength * sin(rad)
+                    )
+                    var needle = Path()
+                    needle.move(to: start)
+                    needle.addLine(to: end)
+                    context.stroke(
+                        needle,
+                        with: .color(accentColor),
+                        style: StrokeStyle(lineWidth: lineWidth * 0.92, lineCap: .round)
+                    )
+                    let pivotRect = CGRect(
+                        x: center.x - pivotRadius,
+                        y: center.y - pivotRadius,
+                        width: pivotRadius * 2,
+                        height: pivotRadius * 2
+                    )
+                    context.stroke(
+                        Path(ellipseIn: pivotRect),
+                        with: .color(accentColor),
+                        lineWidth: lineWidth * 0.88
+                    )
+                }
             }
         }
         .frame(width: gaugeDiameter, height: gaugeDiameter)
@@ -4020,16 +4017,16 @@ struct ComposerSessionControlsPopupCard: View {
         for group in result.groups ?? [] {
             windows.append(contentsOf: [group.fiveHour, group.sevenDay].compactMap { $0 })
         }
-        return windows.max { $0.usedPercentInt < $1.usedPercentInt }
+        return windows.max { $0.usedPercent < $1.usedPercent }
     }
 
     private var quotaSummary: some View {
         HStack(spacing: 8) {
             if let window = tightestQuotaWindow {
-                let peak = window.usedPercentInt
+                let peak = max(0, min(100, window.usedPercent))
                 Circle().fill(peak >= 90 ? Color.orange : Color.secondary.opacity(0.5))
                     .frame(width: 6, height: 6)
-                Text(String(format: String(localized: "Lowest remaining %lld%%"), Int64(max(0, 100 - peak))))
+                Text(String(format: String(localized: "Lowest remaining %@%%"), (100 - peak).formatted(.number.precision(.fractionLength(0...1)))))
                     .font(.subheadline.monospacedDigit())
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 2) {

@@ -603,7 +603,7 @@ struct UsageQuerySettingsView: View {
                 .font(.caption.monospaced().weight(.semibold))
             Spacer()
             if let window {
-                Text(verbatim: "\(window.usedPercentInt)% used · \(window.remainingPercentInt)% left")
+                Text(String(format: String(localized: "%@%% used · %@%% left"), max(0, min(100, window.usedPercent)).formatted(.number.precision(.fractionLength(0...1))), max(0, min(100, 100 - window.usedPercent)).formatted(.number.precision(.fractionLength(0...1)))))
                     .font(.caption.monospacedDigit())
                 if window.resetsAt != nil {
                     Text(verbatim: "· ↻ \(window.formatResetCountdown())")

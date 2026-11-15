@@ -21,6 +21,7 @@ struct HomeView: View {
     @State private var showQuickSwitcher = false
     @State private var searchFocused = false
     @State private var path: [String] = []
+    @State private var previousSessionId: String?
     @State private var tabletNavigation = SessionNavigationState()
     /// Transient connection states show only after `connectionRevealDelay`:
     /// a foreground reconnect usually finishes first (Telegram-style).
@@ -60,6 +61,16 @@ struct HomeView: View {
             } else {
                 NavigationStack(path: $path) {
                     sessionList
+                        .background {
+                            SessionReturnGesture(
+                                isEnabled: path.isEmpty && previousSessionId != nil
+                                    && !showSettings && !showNewSession && !showQuickSwitcher
+                                    && !model.showAddHub && !searchFocused
+                            ) {
+                                guard let id = previousSessionId else { return }
+                                withAnimation { openSession(id) }
+                            }
+                        }
                         .navigationDestination(for: String.self) { sessionId in
                             chat(sessionId)
                         }
@@ -83,10 +94,14 @@ struct HomeView: View {
             openSession(sessionId)
         }
         .onChange(of: path) { _, path in
-            if !usesSplitNavigation { listModel.selectedSessionId = path.last }
+            if !usesSplitNavigation {
+                if let id = path.last { previousSessionId = id }
+                listModel.selectedSessionId = path.last
+            }
         }
         .onChange(of: session.sessionRemoval) { _, removal in
             guard let removal else { return }
+            if previousSessionId == removal.sessionId { previousSessionId = nil }
             if usesSplitNavigation {
                 tabletNavigation.remove(removal.sessionId)
             } else if let index = path.firstIndex(of: removal.sessionId) {

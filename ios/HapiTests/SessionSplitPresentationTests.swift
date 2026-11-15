@@ -193,6 +193,60 @@ final class SessionSplitPresentationTests: XCTestCase {
         }
     }
 
+    func testPhoneListEdgeReturnsToLastChatAndForgetsRemovedChat() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone, !FoldableDevice.shared.hasHinge else {
+            throw XCTSkip("This path is for the phone navigation stack")
+        }
+        let suite = "phone-return-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let registry = HubRegistry(defaults: defaults)
+        let credentials = InMemoryCredentialStore()
+        let url = "http://127.0.0.1:1"
+        registry.register(url)
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: url, accessToken: "test", jwt: "e30.\(payload).test"))
+        let model = AppModel(registry: registry, credentialStore: credentials, performer: SplitTestHTTP())
+        let hub = try XCTUnwrap(model.session)
+        let (window, host) = try makeWindow(RootView().environment(model), width: 430, height: 932, compact: true)
+        defer { window.isHidden = true; hub.shutdown() }
+        try await settle { hub.sessionStore.sessions.count == 2 }
+        let edge = try XCTUnwrap(findController(SessionReturnGesture.Controller.self, in: host))
+        XCTAssertFalse(edge.isEnabled, "Cold start has no previous chat")
+
+        model.pendingOpenSessionId = "a"
+        try await settle { hub.openChatSessionId == "a" }
+        try nativeBack(in: host)
+        try await settle { hub.openChatSessionId == nil && edge.isEnabled && edge.recognizer.view != nil }
+        XCTAssertEqual(edge.recognizer.edges, .left)
+        XCTAssertTrue(edge.recognizer.view === edge.navigationController?.view)
+        XCTAssertNil(findController(TranscriptCollectionController<TranscriptRow>.self, in: host),
+                     "Returning to the list must release the chat surface")
+        edge.complete(translation: CGPoint(x: 20, y: 0))
+        edge.complete(translation: CGPoint(x: 80, y: 150))
+        edge.complete(translation: CGPoint(x: -100, y: 0))
+        XCTAssertNil(hub.openChatSessionId, "Short, vertical and reverse drags must not navigate")
+        edge.complete(translation: CGPoint(x: 120, y: 8))
+        try await settle { hub.openChatSessionId == "a" }
+        XCTAssertFalse(edge.isEnabled, "The list gesture must not run inside a chat")
+
+        // The next chat replaces the return target; removing it clears history.
+        try nativeBack(in: host)
+        try await settle { hub.openChatSessionId == nil && edge.isEnabled }
+        model.pendingOpenSessionId = "b"
+        try await settle { hub.openChatSessionId == "b" }
+        try nativeBack(in: host)
+        try await settle { hub.openChatSessionId == nil && edge.isEnabled }
+        edge.complete(translation: CGPoint(x: 120, y: 0))
+        try await settle { hub.openChatSessionId == "b" }
+        try nativeBack(in: host)
+        try await settle { hub.openChatSessionId == nil && edge.isEnabled }
+        hub.sessionStore.applySessionEvent(.sessionRemoved(namespace: nil, sessionId: "b"))
+        try await settle { !edge.isEnabled }
+        edge.complete(translation: CGPoint(x: 120, y: 0))
+        XCTAssertNil(hub.openChatSessionId)
+    }
+
     func testRootRoutesNotificationsRemovalsAndHubSwitches() async throws {
         try await requireSplitDevice()
         let suite = "ipad-root-\(UUID())"
