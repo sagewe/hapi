@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
 /// `@` session/file suggestions.
 struct ChatComposerView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.hapiTypography) private var typography
     let interactor: ChatInteractor
     /// nil ⇒ dictation unavailable (no controller wired) — mic button hidden.
@@ -359,6 +360,9 @@ struct ChatComposerView: View {
         // keyboard is down; above a keyboard the normal gap applies.
         .padding(.bottom, hugsBottomEdge && !textFocused ? -8 : 8)
         .animation(.snappy, value: hugsBottomEdge && !textFocused)
+        // Include the surface and its anchor so the card grows continuously while
+        // the keyboard moves it, rather than jumping to its expanded height first.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: textFocused)
         .task(id: rawSkillQuery != nil) { if rawSkillQuery != nil { await interactor.loadSkills() } }
         .task(id: mentionRequest) {
             await interactor.mentionFiles.load(mentionRequest)
