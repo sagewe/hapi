@@ -367,6 +367,71 @@ private final class TranscriptCollectionView: UICollectionView {
     }
 }
 
+/// The transcript's background tap shares recognition with SwiftUI actions;
+/// text inputs, native controls and selection surfaces retain their own focus.
+@MainActor
+final class TranscriptKeyboardDismissal: NSObject, UIGestureRecognizerDelegate {
+    private let isProtected: () -> Bool
+    private let dismiss: () -> Void
+    private var dismissedDuringDrag = false
+    private weak var touchedView: UIView?
+    lazy var tap = UITapGestureRecognizer(target: self, action: #selector(dismissAfterTap))
+
+    init(isProtected: @escaping () -> Bool, dismiss: @escaping () -> Void) {
+        self.isProtected = isProtected
+        self.dismiss = dismiss
+        super.init()
+        tap.name = "hapi.transcript.keyboard-dismiss"
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+    }
+
+    func allowsTouch(in view: UIView?) -> Bool {
+        guard !isProtected() else { return false }
+        var current = view
+        while let candidate = current {
+            if let text = candidate as? UITextView,
+               text.isEditable || text.selectedTextRange?.isEmpty == false { return false }
+            if candidate is UIControl
+                || candidate.accessibilityTraits.contains(.button)
+                || candidate.accessibilityTraits.contains(.link) { return false }
+            current = candidate.superview
+        }
+        return true
+    }
+
+    func receiveTouch(in view: UIView?) -> Bool {
+        touchedView = view
+        return allowsTouch(in: view)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        receiveTouch(in: touch.view)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+    @objc func dismissAfterTap() {
+        defer { touchedView = nil }
+        // A second tap/selection recognizer may have selected text since the
+        // touch began. Re-check before resigning any responder in the window.
+        guard allowsTouch(in: touchedView) else { return }
+        dismiss()
+    }
+
+    func beginDragging() { dismissedDuringDrag = false }
+
+    func updateDrag(isDragging: Bool, translation: CGPoint) {
+        // Only direct downward, predominantly vertical finger motion counts.
+        // Momentum, programmatic scrolling and horizontal gestures never do.
+        guard isDragging, !dismissedDuringDrag, allowsTouch(in: touchedView),
+              translation.y >= 32, translation.y > abs(translation.x) else { return }
+        dismissedDuringDrag = true
+        dismiss()
+    }
+}
+
 /// Keep hosting roots alive across unrelated transcript updates. The small
 /// SwiftUI wrapper reads the latest builder and inherited environment,
 /// including action captures. SwiftUI can diff the resulting row instead of UIKit
@@ -442,6 +507,16 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private(set) var cellConfigurationCount = 0
     #endif
     private let logger = Logger(subsystem: "run.hapi", category: "Transcript")
+    #if !targetEnvironment(macCatalyst)
+    private lazy var keyboardDismissal = TranscriptKeyboardDismissal(
+        isProtected: { [weak self] in
+            guard let self else { return true }
+            return self.configuration?.isInspectionPresented == true
+                || self.configuration?.environment.isEnabled == false
+        },
+        dismiss: { [weak self] in self?.collection.window?.endEditing(false) }
+    )
+    #endif
 
     public override func loadView() { view = collection }
 
@@ -450,6 +525,9 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         collection.backgroundColor = .clear
         collection.allowsSelection = false
         collection.keyboardDismissMode = .interactive
+        #if !targetEnvironment(macCatalyst)
+        collection.addGestureRecognizer(keyboardDismissal.tap)
+        #endif
         collection.contentInsetAdjustmentBehavior = .never
         collection.alwaysBounceVertical = true
         collection.delegate = self
@@ -710,6 +788,9 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     }
 
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        #if !targetEnvironment(macCatalyst)
+        keyboardDismissal.beginDragging()
+        #endif
         layout.followsTail = false
         layout.anchorForUpdate = nil
         reportViewport(deferred: false)
@@ -719,6 +800,10 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         if configuration?.isInspectionPresented != true, !applying, (collection.isDragging || collection.isDecelerating) {
             layout.followsTail = layout.bottomOffset(collection) - collection.contentOffset.y <= 1
         }
+        #if !targetEnvironment(macCatalyst)
+        keyboardDismissal.updateDrag(isDragging: collection.isDragging,
+                                      translation: collection.panGestureRecognizer.translation(in: collection))
+        #endif
         reportViewport(deferred: !(collection.isDragging || collection.isDecelerating))
     }
 
