@@ -107,6 +107,20 @@ describe('latest completed mode admission', () => {
             expect(calls).toBe(0);
         } finally { engine.stop(); }
     });
+    it('rejects cross-namespace completed-turn forks before calling the Runner', async () => {
+        const { engine, store, source, rpc } = fixture();
+        try {
+            const current = store.sessions.getSession(source.id)!;
+            store.sessions.updateSessionMetadata(source.id, { ...current.metadata as object,
+                capabilities: { conversationHistory: { forkCurrent: true, forkLatestCompleted: true } } }, current.metadataVersion, 'default');
+            (engine as any).sessionCache.refreshSession(source.id);
+            let calls = 0;
+            rpc.forkConversation = async () => { calls++; return { nativeSessionId: 'unused' }; };
+            expect(await engine.forkConversation(source.id, 'other-namespace', undefined, true)).toMatchObject({ type: 'error' });
+            expect(calls).toBe(0);
+            expect(engine.getSession(source.id)?.thinking).toBe(true);
+        } finally { engine.stop(); }
+    });
     it('requires a verified shared child rather than copying a moving source tail', async () => {
         const { engine, store, source, rpc } = fixture();
         try {

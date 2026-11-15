@@ -772,3 +772,38 @@ for (const queued of [false, true]) {
         expect(f.state().steeringActive).toBe(true);
     });
 }
+
+
+describe('persistent goal replacement', () => {
+    it('starts an active new goal after clearing a completed native goal', async () => {
+        const f = await fixture();
+        const request = vi.spyOn(f.root.client, 'request').mockImplementation(async (method) => {
+            if (method === 'thread/goal/get') return { goal: { status: 'complete', objective: 'old', tokenBudget: 100 } };
+            return {};
+        });
+        await (f.root as unknown as { command(text: string): Promise<unknown> }).command('/goal next objective');
+        expect(request.mock.calls).toEqual([
+            ['thread/goal/get', { threadId: 'thread' }],
+            ['thread/goal/clear', { threadId: 'thread' }],
+            ['thread/goal/set', { threadId: 'thread', objective: 'next objective', status: 'active' }]
+        ]);
+    });
+    it.each(['active', 'paused'])('updates a %s goal without clearing its budget or changing status', async status => {
+        const f = await fixture();
+        const request = vi.spyOn(f.root.client, 'request').mockImplementation(async method => {
+            if (method === 'thread/goal/get') return { goal: { status, tokenBudget: 100 } };
+            return {};
+        });
+        await (f.root as unknown as { command(text: string): Promise<unknown> }).command('/goal revised objective');
+        expect(request.mock.calls).toEqual([
+            ['thread/goal/get', { threadId: 'thread' }],
+            ['thread/goal/set', { threadId: 'thread', objective: 'revised objective' }]
+        ]);
+    });
+    it('does not clear a completed goal if the user only asks to inspect it', async () => {
+        const f = await fixture();
+        const request = vi.spyOn(f.root.client, 'request').mockResolvedValue({ goal: { status: 'complete' } });
+        await (f.root as unknown as { command(text: string): Promise<unknown> }).command('/goal');
+        expect(request.mock.calls).toEqual([['thread/goal/get', { threadId: 'thread' }]]);
+    });
+});
