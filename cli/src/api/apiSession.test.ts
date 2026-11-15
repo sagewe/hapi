@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Session } from './types'
+import { configuration } from '@/configuration'
 
 const socketHarness = vi.hoisted(() => ({
     sockets: [] as Array<{
@@ -16,7 +17,8 @@ const socketHarness = vi.hoisted(() => ({
 }))
 
 const axiosHarness = vi.hoisted(() => ({
-    get: vi.fn()
+    get: vi.fn(),
+    post: vi.fn()
 }))
 
 vi.mock('socket.io-client', () => ({
@@ -92,6 +94,7 @@ vi.mock('socket.io-client', () => ({
 vi.mock('axios', () => ({
     default: {
         get: axiosHarness.get,
+        post: axiosHarness.post,
         isAxiosError: (error: unknown) => (
             typeof error === 'object'
             && error !== null
@@ -1080,3 +1083,47 @@ describe('ApiSessionClient durable status identity', () => {
         client.close();
     });
 });
+
+
+describe('ApiSessionClient agent tag requests', () => {
+    it('uses CLI raw-token auth, current session path and validated namespace-scoped responses', async () => {
+        const previousHeaders = configuration.extraHeaders
+        configuration._setExtraHeaders({ 'X-Tag-Test-Proxy': 'proxy', Authorization: 'must-not-override-token' })
+        const client = new ApiSessionClient('tag-token:namespace-a', createSession({ id: 'session/id', namespace: 'namespace-a' }))
+        try {
+            axiosHarness.get.mockResolvedValue({ data: { tags: ['existing'], availableTags: ['existing', 'Topic'], titleLocked: true, truncated: false } })
+            expect(await client.getSessionTagsContext()).toMatchObject({ tags: ['existing'], titleLocked: true })
+            expect(axiosHarness.get).toHaveBeenLastCalledWith(expect.stringContaining('/cli/sessions/session%2Fid/tags'),
+                expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer tag-token:namespace-a', 'X-Tag-Test-Proxy': 'proxy' }), timeout: 15_000 }))
+            axiosHarness.post.mockResolvedValue({ data: { tags: ['existing', 'Topic'], added: ['Topic'], skipped: [], limitReached: false } })
+            expect(await client.appendSessionTags([' Topic ', 'topic'])).toMatchObject({ added: ['Topic'] })
+            expect(axiosHarness.post).toHaveBeenLastCalledWith(expect.stringContaining('/cli/sessions/session%2Fid/tags'), { tags: ['Topic'] },
+                expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer tag-token:namespace-a', 'X-Tag-Test-Proxy': 'proxy' }) }))
+        } finally { client.close(); configuration._setExtraHeaders(previousHeaders) }
+    })
+
+    it('rejects malformed responses and invalid append input instead of trusting cached metadata tags', async () => {
+        const client = new ApiSessionClient('tag-token', createSession({ metadata: { path: '/tmp', host: 'test', tags: ['cached'] } }))
+        try {
+            axiosHarness.get.mockResolvedValue({ data: { tags: ['cached'], availableTags: [] } })
+            await expect(client.getSessionTagsContext()).rejects.toThrow('Invalid session tags context response')
+            axiosHarness.post.mockResolvedValue({ data: { tags: ['cached'], added: ['new'] } })
+            await expect(client.appendSessionTags(['new'])).rejects.toThrow('Invalid session tags append response')
+            axiosHarness.post.mockClear()
+            await expect(client.appendSessionTags([])).rejects.toThrow()
+            await expect(client.appendSessionTags(['a', 'b', 'c', 'd'])).rejects.toThrow()
+            expect(axiosHarness.post).not.toHaveBeenCalled()
+        } finally { client.close() }
+    })
+
+    it.each([404, 405, 501])('reports unsupported Hub tag endpoints explicitly (%s)', async (status) => {
+        const client = new ApiSessionClient('tag-token', createSession())
+        const unavailable = { isAxiosError: true, response: { status } }
+        try {
+            axiosHarness.get.mockRejectedValue(unavailable)
+            axiosHarness.post.mockRejectedValue(unavailable)
+            await expect(client.getSessionTagsContext()).rejects.toThrow('Session tags are unavailable')
+            await expect(client.appendSessionTags(['Topic'])).rejects.toThrow('Session tags are unavailable')
+        } finally { client.close() }
+    })
+})

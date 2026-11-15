@@ -27,6 +27,8 @@ const AUTO_APPROVE_TOOL_NAME_HINTS = [
     'save_memory'
 ];
 const AUTO_APPROVE_EXACT_TOOL_NAMES = new Set([
+    'list_tags', 'hapi_list_tags', 'happy__list_tags', 'mcp__hapi__list_tags', 'list session tags',
+    'add_tags', 'hapi_add_tags', 'happy__add_tags', 'mcp__hapi__add_tags', 'add session tags',
     'skill_lookup',
     'hapi_skill_lookup',
     'happy__skill_lookup',

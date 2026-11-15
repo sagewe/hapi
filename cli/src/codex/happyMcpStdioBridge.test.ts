@@ -51,6 +51,21 @@ describe('runHappyMcpStdioBridge tool forwarding', () => {
         harness.callTool.mockClear()
     })
 
+    it('registers tag tools by default and forwards tags-only calls unchanged', async () => {
+        await runHappyMcpStdioBridge(['--url', 'http://127.0.0.1:43006'])
+        expect(harness.tools.has('list_tags')).toBe(true)
+        expect(harness.tools.has('add_tags')).toBe(true)
+        const schema = harness.configs.get('change_title')?.inputSchema as { safeParse(input: unknown): { success: boolean } }
+        expect(schema.safeParse({ tags: ['Networking'] }).success).toBe(true)
+        expect(schema.safeParse({ title: 'Title' }).success).toBe(true)
+        expect(schema.safeParse({}).success).toBe(false)
+        expect(schema.safeParse({ tags: ['a', 'b', 'c', 'd'] }).success).toBe(false)
+        await harness.tools.get('add_tags')!({ tags: ['Networking'] })
+        expect(harness.callTool).toHaveBeenLastCalledWith({ name: 'add_tags', arguments: { tags: ['Networking'] } })
+        await harness.tools.get('list_tags')!({})
+        expect(harness.callTool).toHaveBeenLastCalledWith({ name: 'list_tags', arguments: {} })
+    })
+
     it('describes display_image as user output rather than image input', async () => {
         await runHappyMcpStdioBridge([
             '--url',
@@ -231,6 +246,8 @@ describe('runHappyMcpStdioBridge tool forwarding', () => {
 
         expect([...harness.tools.keys()]).toEqual([
             'change_title',
+            'add_tags',
+            'list_tags',
             'display_image',
             'display_video',
             'display_media',
@@ -249,6 +266,8 @@ describe('runHappyMcpStdioBridge tool forwarding', () => {
 
             expect([...harness.tools.keys()]).toEqual([
                 'change_title',
+                'add_tags',
+                'list_tags',
                 'display_image',
                 'display_video',
                 'display_media'

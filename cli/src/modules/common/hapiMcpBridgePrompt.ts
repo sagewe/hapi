@@ -1,3 +1,4 @@
+import { sessionTagsInstruction } from '@/modules/common/sessionTagTools';
 import { trimIdent } from '@/utils/trimIdent';
 import { DISPLAY_TOOLS_PROMPT_HAPI_MCP } from './displayImagePrompt';
 
@@ -15,6 +16,7 @@ export const INLINE_MEDIA_SHELL_FALLBACK = trimIdent(`
  * (no user-turn prepend — that path was prompt-taint).
  */
 const HAPI_MCP_TITLE_INSTRUCTION = trimIdent(`
+    ${sessionTagsInstruction('hapi_list_tags', 'hapi_change_title')}
     Use the title tool sparingly. For a new chat, call the tool "hapi_change_title" once after the user's initial request is clear, and set a concise task title. Do not rename the chat for routine progress, substeps, implementation details, or a slightly better wording. Rename only when the user's primary objective changes substantially and the existing title would be misleading.
 `);
 

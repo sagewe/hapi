@@ -22,7 +22,7 @@ import {
 import type { InlineMediaSource } from "@/modules/common/inlineMediaSource";
 import { DISPLAY_IMAGE_PROMPT_CURSOR, DISPLAY_MEDIA_PROMPT_CURSOR, DISPLAY_VIDEO_PROMPT_CURSOR } from "@/modules/common/displayImagePrompt";
 import { resolveSkill } from "@/modules/common/skills";
-import { SESSION_NAME_MAX_LENGTH, toSessionSummaryMetadata } from '@hapi/protocol'
+import { AgentSessionTagsRequestSchema, SESSION_NAME_MAX_LENGTH, toSessionSummaryMetadata } from '@hapi/protocol'
 import { isPeerToolsDisabled } from "@/modules/common/peerTools";
 import {
     normalizeSessionIdPrefix,
@@ -40,6 +40,7 @@ import { CREATABLE_AGENT_FLAVORS } from '@hapi/protocol/modes'
 import { PermissionModeSchema } from '@hapi/protocol/schemas'
 import { PingPeerError, formatInspectPeerReport, formatPeerSessionsList, forwardPeerReply, inspectPeer, listPeerSessions, peerListFetchLimit, pingPeer, supportsPeerReply } from "@/modules/pingPeer/pingPeer";
 import { applySessionDisplayRename, normalizeSessionDisplayTitle } from "@/agent/sessionDisplayRename";
+import { ChangeSessionTitleInputSchema, type ChangeSessionTitleInput } from '@/modules/common/sessionTagTools';
 import { SpawnPeerError, spawnPeer } from "@/modules/spawnPeer/spawnPeer";
 
 type StartHappyServerOptions = {
@@ -112,44 +113,44 @@ function createHapiMcpServer(
     onChangeTitle?: StartHappyServerOptions['onChangeTitle'],
     peerReplySignal?: AbortSignal
 ): McpServer {
-    const handler = async (title: string) => {
+    const handler = async (title: string): Promise<{ success: boolean; titleChanged: boolean; titleLocked: boolean | null; error?: string }> => {
+        let titleChanged = false;
+        let titleLocked: boolean | null = null;
         logger.debug('[hapiMCP] Changing title to:', title);
         try {
-            if (!normalizeSessionDisplayTitle(title)) return { success: false, error: 'Title must not be empty' };
+            if (!normalizeSessionDisplayTitle(title)) return { success: false, titleChanged, titleLocked, error: 'Title must not be empty' };
             if (!await client.refreshMetadata()) {
-                return { success: false, error: 'Could not read the current title lock from the Hub.' };
+                return { success: false, titleChanged, titleLocked, error: 'Could not read the current title lock from the Hub.' };
             }
             if (client.getMetadata()?.titleLocked) {
-                return { success: false, error: 'Session title is locked by the user. Only the user can unlock it.' };
+                return { success: false, titleChanged: false, titleLocked: true, error: 'Session title is locked by the user. Only the user can unlock it.' };
             }
-            if (!emitTitleSummary) {
-                // Codex collab: acknowledge the tool call without writing.
-                // Parent-thread mcp_tool_call_end applies the rename later.
-                return { success: true };
-            }
+            titleLocked = false;
+            const previousTitle = normalizeSessionDisplayTitle(client.getMetadata()?.name);
             if (!applySessionDisplayRename(client, title)) {
-                return { success: false, error: 'Title must not be empty' };
+                return { success: false, titleChanged, titleLocked, error: 'Title must not be empty' };
             }
             if (!await client.flushMetadata()) {
-                return { success: false, error: 'Title update could not be confirmed by the Hub.' };
+                return { success: false, titleChanged, titleLocked, error: 'Title update could not be confirmed by the Hub.' };
             }
             // The user may lock the title while this write is in flight.
             // The ACK carries the Hub's preserved title and lock.
             if (client.getMetadata()?.titleLocked) {
-                return { success: false, error: 'Session title is locked by the user. Only the user can unlock it.' };
+                return { success: false, titleChanged: false, titleLocked: true, error: 'Session title is locked by the user. Only the user can unlock it.' };
             }
+            titleChanged = previousTitle !== normalizeSessionDisplayTitle(title);
             if (onChangeTitle) {
                 onChangeTitle(normalizeSessionDisplayTitle(title)!);
                 if (!await client.flushMetadata()) {
-                    return { success: false, error: 'Title update could not be confirmed by the Hub.' };
+                    return { success: false, titleChanged, titleLocked, error: 'Title update could not be confirmed by the Hub.' };
                 }
                 if (client.getMetadata()?.titleLocked) {
-                    return { success: false, error: 'Session title is locked by the user. Only the user can unlock it.' };
+                    return { success: false, titleChanged, titleLocked: true, error: 'Session title is locked by the user. Only the user can unlock it.' };
                 }
             }
-            return { success: true };
+            return { success: true, titleChanged, titleLocked };
         } catch (error) {
-            return { success: false, error: String(error) };
+            return { success: false, titleChanged, titleLocked, error: String(error) };
         }
     };
 
@@ -158,9 +159,7 @@ function createHapiMcpServer(
         version: "1.0.0",
     });
 
-    const changeTitleInputSchema: z.ZodTypeAny = z.object({
-        title: z.string().describe('The new title for the chat session'),
-    });
+    const changeTitleInputSchema: z.ZodTypeAny = ChangeSessionTitleInputSchema;
 
     const displayImageInputSchema: z.ZodTypeAny = z.object({
         path: z.string().describe('Absolute filesystem path of the local image to display to the human user. This file is sent for user display, not provided to the model for image inspection'),
@@ -287,39 +286,78 @@ function createHapiMcpServer(
 
         return media;
     }
-    if (enableChangeTitle) {
-        mcp.registerTool<any, any>('change_title', {
-            description: 'Change the title of the current HAPI chat session. Call once when the user\'s primary objective is clear; use a concise task title.',
-            title: 'Change Chat Title',
-            inputSchema: changeTitleInputSchema,
-        }, async (args: { title: string }) => {
-            const response = await handler(args.title);
-            logger.debug('[hapiMCP] Response:', response);
-            const displayTitle = normalizeSessionDisplayTitle(args.title) ?? args.title;
-
-            if (response.success) {
-                return {
-                    content: [
-                        {
-                            type: 'text' as const,
-                            text: `Successfully changed chat title to: "${displayTitle}"`,
-                        },
-                    ],
-                    isError: false,
-                };
-            }
-
+    const mutateSessionLabels = async (raw: unknown) => {
+        const parsed = ChangeSessionTitleInputSchema.safeParse(raw);
+        if (!parsed.success || (parsed.data.title !== undefined && !normalizeSessionDisplayTitle(parsed.data.title))) {
             return {
-                content: [
-                    {
-                        type: 'text' as const,
-                        text: `Failed to change chat title: ${response.error || 'Unknown error'}`,
-                    },
-                ],
+                content: [{ type: 'text' as const, text: 'Failed to change chat title or tags: provide a nonempty title, 1–3 valid tags, or both' }],
+                structuredContent: { success: false, titleChanged: false, titleLocked: null, tagsAdded: [], tagsSkipped: [] },
                 isError: true,
             };
-        });
+        }
+        const args = parsed.data;
+        if (!emitTitleSummary) {
+            // Codex child tools share the parent's HTTP bridge. Only the owning
+            // root completion projector may apply accepted title/tag mutations.
+            const outcome = { success: true, deferred: true, titleChanged: false, titleLocked: null, tagsAdded: [], tagsSkipped: [] };
+            return { content: [{ type: 'text' as const, text: `Accepted for deferred application by the owning session; no title or tags have been changed yet.\n${JSON.stringify(outcome)}` }], structuredContent: outcome, isError: false };
+        }
+        const titleResult = args.title !== undefined ? await handler(args.title) : undefined;
+        let titleLocked: boolean | null = titleResult?.titleLocked ?? null;
+        let tagsResult: Awaited<ReturnType<ApiSessionClient['appendSessionTags']>> | undefined;
+        let tagsError: string | undefined;
+        if (args.tags !== undefined) {
+            try {
+                if (!titleResult) titleLocked = (await client.getSessionTagsContext()).titleLocked;
+                tagsResult = await client.appendSessionTags(args.tags);
+            } catch (error) {
+                tagsError = error instanceof Error ? error.message : 'Session tags could not be confirmed';
+            }
+        }
+        const success = !tagsError && (!titleResult || titleResult.success || (titleResult.titleLocked && args.tags !== undefined));
+        const outcome = {
+            success: Boolean(success),
+            titleChanged: titleResult?.titleChanged ?? false,
+            titleLocked,
+            ...(args.title !== undefined ? { requestedTitle: normalizeSessionDisplayTitle(args.title) } : {}),
+            ...(titleResult?.error ? { titleError: titleResult.error } : {}),
+            ...(tagsError ? { tagsError } : {}),
+            ...(tagsResult ? { tags: tagsResult.tags, limitReached: tagsResult.limitReached } : {}),
+            tagsAdded: tagsResult?.added ?? [],
+            tagsSkipped: tagsResult?.skipped ?? [],
+        };
+        const note = titleResult?.success && args.title !== undefined
+            ? `Successfully changed chat title to: "${normalizeSessionDisplayTitle(args.title)}"`
+            : titleResult?.error ? `Failed to change chat title: ${titleResult.error}` : 'Session tags append result';
+        return {
+            content: [{ type: 'text' as const, text: `${note}\n${JSON.stringify(outcome)}` }],
+            structuredContent: outcome,
+            isError: !success,
+        };
+    };
+    if (enableChangeTitle) {
+        mcp.registerTool<any, any>('change_title', {
+            description: 'Set a concise session title and/or append 1–3 stable topic tags. Call list_tags first to reuse existing vocabulary. A locked title is preserved independently of tags.',
+            title: 'Change Chat Title',
+            inputSchema: changeTitleInputSchema,
+        }, async (args: ChangeSessionTitleInput) => await mutateSessionLabels(args));
     }
+    mcp.registerTool<any, any>('add_tags', {
+        description: 'Append 1–3 stable topic tags to the current session. Read list_tags first; existing user tags are preserved. Available even when automatic native titles disable change_title.',
+        title: 'Add Session Tags', inputSchema: AgentSessionTagsRequestSchema,
+    }, async (args: { tags: string[] }) => await mutateSessionLabels(args));
+    mcp.registerTool<any, any>('list_tags', {
+        description: 'Read current session tags, existing tag vocabulary in the current namespace, title lock and vocabulary truncation status. Read-only; does not rename, add tags or inspect other namespaces.',
+        title: 'List Session Tags', inputSchema: z.object({}).strict(),
+        annotations: { readOnlyHint: true },
+    }, async () => {
+        try {
+            const context = await client.getSessionTagsContext();
+            return { content: [{ type: 'text' as const, text: JSON.stringify(context) }], structuredContent: context, isError: false };
+        } catch (error) {
+            return { content: [{ type: 'text' as const, text: error instanceof Error ? error.message : 'Session tags are unavailable' }], isError: true };
+        }
+    });
 
     mcp.registerTool<any, any>('display_image', {
         description: `Display a local image file to the human user inline in the current HAPI chat session. ${DISPLAY_IMAGE_PROMPT_CURSOR}`,
@@ -749,6 +787,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
     const peerToolsDisabled = isPeerToolsDisabled();
     const toolNames = [
         ...(enableChangeTitle ? ['change_title'] : []),
+        'add_tags',
+        'list_tags',
         'display_image',
         'display_video',
         'display_media',

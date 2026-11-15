@@ -29,12 +29,13 @@ import {
   SESSION_ID_PREFIX_PARAM_DESCRIPTION,
   SPAWN_PEER_TOOL_DESCRIPTION,
 } from '@hapi/protocol/sessionCitation';
-import { SESSION_NAME_MAX_LENGTH } from '@hapi/protocol';
+import { AgentSessionTagsRequestSchema, SESSION_NAME_MAX_LENGTH } from '@hapi/protocol';
 import { CREATABLE_AGENT_FLAVORS } from '@hapi/protocol/modes';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
+import { ChangeSessionTitleInputSchema } from '@/modules/common/sessionTagTools';
 import { isPeerToolsDisabled, PEER_TOOL_NAMES } from '@/modules/common/peerTools';
 
-const DEFAULT_TOOL_NAMES = ['change_title', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'spawn_peer'];
+const DEFAULT_TOOL_NAMES = ['change_title', 'add_tags', 'list_tags', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'spawn_peer'];
 
 function parseArgs(argv: string[]): { url: string | null; toolNames: Set<string> } {
   let url: string | null = null;
@@ -100,15 +101,13 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
     });
 
     // Register tools and forward to HTTP MCP
-    const changeTitleInputSchema: z.ZodTypeAny = z.object({
-      title: z.string().describe('The new title for the chat session'),
-    });
+    const changeTitleInputSchema: z.ZodTypeAny = ChangeSessionTitleInputSchema;
 
     if (toolNames.has('change_title')) {
       server.registerTool<any, any>(
         'change_title',
         {
-          description: 'Change the title of the current chat session',
+          description: 'Set a concise title and/or append 1–3 stable topic tags; read list_tags first. A title lock does not block tags.',
           title: 'Change Chat Title',
           inputSchema: changeTitleInputSchema,
         },
@@ -131,6 +130,25 @@ export async function runHappyMcpStdioBridge(argv: string[]): Promise<void> {
     }
 
 
+
+    for (const name of ['add_tags', 'list_tags'] as const) {
+      if (!toolNames.has(name)) continue;
+      server.registerTool<any, any>(name, {
+        description: name === 'list_tags'
+          ? 'Read current tags, current-namespace tag vocabulary, title lock and truncation status; read-only.'
+          : 'Append 1–3 stable topic tags without replacing user tags; read list_tags first. Works independently of the title lock.',
+        title: name === 'list_tags' ? 'List Session Tags' : 'Add Session Tags',
+        inputSchema: name === 'list_tags' ? z.object({}).strict() : AgentSessionTagsRequestSchema,
+        ...(name === 'list_tags' ? { annotations: { readOnlyHint: true } } : {}),
+      }, async (args: Record<string, unknown>) => {
+        try {
+          const client = await ensureHttpClient();
+          return await client.callTool({ name, arguments: args }) as any;
+        } catch (error) {
+          return { content: [{ type: 'text' as const, text: `Session tags unavailable: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+        }
+      });
+    }
 
     const displayImageInputSchema: z.ZodTypeAny = z.object({
       path: z.string().describe('Absolute filesystem path of the local image to display to the human user. This file is sent for user display, not provided to the model for image inspection'),

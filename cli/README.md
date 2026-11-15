@@ -23,6 +23,30 @@ Choose a supported coding agent from your terminal and control its sessions remo
 
 ## Commands
 
+### MCP session topic tags
+
+The common HTTP/STDIO MCP bridge exposes `list_tags` (read-only current-session
+and current-namespace vocabulary), `add_tags` (append one to three topic tags),
+and `change_title` with optional `title` and/or `tags`. Existing title-only calls
+still work. A title lock preserves the name independently of tag additions;
+`add_tags` remains available when native automatic titles disable `change_title`.
+Agent additions never replace user tags and remain subject to the Hub's 20-tag
+session limit. Results distinguish confirmed additions, skips, limits and title
+lock/change outcomes; a partial failure is not reported as a complete success.
+
+Agents first read vocabulary, prefer relevant existing tags, and create a short
+stable topic tag only when needed. Routine progress does not trigger retagging.
+This applies to sessions using the common MCP bridge and its Codex/Claude/common
+instructions, not unrelated Pi native extensions or globally installed agent MCP
+configurations. Old Hubs without tag endpoints report explicit unavailability;
+there is no fallback that writes tags through metadata.
+
+Codex shared child agents may use the parent's bridge. With deferred mutation
+mode (`emitTitleSummary: false`), accepted calls return explicit `success` and
+`deferred` proof in structured output and text, while leaving the parent's title
+and tags untouched. Only the owning root's successful tool-completion projection
+may apply those arguments; the bridge does not claim they have already changed.
+
 ### Session commands
 
 - `hapi` - Choose an agent interactively. Unavailable agents are shown with a reason and cannot be selected.

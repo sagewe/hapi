@@ -1,3 +1,4 @@
+import { sessionTagsInstruction } from '@/modules/common/sessionTagTools';
 import { trimIdent } from "@/utils/trimIdent";
 import { buildSessionCitationSteerInstruction, SESSION_CITATION_DISABLED_STEER } from "@hapi/protocol/sessionCitation";
 import { isPeerToolsDisabled } from "@/modules/common/peerTools";
@@ -9,6 +10,7 @@ import { withSessionSummaryInstruction } from "@/modules/common/sessionSummaryIn
  * Base system prompt shared across all configurations
  */
 const BASE_SYSTEM_PROMPT = (() => trimIdent(`
+    ${sessionTagsInstruction('mcp__hapi__list_tags', 'mcp__hapi__change_title')}
     Use the title tool sparingly. For a new chat, call the tool "mcp__hapi__change_title" once after the user's initial request is clear, and set a concise task title. Do not rename the chat for routine progress, substeps, implementation details, or a slightly better wording. Rename only when the user's primary objective changes substantially and the existing title would be misleading.
     ${DISPLAY_IMAGE_PROMPT_CLAUDE}
     ${DISPLAY_VIDEO_PROMPT_CLAUDE}

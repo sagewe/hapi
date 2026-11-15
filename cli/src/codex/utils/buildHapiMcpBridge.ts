@@ -102,6 +102,8 @@ export async function buildHapiMcpBridge(
         client.sessionId,
     ]);
     const tools: Record<string, McpServerToolConfig> = {
+        add_tags: { approval_mode: 'approve' },
+        list_tags: { approval_mode: 'approve' },
         display_image: {
             approval_mode: 'prompt'
         },

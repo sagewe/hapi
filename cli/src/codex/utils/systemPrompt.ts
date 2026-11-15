@@ -1,3 +1,4 @@
+import { sessionTagsInstruction } from '@/modules/common/sessionTagTools';
 /**
  * Codex-specific system prompt for local mode.
  *
@@ -17,6 +18,7 @@ import { withSessionSummaryInstruction } from '@/modules/common/sessionSummaryIn
  * so the tool is called as `functions.hapi__change_title`.
  */
 export const TITLE_INSTRUCTION = trimIdent(`
+    ${sessionTagsInstruction('functions.hapi__list_tags', 'functions.hapi__change_title')}
     Use the title tool sparingly. For a new chat, call it once after the user's initial request is clear, and set a concise task title.
     Prefer calling functions.hapi__change_title.
     If that exact tool name is unavailable, call an equivalent alias such as hapi__change_title, mcp__hapi__change_title, or hapi_change_title.

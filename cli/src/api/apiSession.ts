@@ -15,6 +15,9 @@ import { AGENT_MESSAGE_PAYLOAD_TYPE } from "@hapi/protocol"
 import type { SessionEndReason } from '@hapi/protocol'
 import type { ClientToServerEvents, ServerToClientEvents, TerminalOutputPayload, Update } from '@hapi/protocol'
 import {
+    AgentSessionTagsRequestSchema,
+    AgentSessionTagsResultSchema,
+    SessionTagsContextSchema,
     AgentTerminalInputPayloadSchema,
     AgentTerminalRefreshPayloadSchema,
     AgentTerminalResizePayloadSchema,
@@ -229,6 +232,16 @@ async function waitForAbortableDelay(
 
 function hasSameJsonValue(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function sessionTagsRequestError(error: unknown): Error {
+    if (axios.isAxiosError(error)) {
+        if ([404, 405, 501].includes(error.response?.status ?? 0)) {
+            return new Error('Session tags are unavailable on this Hub or session; upgrade the Hub to enable tag tools')
+        }
+        return new Error('Session tags request failed or could not be confirmed by the Hub')
+    }
+    return error instanceof Error ? error : new Error('Session tags request failed')
 }
 
 export class ApiSessionClient extends EventEmitter {
@@ -909,6 +922,37 @@ export class ApiSessionClient extends EventEmitter {
         } catch (error) {
             logger.debug('[API] Session metadata reconcile failed', error)
             return false
+        }
+    }
+
+    /** Read vocabulary only from this token's namespace; never synthesize from metadata. */
+    async getSessionTagsContext() {
+        try {
+            const response = await axios.get(
+                `${configuration.apiUrl}/cli/sessions/${encodeURIComponent(this.sessionId)}/tags`,
+                { headers: buildHubRequestHeaders({ Authorization: `Bearer ${this.token}` }), timeout: 15_000 }
+            )
+            const parsed = SessionTagsContextSchema.safeParse(response.data)
+            if (!parsed.success) throw new Error('Invalid session tags context response from Hub')
+            return parsed.data
+        } catch (error) {
+            throw sessionTagsRequestError(error)
+        }
+    }
+
+    /** Agent operation is append-only and bounded by the Hub, not metadata writes. */
+    async appendSessionTags(tags: string[]) {
+        const input = AgentSessionTagsRequestSchema.parse({ tags })
+        try {
+            const response = await axios.post(
+                `${configuration.apiUrl}/cli/sessions/${encodeURIComponent(this.sessionId)}/tags`, input,
+                { headers: buildHubRequestHeaders({ Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' }), timeout: 15_000 }
+            )
+            const parsed = AgentSessionTagsResultSchema.safeParse(response.data)
+            if (!parsed.success) throw new Error('Invalid session tags append response from Hub')
+            return parsed.data
+        } catch (error) {
+            throw sessionTagsRequestError(error)
         }
     }
 

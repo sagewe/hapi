@@ -113,6 +113,8 @@ describe('startHappyServer skill_lookup', () => {
 
         expect(tools.tools.map((tool) => tool.name)).toEqual([
             'change_title',
+            'add_tags',
+            'list_tags',
             'display_image',
             'display_video',
             'display_media',
@@ -473,8 +475,10 @@ describe('startHappyServer skill_lookup', () => {
         await mcp.connect(new StreamableHTTPClientTransport(new URL(server.url)))
         const tools = await mcp.listTools()
 
-        expect(server.toolNames).toEqual(['display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'spawn_peer'])
+        expect(server.toolNames).toEqual(['add_tags', 'list_tags', 'display_image', 'display_video', 'display_media', 'list_peers', 'ping_peer', 'inspect_peer', 'spawn_peer'])
         expect(tools.tools.map((tool) => tool.name)).toEqual([
+            'add_tags',
+            'list_tags',
             'display_image',
             'display_video',
             'display_media',
@@ -692,6 +696,8 @@ describe('toClaudeAllowedHapiMcpTools', () => {
     it('keeps local-path and peer tools registered but out of Claude --allowedTools', () => {
         expect(toClaudeAllowedHapiMcpTools([
             'change_title',
+            'add_tags',
+            'list_tags',
             'display_image',
             'display_video',
             'display_media',
@@ -702,6 +708,8 @@ describe('toClaudeAllowedHapiMcpTools', () => {
             'skill_lookup'
         ])).toEqual([
             'mcp__hapi__change_title',
+            'mcp__hapi__add_tags',
+            'mcp__hapi__list_tags',
             'mcp__hapi__display_image',
             'mcp__hapi__list_peers',
             'mcp__hapi__skill_lookup'
@@ -790,7 +798,7 @@ describe('startHappyServer peer tools kill switch', () => {
     it('omits peer tools from registration and toolNames when HAPI_DISABLE_PEER_TOOLS is set', async () => {
         process.env.HAPI_DISABLE_PEER_TOOLS = '1'
         const { toolNames } = await startServer()
-        expect(toolNames).toEqual(['change_title', 'display_image', 'display_video', 'display_media'])
+        expect(toolNames).toEqual(['change_title', 'add_tags', 'list_tags', 'display_image', 'display_video', 'display_media'])
         const tools = await client!.listTools()
         const names = tools.tools.map((tool) => tool.name)
         expect(names).not.toContain('list_peers')
