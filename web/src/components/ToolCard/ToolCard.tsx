@@ -145,7 +145,7 @@ function ToolCardTimingSummary(props: { tool: ChatToolCall }) {
     const askedAt = isPendingQuestion
         ? tool.startedAt ?? tool.permission?.createdAt ?? null
         : tool.startedAt ?? tool.createdAt
-    const active = tool.state === 'running' || isPendingQuestion
+    const active = tool.state === 'running' || (isPendingQuestion && askedAt != null)
 
     useEffect(() => {
         if (!active) return
