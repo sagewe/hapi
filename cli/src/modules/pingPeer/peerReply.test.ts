@@ -6,7 +6,7 @@ import { peerReplyLocalId } from './peerReply'
 type Poll = { thinking?: boolean; consumed?: boolean; reply?: string; ready?: boolean;
     peerActive?: boolean; callerActive?: boolean; later?: string; before?: string;
     staleReady?: boolean; peerStatus?: number; callerStatus?: number; flavor?: string;
-    callerArchived?: boolean; batchBefore?: boolean; batchAfter?: boolean }
+    callerArchived?: boolean; epoch?: number; batchBefore?: boolean; batchAfter?: boolean }
 let sequence = 0
 function harness(polls: Poll[], extra: { deliveryFailures?: number; timeoutMs?: number; cycle?: boolean } = {}) {
     const task = `task-${++sequence}`
@@ -51,7 +51,7 @@ function harness(polls: Poll[], extra: { deliveryFailures?: number; timeoutMs?: 
                 ].filter(row => (row.invokedAt ?? row.createdAt) > config.params.afterAt || ((row.invokedAt ?? row.createdAt) === config.params.afterAt && row.seq > config.params.afterSeq))
                 const page = rows.slice(0, 2)
                 const tail = page.at(-1)
-                return { status: 200, data: { messages: page, page: { epoch: 1, snapshotHeadAt: 130, snapshotHeadSeq: 16, hasMore: rows.length > 2,
+                return { status: 200, data: { messages: page, page: { epoch: c.epoch ?? 1, snapshotHeadAt: 130, snapshotHeadSeq: 16, hasMore: rows.length > 2,
                     nextAfterAt: extra.cycle ? config.params.afterAt : tail ? tail.invokedAt ?? tail.createdAt : null,
                     nextAfterSeq: extra.cycle ? config.params.afterSeq : tail?.seq } } }
             }
@@ -162,6 +162,18 @@ describe('bounded peer reply forwarding', () => {
         expect(text).toContain('Reply truncated')
         expect(text).not.toContain('�')
     })
+    it('does not carry reply attribution across a history epoch change between polls', async () => {
+        const h = harness([
+            { ...done('OLD GENERATION'), epoch: 1 },
+            { ...done('REPLACEMENT GENERATION'), epoch: 2 }
+        ])
+        await forwardPeerReply(h.options)
+        expect(h.deliveries()).toHaveLength(1)
+        expect(h.deliveries()[0].body.text).toContain('Cannot safely read a bounded reply')
+        expect(h.deliveries()[0].body.text).not.toContain('OLD GENERATION')
+        expect(h.deliveries()[0].body.text).not.toContain('REPLACEMENT GENERATION')
+    })
+
     it('rejects pagination cycles instead of reading or forwarding unbounded history', async () => {
         const h = harness([done()], { cycle: true })
         await forwardPeerReply(h.options)

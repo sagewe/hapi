@@ -162,6 +162,9 @@ async function watch(options: ForwardPeerReplyOptions, apiUrl: string, accessTok
         if (!isObject(data?.session) || data.session.id !== id) throw new ReplyWatchError(true)
         return data.session
     }
+    // Consumption ties this watch to one transcript generation across polls.
+    // A rewind may retain the task localId while replacing all reply evidence.
+    let consumedTaskEpoch: unknown
     const rowsAfter = async (jwt: string, at: number): Promise<Row[]> => {
         let cursor = { at: Math.max(0, at - 1), seq: Number.MAX_SAFE_INTEGER }
         const seen = new Set<string>()
@@ -173,6 +176,10 @@ async function watch(options: ForwardPeerReplyOptions, apiUrl: string, accessTok
                 undefined, { limit: 200, afterAt: cursor.at, afterSeq: cursor.seq, ...(epoch === undefined ? {} : { epoch }), ...(snapshot ? { untilAt: snapshot.at, untilSeq: snapshot.seq } : {}) })
             const page = data?.page
             if (!isObject(page) || !Number.isSafeInteger(page.epoch) || page.reset === true || (epoch !== undefined && page.epoch !== epoch)) throw new ReplyWatchError(true, undefined, true)
+            if (consumedTaskEpoch !== undefined && page.epoch !== consumedTaskEpoch) {
+                throw new ReplyWatchError(true, undefined, true)
+            }
+            consumedTaskEpoch ??= page.epoch
             epoch = page.epoch
             if (Number.isFinite(page.snapshotHeadAt) && Number.isSafeInteger(page.snapshotHeadSeq)) {
                 const head = { at: page.snapshotHeadAt as number, seq: page.snapshotHeadSeq as number }
