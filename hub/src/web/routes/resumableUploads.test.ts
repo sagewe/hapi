@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { Hono } from 'hono'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SyncEngine } from '../../sync/syncEngine'
@@ -20,9 +20,9 @@ async function setup() {
         resolveSessionAccess: (id: string, namespace: string) => id === 's' && namespace === 'owner'
             ? { ok: true, sessionId: id, session: { active } }
             : { ok: false, reason: 'access-denied' },
-        uploadFile: async (_id: string, _filename: string, content: string) => {
+        uploadStagedFile: async (_id: string, _metadata: unknown, path: string) => {
             deliveries++
-            expect(Buffer.from(content, 'base64')).toEqual(Buffer.from('abcdef'))
+            expect(await readFile(path)).toEqual(Buffer.from('abcdef'))
             return { success: true, path: '/runner/file' }
         }
     } as unknown as SyncEngine

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ResumableUploadRequestSchema, type ResumableUploadRequest, type UploadFileResponse } from '@hapi/protocol'
@@ -135,20 +136,22 @@ export class ResumableUploads {
         })
     }
 
-    async complete(namespace: string, sessionId: string, id: string, deliver: (metadata: Metadata, bytes: Buffer) => Promise<UploadFileResponse>) {
+    async complete(namespace: string, sessionId: string, id: string, deliver: (metadata: Metadata, path: string) => Promise<UploadFileResponse>) {
         const key = this.key(namespace, sessionId, id)
         return this.locked(key, async () => {
             const dir = join(this.root, key)
             const manifest = await this.load(dir)
             if (manifest.result) return manifest.result
-            const bytes = await readFile(join(dir, 'data'))
-            if (bytes.length !== manifest.size) throw new UploadError('Upload incomplete', 409)
-            if (createHash('sha256').update(bytes).digest('hex') !== manifest.sha256) {
+            const path = join(dir, 'data')
+            if ((await stat(path)).size !== manifest.size) throw new UploadError('Upload incomplete', 409)
+            const hash = createHash('sha256')
+            for await (const chunk of createReadStream(path)) hash.update(chunk)
+            if (hash.digest('hex') !== manifest.sha256) {
                 // Corrupted content cannot make progress; allow a clean retry with the same id.
                 await rm(dir, { recursive: true, force: true })
                 throw new UploadError('Upload checksum mismatch', 409)
             }
-            const result = await deliver(manifest, bytes)
+            const result = await deliver(manifest, path)
             if (!result.success || !result.path) throw new UploadError('Attachment handoff failed', 503)
             manifest.result = result
             manifest.updatedAt = this.now()

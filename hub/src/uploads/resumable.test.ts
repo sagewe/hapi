@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ResumableUploads, UPLOAD_CHUNK_BYTES, UPLOAD_TTL_MS } from './resumable'
@@ -28,9 +28,9 @@ describe('resumable upload storage', () => {
         expect((await restarted.start('owner', 'session', id, metadata)).offset).toBe(5)
         await restarted.append('owner', 'session', id, 5, bytes.subarray(5))
         let deliveries = 0
-        const deliver = async (_m: unknown, received: Buffer) => {
+        const deliver = async (_m: unknown, received: string) => {
             deliveries++
-            expect(received).toEqual(bytes)
+            expect(await readFile(received)).toEqual(bytes)
             return { success: true, path: '/runner/upload' }
         }
         const results = await Promise.all([

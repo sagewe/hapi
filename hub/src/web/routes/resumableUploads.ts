@@ -49,7 +49,7 @@ export function createResumableUploadRoutes(getSyncEngine: () => SyncEngine | nu
         const a = access(c)
         if (a instanceof Response) return a
         return c.json(await uploads.complete(a.namespace, a.sessionId, a.id,
-            (metadata, bytes) => a.engine.uploadFile(a.sessionId, metadata.filename, bytes.toString('base64'), metadata.mimeType)))
+            (metadata, path) => a.engine.uploadStagedFile(a.sessionId, metadata, path)))
     })
     return app
 }

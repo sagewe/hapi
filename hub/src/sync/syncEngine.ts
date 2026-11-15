@@ -1,3 +1,4 @@
+import type { InitChunkedUploadRequest } from '@hapi/protocol/apiTypes'
 /**
  * Sync Engine for HAPI Telegram Bot (Direct Connect)
  *
@@ -4975,6 +4976,10 @@ export class SyncEngine {
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
         return await this.rpcGateway.uploadFile(sessionId, filename, content, mimeType)
+    }
+
+    async uploadStagedFile(sessionId: string, metadata: InitChunkedUploadRequest, path: string): Promise<RpcUploadFileResponse> {
+        return await this.rpcGateway.uploadStagedFile(sessionId, metadata, path)
     }
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {

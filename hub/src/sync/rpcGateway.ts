@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { streamStagedUpload } from '../uploads/streamStagedUpload'
 import type { AgentFlavor, CodexCollaborationMode, CopilotAgentMode, PermissionMode } from '@hapi/protocol/types'
 import { PERMISSION_REQUEST_NOT_FOUND_MESSAGE, RPC_METHODS } from '@hapi/protocol/rpcMethods'
 import {
@@ -18,6 +20,7 @@ import {
     ListPiSessionsRpcResponseSchema
 } from '@hapi/protocol/apiTypes'
 import type {
+    AbortChunkedUploadResponse,
     AgyModelsResponse,
     ClaudeModelsResponse,
     AgentAvailabilityResponse,
@@ -33,6 +36,8 @@ import type {
     FileReadResponse,
     GeneratedImageResponse,
     ImplementCodexPlanResult,
+    InitChunkedUploadRequest,
+    InitChunkedUploadResponse,
     CopilotModelsResponse,
     GrokModelsResponse,
     KimiModelsResponse,
@@ -50,6 +55,7 @@ import type {
     PiModelsResponse,
     SlashCommandsResponse,
     StatFilesResponse,
+    UploadChunkResponse,
     UploadFileResponse,
     WorkspaceReadFileRequest,
     WorkspaceListDirectoryRequest,
@@ -66,6 +72,7 @@ const DEFAULT_RPC_TIMEOUT_MS = 30_000
 const MODEL_LIST_RPC_TIMEOUT_MS = 120_000
 // Codex can spend 30s awaiting startup after preflight and process creation.
 const CODEX_SPAWN_RPC_TIMEOUT_MS = 60_000
+const UPLOAD_CHUNK_RPC_TIMEOUT_MS = 60_000
 
 export class RunnerStopRpcError extends Error {
     constructor(readonly timedOut: boolean, cause: unknown) {
@@ -500,6 +507,42 @@ export class RpcGateway {
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
         return await this.sessionRpc(sessionId, RPC_METHODS.UploadFile, { sessionId, filename, content, mimeType }) as RpcUploadFileResponse
+    }
+
+    async initChunkedUpload(sessionId: string, request: InitChunkedUploadRequest): Promise<InitChunkedUploadResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.UploadInit, { sessionId, ...request }) as InitChunkedUploadResponse
+    }
+
+    async uploadFileChunk(sessionId: string, uploadId: string, index: number, content: string): Promise<UploadChunkResponse> {
+        return await this.sessionRpc(
+            sessionId,
+            RPC_METHODS.UploadChunk,
+            { sessionId, uploadId, index, content },
+            UPLOAD_CHUNK_RPC_TIMEOUT_MS
+        ) as UploadChunkResponse
+    }
+
+    async finalizeChunkedUpload(sessionId: string, uploadId: string): Promise<RpcUploadFileResponse> {
+        return await this.sessionRpc(
+            sessionId,
+            RPC_METHODS.UploadFinalize,
+            { sessionId, uploadId },
+            UPLOAD_CHUNK_RPC_TIMEOUT_MS
+        ) as RpcUploadFileResponse
+    }
+
+    async abortChunkedUpload(sessionId: string, uploadId: string): Promise<AbortChunkedUploadResponse> {
+        return await this.sessionRpc(sessionId, RPC_METHODS.UploadAbort, { sessionId, uploadId }) as AbortChunkedUploadResponse
+    }
+
+    async uploadStagedFile(sessionId: string, metadata: InitChunkedUploadRequest, path: string): Promise<RpcUploadFileResponse> {
+        // An already-running CLI may predate the chunk handlers. Only this
+        // known, pre-dispatch absence permits the legacy single-RPC handoff;
+        // timeouts or failures after init must never trigger a second upload.
+        if (!this.rpcRegistry.getSocketIdForMethod(`${sessionId}:${RPC_METHODS.UploadInit}`)) {
+            return await this.uploadFile(sessionId, metadata.filename, (await readFile(path)).toString('base64'), metadata.mimeType)
+        }
+        return await streamStagedUpload(this, sessionId, metadata, path)
     }
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
