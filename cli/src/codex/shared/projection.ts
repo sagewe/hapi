@@ -284,13 +284,17 @@ export class SharedCodexProjection {
             const turn = record(value);
             for (const raw of Array.isArray(turn.items) ? turn.items : []) {
                 const item = record(raw);
+                const knownLabelTool = item.type === 'mcpToolCall' && item.server === 'hapi'
+                    && (item.tool === 'change_title' || item.tool === 'add_tags');
                 const labels = item.type === 'mcpToolCall' && item.server === 'hapi'
                     ? parseSessionLabelRequest(String(item.tool), item.arguments) : undefined;
-                if (!labels?.tags || !string(item.id)) continue;
+                if (!knownLabelTool || !string(item.id)) continue;
                 const key = `${string(turn.id) ?? 'thread'}:${item.id}`;
-                if ((item.status === undefined || item.status === 'completed') && item.error == null
-                    && isDeferredSessionLabelResult(item.result)) this.completedTags.add(key);
-                else if (turn.status === 'inProgress') this.pendingTags.set(key, labels.tags);
+                // Completed history never owns a new append, even if arguments
+                // were omitted and a later replay happens to fill them in.
+                if (turn.status !== 'inProgress' || item.status === 'completed' || item.status === 'failed'
+                    || item.result != null || item.error != null) this.completedTags.add(key);
+                else if (labels?.tags) this.pendingTags.set(key, labels.tags);
             }
         }
         const titleRevision = this.titleRevision;

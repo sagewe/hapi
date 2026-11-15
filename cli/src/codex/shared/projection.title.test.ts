@@ -238,4 +238,12 @@ describe('owning Codex thread tag effects', () => {
         release(); await replay;
         expect(f.appendTags).not.toHaveBeenCalled();
     });
+
+    it('does not resurrect historical tags when replay later fills omitted arguments', async () => {
+        const f = fixture();
+        const item = { ...tagItem('history-args', 'add_tags'), arguments: { tags: ['Web'] } };
+        await f.projection.history(history({ ...item, arguments: undefined }));
+        await f.projection.notification('item/completed', params(item));
+        expect(f.appendTags).not.toHaveBeenCalled();
+    });
 });
