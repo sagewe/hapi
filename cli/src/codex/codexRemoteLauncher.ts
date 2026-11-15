@@ -10,6 +10,7 @@ import { logger } from '@/ui/logger';
 import { CodexDisplay } from '@/ui/ink/CodexDisplay';
 import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
 import { applySessionDisplayRename } from '@/agent/sessionDisplayRename';
+import { parseSessionLabelRequest, isDeferredSessionLabelResult } from './utils/sessionLabelRequest';
 import { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 import type { CodexSession } from './session';
 import type { EnhancedMode } from './loop';
@@ -470,9 +471,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             return `mcp__${serverName}__${toolName}`;
         };
 
-        const isHapiChangeTitleToolName = (toolName: string | null): boolean => {
-            return toolName === 'mcp__hapi__change_title';
+        const hapiLabelToolName = (toolName: string | null): 'change_title' | 'add_tags' | undefined => {
+            if (toolName === 'mcp__hapi__change_title') return 'change_title';
+            if (toolName === 'mcp__hapi__add_tags') return 'add_tags';
+            return undefined;
         };
+        // Child traces keep their own displayed title, without mutating the
+        // parent's session labels.
+        const isHapiChangeTitleToolName = (toolName: string | null): boolean =>
+            hapiLabelToolName(toolName) === 'change_title';
 
         const sendTitleSummary = (title: string): void => {
             // Matches MCP change_title / web rename: set metadata.name so a
@@ -672,7 +679,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const diffProcessor = new DiffProcessor((message) => {
             session.sendAgentMessage({ ...message, ...(this.currentTurnId ? { turn_id: this.currentTurnId } : {}) });
         });
-        const mcpTitleByCallId = new Map<string, string>();
+        const mcpLabelsByCallId = new Map<string, NonNullable<ReturnType<typeof parseSessionLabelRequest>>>();
         const agentCardByAgentId = new Map<string, string>();
         const agentSummaryByCardId = new Map<string, string>();
         const agentSummaryByAgentId = new Map<string, string>();
@@ -3140,7 +3147,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 }
                 diffProcessor.reset();
                 appServerEventConverter.reset();
-                mcpTitleByCallId.clear();
+                mcpLabelsByCallId.clear();
                 pendingAgentToolInputByCallId.clear();
                 childAgentActivityInCurrentTurn = false;
                 wakeLoop();
@@ -3389,11 +3396,9 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 );
                 if (callId && name) {
                     const input = invocation.arguments ?? invocation.input ?? msg.arguments ?? msg.input ?? {};
-                    const inputRecord = asRecord(input);
-                    const requestedTitle = inputRecord ? asString(inputRecord.title) : null;
-                    if (isHapiChangeTitleToolName(name) && requestedTitle) {
-                        mcpTitleByCallId.set(callId, requestedTitle);
-                    }
+                    const labelTool = hapiLabelToolName(name);
+                    const labels = labelTool ? parseSessionLabelRequest(labelTool, input) : undefined;
+                    if (labels) mcpLabelsByCallId.set(callId, labels);
                     sendRootMessage({
                         type: 'tool-call',
                         name,
@@ -3419,10 +3424,18 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 }
 
                 if (callId) {
-                    const title = mcpTitleByCallId.get(callId);
-                    mcpTitleByCallId.delete(callId);
-                    if (!isError && title) {
-                        sendTitleSummary(title);
+                    const labels = mcpLabelsByCallId.get(callId);
+                    mcpLabelsByCallId.delete(callId);
+                    const outputRecord = asRecord(output);
+                    isError = isError || outputRecord?.isError === true;
+                    if (!isError && labels) {
+                        if (labels.title) sendTitleSummary(labels.title);
+                        if (labels.tags && isDeferredSessionLabelResult(rawResult)) {
+                            void (async () => {
+                                try { await session.client.appendSessionTags(labels.tags!); }
+                                catch { logger.debug('[Codex] Deferred session tags were not confirmed by the Hub'); }
+                            })();
+                        }
                     }
 
                     sendRootMessage({
@@ -4360,7 +4373,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     reasoningProcessor.abort();
                     diffProcessor.reset();
                     appServerEventConverter.reset();
-                    mcpTitleByCallId.clear();
+                    mcpLabelsByCallId.clear();
                     pendingAgentToolInputByCallId.clear();
                     pendingAgentTracesByAgentId.clear();
                     cancelAllPendingThrottledAgentRunUpdates();

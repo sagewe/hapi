@@ -8,6 +8,8 @@ import { record, string } from './gateway';
 import { codexPlanProposalId } from './plan';
 import { CodexCompactionSummaryLookup } from '../utils/codexCompactionSummary';
 import { asyncQuestionReplies, asyncQuestionsForItem } from './asyncQuestions';
+import { parseSessionLabelRequest, isDeferredSessionLabelResult } from '../utils/sessionLabelRequest';
+import { logger } from '@/ui/logger';
 
 export function inputText(input: unknown): string {
     if (!Array.isArray(input)) return '';
@@ -45,6 +47,8 @@ export class SharedCodexProjection {
     // Unlike transcript emission, title side effects survive reset/replay.
     private readonly pendingTitles = new Map<string, string>();
     private readonly completedTitles = new Set<string>();
+    private readonly pendingTags = new Map<string, string[]>();
+    private readonly completedTags = new Set<string>();
     private titleRevision = 0;
     private readonly compactionSummaries: CodexCompactionSummaryLookup;
     private summaryThread: unknown;
@@ -82,6 +86,27 @@ export class SharedCodexProjection {
         const item = record(p.item);
         if (!this.parentThreadId && p.threadId === this.threadId && string(item.id)) {
             const key = `${string(p.turnId) ?? 'thread'}:${item.id}`;
+            const labelArgs = item.type === 'mcpToolCall' && item.server === 'hapi'
+                ? parseSessionLabelRequest(String(item.tool), item.arguments) : undefined;
+            if (method === 'item/started' && labelArgs?.tags && !this.completedTags.has(key)) {
+                this.pendingTags.set(key, labelArgs.tags);
+            }
+            if (method === 'item/completed' && !this.completedTags.has(key)) {
+                const knownLabelTool = item.type === 'mcpToolCall' && item.server === 'hapi'
+                    && (item.tool === 'change_title' || item.tool === 'add_tags');
+                const tags = knownLabelTool ? this.pendingTags.get(key) ?? labelArgs?.tags : undefined;
+                this.pendingTags.delete(key);
+                if (tags && (item.status === undefined || item.status === 'completed')
+                    && item.error == null && isDeferredSessionLabelResult(item.result)) {
+                    this.completedTags.add(key);
+                    // Metadata must not hold the ordered conversation stream while
+                    // a Hub request is slow or temporarily unreachable.
+                    void (async () => {
+                        try { await this.session.appendSessionTags(tags); }
+                        catch { logger.debug('[Codex shared] deferred session tags were not confirmed by the Hub'); }
+                    })();
+                }
+            }
             if (!this.completedTitles.has(key)) {
                 const title = requestedTitle(item);
                 if (method === 'item/started' && title) this.pendingTitles.set(key, title);
@@ -253,6 +278,21 @@ export class SharedCodexProjection {
         if (record(thread).id === this.threadId) this.summaryThread = thread;
         const turns = record(thread).turns;
         if (!Array.isArray(turns)) return;
+        // Seed completed identities before the first await: history loading can
+        // interleave with live replay, but must never resurrect manually removed tags.
+        if (!this.parentThreadId) for (const value of turns) {
+            const turn = record(value);
+            for (const raw of Array.isArray(turn.items) ? turn.items : []) {
+                const item = record(raw);
+                const labels = item.type === 'mcpToolCall' && item.server === 'hapi'
+                    ? parseSessionLabelRequest(String(item.tool), item.arguments) : undefined;
+                if (!labels?.tags || !string(item.id)) continue;
+                const key = `${string(turn.id) ?? 'thread'}:${item.id}`;
+                if ((item.status === undefined || item.status === 'completed') && item.error == null
+                    && isDeferredSessionLabelResult(item.result)) this.completedTags.add(key);
+                else if (turn.status === 'inProgress') this.pendingTags.set(key, labels.tags);
+            }
+        }
         const titleRevision = this.titleRevision;
         let latestTitle: string | undefined;
         for (const value of turns) {

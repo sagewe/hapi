@@ -12,13 +12,14 @@ function fixture(parentThreadId?: string, deferWrites = false) {
     });
     const send = vi.fn();
     const committed = vi.fn(async (_id: string) => {});
+    const appendTags = vi.fn(async (_tags: string[]) => ({ tags: [], added: [], skipped: [], limitReached: false }));
     const session = {
         getMetadata: () => metadata, updateMetadata: update, sendAgentMessage: send,
-        sendUserMessage() {}
+        sendUserMessage() {}, appendSessionTags: appendTags
     } as unknown as ApiSessionClient;
     return {
         projection: new SharedCodexProjection(session, 'thread', committed, parentThreadId),
-        metadata: () => metadata, update, send, committed,
+        metadata: () => metadata, update, send, committed, appendTags,
         flush: () => { for (const fn of queued.splice(0)) metadata = fn(metadata); }
     };
 }
@@ -167,5 +168,74 @@ describe('shared Codex titles', () => {
         await queued.projection.notification('item/completed', params(titleItem('live', 'Live'), 'next'));
         queued.flush();
         expect(queued.metadata().name).toBe('Live');
+    });
+});
+
+function tagItem(id: string, tool = 'change_title', tags = ['Web']) {
+    return { ...titleItem(id, 'Labeled title'), tool, arguments: { title: 'Labeled title', tags },
+        result: { isError: false, structuredContent: { success: true, deferred: true }, content: [] } };
+}
+
+describe('owning Codex thread tag effects', () => {
+    it('adds tags while retaining a locked title and does not replay removed labels', async () => {
+        const f = fixture();
+        f.update(meta => ({ ...meta, titleLocked: true }));
+        const item = tagItem('tags');
+        await f.projection.notification('item/started', params(item));
+        await f.projection.notification('item/completed', params({ ...item, arguments: undefined }));
+        expect(f.appendTags).toHaveBeenCalledWith(['Web']);
+        expect(f.metadata().name).toBe('Manual name');
+        await f.projection.notification('item/completed', params(item));
+        f.projection.reset();
+        await f.projection.history(history(item));
+        await f.projection.notification('item/completed', params(item));
+        expect(f.appendTags).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets add_tags work without a title and rejects descendants or other threads', async () => {
+        const item = { ...tagItem('only', 'add_tags'), arguments: { tags: ['新标签'] } };
+        const root = fixture();
+        await root.projection.notification('item/completed', params(item));
+        expect(root.appendTags).toHaveBeenCalledWith(['新标签']);
+        expect(root.metadata().name).toBe('Manual name');
+        const child = fixture('parent');
+        await child.projection.notification('item/completed', params(item));
+        expect(child.appendTags).not.toHaveBeenCalled();
+        const other = fixture();
+        await other.projection.notification('item/completed', { ...params(item), threadId: 'different' });
+        expect(other.appendTags).not.toHaveBeenCalled();
+    });
+
+    it('requires new-server deferred acceptance rather than a legacy title-only success', async () => {
+        const f = fixture();
+        await f.projection.notification('item/completed', params({ ...tagItem('old'), result: titleItem('old', 'Title').result }));
+        await f.projection.notification('item/completed', params({ ...tagItem('failed'), result: { isError: true } }));
+        await f.projection.notification('item/completed', params({ ...tagItem('rejected'), result: { structuredContent: { success: false, deferred: true } } }));
+        expect(f.appendTags).not.toHaveBeenCalled();
+        const text = { content: [{ type: 'text', text: 'Accepted for deferred application by the owning session; no title or tags have been changed yet.\n' + JSON.stringify({ success: true, deferred: true }) }] };
+        await f.projection.notification('item/completed', params({ ...tagItem('json'), result: { Ok: text } }));
+        expect(f.appendTags).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not hold the conversation stream behind a pending tag HTTP request', async () => {
+        const f = fixture();
+        let release!: () => void;
+        f.appendTags.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ tags: [], added: [], skipped: [], limitReached: false }); }));
+        await f.projection.notification('item/completed', params(tagItem('pending')));
+        expect(f.send).toHaveBeenCalled();
+        expect(release).toBeTypeOf('function');
+        release();
+    });
+
+    it('seeds historical identities before asynchronous history rendering can interleave', async () => {
+        const f = fixture();
+        let release!: () => void;
+        f.committed.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+        const item = tagItem('historic');
+        const replay = f.projection.history(history({ id: 'u', type: 'userMessage', content: [{ type: 'text', text: 'hi' }] }, item));
+        await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+        await f.projection.notification('item/completed', params(item));
+        release(); await replay;
+        expect(f.appendTags).not.toHaveBeenCalled();
     });
 });

@@ -84,6 +84,9 @@ const harness = vi.hoisted(() => ({
     emitParentGoalDuplicateEvents: false,
     emitChildNestedAgentTool: false,
     emitParentTitleChange: false,
+    parentTitleTags: undefined as string[] | undefined,
+    parentTitleTool: 'change_title' as 'change_title' | 'add_tags',
+    parentTitleError: false,
     emitParentSpawnFailureWithoutAgentId: false,
     emitParentSpawnStartWithoutEnd: false,
     emitParentSpawnRouterStderrError: false,
@@ -433,8 +436,8 @@ vi.mock('./codexAppServerClient', () => {
                             id: 'title-parent',
                             type: 'mcpToolCall',
                             server: 'hapi',
-                            tool: 'change_title',
-                            arguments: { title: 'Parent Title' }
+                            tool: harness.parentTitleTool,
+                            arguments: harness.parentTitleTool === 'add_tags' ? { tags: harness.parentTitleTags } : { title: 'Parent Title', ...(harness.parentTitleTags ? { tags: harness.parentTitleTags } : {}) }
                         },
                         threadId,
                         turnId
@@ -447,8 +450,9 @@ vi.mock('./codexAppServerClient', () => {
                             id: 'title-parent',
                             type: 'mcpToolCall',
                             server: 'hapi',
-                            tool: 'change_title',
+                            tool: harness.parentTitleTool,
                             result: {
+                                ...(harness.parentTitleTags ? { structuredContent: { success: !harness.parentTitleError, deferred: true }, isError: harness.parentTitleError } : {}),
                                 content: [
                                     { type: 'text', text: 'Successfully changed chat title to: "Parent Title"' }
                                 ]
@@ -783,7 +787,7 @@ vi.mock('./codexAppServerClient', () => {
                         type: 'mcpToolCall',
                         server: 'hapi',
                         tool: 'change_title',
-                        arguments: { title: 'Child Title' }
+                        arguments: { title: 'Child Title', ...(harness.parentTitleTags ? { tags: harness.parentTitleTags } : {}) }
                     },
                     threadId: childThreadId,
                     turnId: childTurnId
@@ -798,6 +802,7 @@ vi.mock('./codexAppServerClient', () => {
                         server: 'hapi',
                         tool: 'change_title',
                         result: {
+                            ...(harness.parentTitleTags ? { structuredContent: { success: true, deferred: true } } : {}),
                             content: [
                                 { type: 'text', text: 'Successfully changed chat title to: "Child Title"' }
                             ]
@@ -1164,7 +1169,9 @@ function createSessionStub(
     };
 
     const rpcHandlers = new Map<string, (params: unknown) => unknown>();
+    const appendSessionTags = vi.fn(async (tags: string[]) => ({ tags, added: tags, skipped: [], limitReached: false }));
     const client = {
+        appendSessionTags,
         rpcHandlerManager: {
             registerHandler(method: string, handler: (params: unknown) => unknown) {
                 rpcHandlers.set(method, handler);
@@ -1250,6 +1257,7 @@ function createSessionStub(
         summaryMessages,
         metadataUpdates,
         getMetadata: () => metadata,
+        appendSessionTags,
         thinkingChanges,
         foundSessionIds,
         resetThreadCalls,
@@ -1542,6 +1550,9 @@ describe('codexRemoteLauncher', () => {
         harness.emitParentGoalDuplicateEvents = false;
         harness.emitChildNestedAgentTool = false;
         harness.emitParentTitleChange = false;
+        harness.parentTitleTags = undefined;
+        harness.parentTitleTool = 'change_title';
+        harness.parentTitleError = false;
         harness.emitParentSpawnFailureWithoutAgentId = false;
         harness.emitParentSpawnStartWithoutEnd = false;
         harness.emitParentSpawnRouterStderrError = false;
@@ -3392,6 +3403,38 @@ describe('codexRemoteLauncher', () => {
             callId: 'title-parent',
             is_error: false
         }));
+    });
+
+    it('applies deferred root tags even when the title is locked', async () => {
+        harness.emitParentTitleChange = true;
+        harness.parentTitleTags = ['自动标签'];
+        const f = createSessionStub();
+        f.session.client.updateMetadata(meta => ({ ...meta, titleLocked: true }));
+        await codexRemoteLauncher(f.session as never);
+        expect(f.getMetadata().name).toBe('issue-triage-#54');
+        expect(f.appendSessionTags).toHaveBeenCalledWith(['自动标签']);
+    });
+
+    it('supports deferred add_tags without renaming and ignores MCP failures', async () => {
+        harness.emitParentTitleChange = true;
+        harness.parentTitleTool = 'add_tags';
+        harness.parentTitleTags = ['Web'];
+        const f = createSessionStub();
+        await codexRemoteLauncher(f.session as never);
+        expect(f.appendSessionTags).toHaveBeenCalledWith(['Web']);
+        expect(f.getMetadata().name).toBe('issue-triage-#54');
+        harness.parentTitleError = true;
+        const failed = createSessionStub();
+        await codexRemoteLauncher(failed.session as never);
+        expect(failed.appendSessionTags).not.toHaveBeenCalled();
+    });
+
+    it('never applies descendant tool tags to the owning parent', async () => {
+        harness.emitChildThreadEvents = true;
+        harness.parentTitleTags = ['Child-only'];
+        const f = createSessionStub();
+        await codexRemoteLauncher(f.session as never);
+        expect(f.appendSessionTags).not.toHaveBeenCalled();
     });
 
     it('clears codex thread state without starting a turn', async () => {
