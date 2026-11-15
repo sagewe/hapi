@@ -30,9 +30,11 @@ for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 
             await page.locator(attachment('first.png')).getByTitle('Click to zoom').click()
             await page.evaluate(() => window.__composerImagePreview!.setDisabled(true))
             await expect(page.getByRole('dialog', { name: 'first.png' })).toBeVisible()
-            await expect(page.getByRole('button', { name: 'Reorder attachment first.png' })).toHaveCount(0)
+            // A modal preview aria-hides the composer; inspect its retained DOM
+            // controls without exposing background controls to assistive technology.
+            await expect(page.getByRole('button', { name: 'Reorder attachment first.png', includeHidden: true })).toHaveCount(0)
             await page.evaluate(() => window.__composerImagePreview!.setDisabled(false))
-            await expect(page.getByRole('button', { name: 'Reorder attachment first.png' })).toHaveCount(1)
+            await expect(page.getByRole('button', { name: 'Reorder attachment first.png', includeHidden: true })).toHaveCount(1)
             await expect(page.getByRole('dialog', { name: 'first.png' })).toBeVisible()
             await page.evaluate(() => window.__composerImagePreview!.clearAttachments())
             await expect(page.getByRole('dialog')).toBeHidden()
