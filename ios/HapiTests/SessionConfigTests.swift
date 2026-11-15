@@ -671,6 +671,80 @@ final class SessionConfigTests: XCTestCase {
         }
     }
 
+    func testToolbarPopupsStayAboveComposerAndPreserveEditing() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let rootVC = UIViewController()
+        window.rootViewController = rootVC
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let composer = UIView(frame: CGRect(x: 12, y: 440, width: 369, height: 100))
+        rootVC.view.addSubview(composer)
+        let editor = UITextView(frame: CGRect(x: 8, y: 8, width: 353, height: 44))
+        editor.text = "draft stays here"
+        composer.addSubview(editor)
+        let toolbarButton = UIButton(frame: CGRect(x: 8, y: 56, width: 44, height: 44))
+        composer.addSubview(toolbarButton)
+        XCTAssertTrue(editor.becomeFirstResponder())
+
+        let box = PopupTestBox()
+        let host = UIHostingController(rootView: PopupTestWrapper(
+            box: box, interactor: harness.interactor, model: harness.model
+        ))
+        host.safeAreaRegions = []
+        host.view.backgroundColor = .clear
+        host.view.isUserInteractionEnabled = false // The wrapper supplies only a noninteractive anchor.
+        host.view.frame = composer.bounds
+        rootVC.addChild(host)
+        composer.addSubview(host.view)
+        host.didMove(toParent: rootVC)
+        window.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+
+        let initialToolbarPoint = toolbarButton.convert(CGPoint(x: 22, y: 22), to: window)
+        XCTAssertTrue(window.hitTest(initialToolbarPoint, with: nil) === toolbarButton,
+                      "The test anchor must not intercept toolbar taps before presenting a popup")
+        let kinds: [ComposerPopupKind] = [.attachment, .schedule, .skills, .scratchlist, .sessionControls]
+        let identifiers = Set(kinds.map(\.identifier))
+        func cards(in view: UIView) -> [UIView] {
+            let own = view.accessibilityIdentifier.map { identifiers.contains($0) } == true ? [view] : []
+            return own + view.subviews.flatMap { cards(in: $0) }
+        }
+        for originY: CGFloat in [440, 720] {
+            composer.frame.origin.y = originY
+            window.layoutIfNeeded()
+            for kind in kinds {
+                box.activePopup = kind
+                try await configEventually { cards(in: window).contains { $0.accessibilityIdentifier == kind.identifier } }
+                try await Task.sleep(for: .milliseconds(200))
+                let visibleCards = cards(in: window)
+                XCTAssertEqual(visibleCards.count, 1, "Switching must reuse a single popup")
+                let card = try XCTUnwrap(visibleCards.first)
+                XCTAssertEqual(card.frame.maxY, originY - 8, accuracy: 2, "\(kind) must clear the entire composer")
+                XCTAssertGreaterThanOrEqual(card.frame.minY, window.safeAreaInsets.top + 6)
+                if kind.isTrailingAligned {
+                    XCTAssertEqual(card.frame.maxX, 381, accuracy: 2)
+                } else {
+                    XCTAssertEqual(card.frame.minX, 12, accuracy: 2)
+                }
+                XCTAssertTrue(editor.isFirstResponder, "Opening and switching cards must retain keyboard focus")
+                XCTAssertEqual(editor.text, "draft stays here")
+                let toolbarPoint = toolbarButton.convert(CGPoint(x: 22, y: 22), to: window)
+                XCTAssertTrue(window.hitTest(toolbarPoint, with: nil) === toolbarButton,
+                              "The popup backdrop must let toolbar taps through")
+            }
+        }
+        box.activePopup = nil
+        try await configEventually { cards(in: window).isEmpty }
+        XCTAssertTrue(editor.isFirstResponder)
+    }
+
     func testSessionControlsPopupFollowsComposerDownWhenKeyboardDismisses() async throws {
         let harness = try await SessionConfigTestHarness(flavor: "codex")
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)

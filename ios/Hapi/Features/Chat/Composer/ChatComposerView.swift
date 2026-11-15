@@ -3362,6 +3362,14 @@ struct ComposerPopupHost: UIViewRepresentable {
             positionCard(force: true)
         }
 
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            // Keep the editor and toolbar usable for typing, closing or switching cards.
+            if let anchorView, Self.liveRect(of: anchorView, in: self).contains(point) {
+                return nil
+            }
+            return super.hitTest(point, with: event)
+        }
+
         func stopTrackingAnchor() {
             isDismissing = true
             anchorDisplayLink?.stop()
@@ -3424,7 +3432,8 @@ struct ComposerPopupHost: UIViewRepresentable {
             let maxCardWidth = max(180, bounds.width - 24)
             let cardWidth = min(kind.cardWidth, maxCardWidth)
             let topLimit = safeAreaInsets.top + 8
-            let bottomLimit = kind == .sessionControls ? composerFrame.minY - 8 : composerFrame.maxY
+            // Every toolbar card sits above the entire composer, leaving its editor and controls visible.
+            let bottomLimit = composerFrame.minY - 8
             let maxHeight = max(100, bottomLimit - topLimit)
             let targetSize = cardHostingController.sizeThatFits(in: CGSize(width: cardWidth, height: maxHeight))
             let cardHeight = min(ceil(targetSize.height), maxHeight)
