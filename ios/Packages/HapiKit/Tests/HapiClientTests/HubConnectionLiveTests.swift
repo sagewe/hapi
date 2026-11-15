@@ -26,7 +26,7 @@ struct HubConnectionLiveTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["HAPI_ROUTE_LIVE_CONFIG"] != nil))
     func verifiesDirectAndFallbackAgainstTheSameLiveHub() async throws {
         struct Config: Decodable { let origin: URL; let jwt: String }
-        struct Info: Decodable { let hubId: String; let privateUrl: URL }
+        struct Info: Decodable { let hubId: String; let privateUrl: URL; let lanUrl: URL }
         let path = try #require(ProcessInfo.processInfo.environment["HAPI_ROUTE_LIVE_CONFIG"])
         let config = try JSONDecoder().decode(Config.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
         func client(_ http: any HTTPPerforming, clock: LiveRoutingClock = LiveRoutingClock()) throws -> APIClient {
@@ -43,10 +43,10 @@ struct HubConnectionLiveTests {
         #expect(direct.baseURL == config.origin)
         await direct.connection?.refreshDiagnostics(force: true)
         let measurements = try #require(await direct.connection?.diagnostics())
-        #expect(measurements.privateMeasurement?.outcome == .reachable)
+        #expect(measurements.lanMeasurement?.outcome == .reachable)
         #expect(measurements.publicMeasurement?.outcome == .reachable)
-        print("Measured HTTP ms private=\(measurements.privateMeasurement?.milliseconds ?? -1) public=\(measurements.publicMeasurement?.milliseconds ?? -1)")
-        // A cold private handshake may exceed the one-second routing budget.
+        print("Measured HTTP ms LAN=\(measurements.lanMeasurement?.milliseconds ?? -1) public=\(measurements.publicMeasurement?.milliseconds ?? -1)")
+        // A cold LAN handshake may exceed the short routing budget.
         // Real health requests remain real; advance only policy time so the
         // documented spaced-recovery checks need no minute-long test sleep.
         for _ in 0..<3 {
@@ -57,8 +57,8 @@ struct HubConnectionLiveTests {
         #expect(await direct.connection?.status().isPrivate == true)
         let _: JSONValue = try await direct.request(.get, "/api/sessions")
         let socket = try await direct.connectionRequest(URLRequest(url: config.origin.appendingPathComponent("api/voice/asr-ws")))
-        #expect(socket.url?.host == info.privateUrl.host)
-        let fallback = try client(PrivateBlocked(host: try #require(info.privateUrl.host)))
+        #expect(socket.url?.host == info.lanUrl.host)
+        let fallback = try client(PrivateBlocked(host: try #require(info.lanUrl.host)))
         let viaPublic: Info = try await fallback.request(.get, "/api/connection")
         #expect(viaPublic.hubId == info.hubId)
         #expect(await fallback.connection?.status().isPrivate == false)
