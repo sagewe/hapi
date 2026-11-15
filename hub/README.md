@@ -213,8 +213,32 @@ Native Android/iOS registration uses `POST`/`DELETE /api/devices/register`
 
 - `POST /cli/sessions` - Create/load session.
 - `GET /cli/sessions/:id` - Get session by ID.
+- `GET /cli/sessions/:id/tags` - Current tags, same-namespace tag vocabulary, title-lock state and vocabulary truncation.
+- `POST /cli/sessions/:id/tags` - Append 1–3 Agent suggestions atomically; never replace existing tags or change title/lock fields.
 - `POST /cli/machines` - Create/load machine.
 - `GET /cli/machines/:id` - Get machine by ID.
+
+Tag requests use the existing raw CLI bearer token and its namespace, never the
+Web/native client JWT plane. `AgentSessionTagsRequestSchema` accepts only
+`{tags}`: trim strings, retain first case-insensitive spelling, reject empty
+values, more than three raw suggestions or tags longer than 64 characters.
+Suggestions may introduce new tags; vocabulary membership is not required.
+
+The append result is `{tags, added, skipped, limitReached}`. Existing tags retain
+their spelling/order; already-present suggestions are neither added nor skipped.
+New suggestions beyond the 20-tag capacity are explicitly skipped, and
+`limitReached` means the resulting list is full. The Hub reads the latest
+persisted metadata and retries versioned CAS contention up to five times,
+including concurrent manual tag removals, title edits and lock changes. It does
+not touch session ordering time. Raw CLI metadata writes still cannot set tags.
+
+Tag context is `{tags, availableTags, titleLocked, truncated}`. Vocabulary is
+derived from persisted sessions in the same namespace, counting each normalized
+tag once per session; it has no separate catalog or provenance database. Rank is
+frequency descending then case-insensitive text in stable code-point order.
+Current tags and their spellings remain included even when the 200-entry cap
+excludes more popular alternatives. Missing/foreign targets return 404/403,
+invalid input returns 400 and exhausted CAS contention returns 409.
 
 ## Socket.IO
 

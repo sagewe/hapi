@@ -4,7 +4,7 @@ const record = (value: unknown): Record<string, unknown> | null =>
     value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown> : null
 
-function normalizeSessionTags(raw: unknown): string[] | undefined {
+export function normalizeSessionTags(raw: unknown): string[] | undefined {
     if (!Array.isArray(raw)) return undefined
     const seen = new Set<string>()
     const out: string[] = []
@@ -20,7 +20,7 @@ function normalizeSessionTags(raw: unknown): string[] | undefined {
     return out.length > 0 ? out : undefined
 }
 
-/** Only a user title/tag save may change the lock or tags; enforce against the raw persisted row. */
+/** Only explicit Hub title/tag APIs may change the lock or tags; enforce against the raw persisted row. */
 export function preserveSessionTitle(prior: unknown, incoming: unknown, options?: TitleWriteOptions): unknown {
     const previous = record(prior)
     const locked = options?.titleLocked ?? (previous?.titleLocked === true)

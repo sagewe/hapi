@@ -1,3 +1,5 @@
+import { AgentSessionTagsRequestSchema, SESSION_TAGS_MAX_COUNT, SESSION_TAG_VOCABULARY_MAX_COUNT, type AgentSessionTagsResult, type SessionTagsContext } from '@hapi/protocol'
+import { normalizeSessionTags } from '../store/sessionTitleLock'
 import { mergeReadState } from '@hapi/protocol'
 import { SESSION_LIFECYCLE_IDLE, SESSION_LIFECYCLE_RUNNING } from '@hapi/protocol'
 import { AgentStateSchema, MetadataSchema, SessionPatchSchema, TeamStateSchema } from '@hapi/protocol/schemas'
@@ -18,6 +20,13 @@ const TURN_RECOVERY_WINDOW_MS = 10 * 60_000
 // HTTP caller as 409 instead of spinning forever.
 const METADATA_RETRY_ATTEMPTS = 5
 type RuntimeConfigKey = 'permissionMode' | 'model' | 'modelReasoningEffort' | 'effort' | 'serviceTier' | 'collaborationMode' | 'copilotAgentMode'
+
+export class SessionTagsOperationError extends Error {
+    constructor(readonly code: 'not-found' | 'access-denied' | 'conflict' | 'failed', message: string) {
+        super(message)
+        this.name = 'SessionTagsOperationError'
+    }
+}
 
 export class SessionCache {
     private readonly sessions: Map<string, Session> = new Map()
@@ -1109,6 +1118,91 @@ export class SessionCache {
         // contract and surface this as an error so non-RPC failures stay
         // 5xx per the issue's acceptance criteria.
         throw new Error('Session was modified concurrently while archiving from hub')
+    }
+
+    private requireTagSession(sessionId: string, namespace: string) {
+        const stored = this.store.sessions.getSessionByNamespace(sessionId, namespace)
+        if (stored) return stored
+        if (this.store.sessions.getSession(sessionId)) {
+            throw new SessionTagsOperationError('access-denied', 'Session access denied')
+        }
+        throw new SessionTagsOperationError('not-found', 'Session not found')
+    }
+
+    /** Read vocabulary from persisted sessions, scoped to the authenticated namespace. */
+    getSessionTagsContext(sessionId: string, namespace: string): SessionTagsContext {
+        const stored = this.requireTagSession(sessionId, namespace)
+        const metadata = stored.metadata as { tags?: unknown; titleLocked?: unknown } | null
+        const tags = normalizeSessionTags(metadata?.tags) ?? []
+        const counts = new Map<string, { key: string; tag: string; count: number }>()
+        for (const session of this.store.sessions.getSessionsByNamespace(namespace)) {
+            for (const tag of normalizeSessionTags((session.metadata as { tags?: unknown } | null)?.tags) ?? []) {
+                const key = tag.toLowerCase()
+                const entry = counts.get(key)
+                if (entry) {
+                    entry.count++
+                    if (tag < entry.tag) entry.tag = tag
+                } else counts.set(key, { key, tag, count: 1 })
+            }
+        }
+        // Current spellings always win their case-insensitive vocabulary entry.
+        const selected = new Map<string, { key: string; tag: string; count: number }>()
+        for (const tag of tags) {
+            const key = tag.toLowerCase()
+            const entry = { key, tag, count: counts.get(key)?.count ?? 1 }
+            counts.set(key, entry)
+            selected.set(key, entry)
+        }
+        const compare = (a: { key: string; count: number }, b: { key: string; count: number }) =>
+            b.count - a.count || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+        const ranked = [...counts.values()].sort(compare)
+        for (const entry of ranked) {
+            if (selected.size >= SESSION_TAG_VOCABULARY_MAX_COUNT) break
+            if (!selected.has(entry.key)) selected.set(entry.key, entry)
+        }
+        return {
+            tags,
+            availableTags: [...selected.values()].sort(compare).map(entry => entry.tag),
+            titleLocked: metadata?.titleLocked === true,
+            truncated: counts.size > selected.size
+        }
+    }
+
+    /** Append suggestions against the latest persisted metadata, retrying CAS contention. */
+    async appendSessionTags(sessionId: string, namespace: string, suggestions: string[]): Promise<AgentSessionTagsResult> {
+        const requested = AgentSessionTagsRequestSchema.parse({ tags: suggestions }).tags
+        for (let attempt = 0; attempt < METADATA_RETRY_ATTEMPTS; attempt++) {
+            const stored = this.requireTagSession(sessionId, namespace)
+            const metadata = stored.metadata !== null && typeof stored.metadata === 'object' && !Array.isArray(stored.metadata)
+                ? stored.metadata as Record<string, unknown> : { path: '', host: '' }
+            const tags = normalizeSessionTags(metadata.tags) ?? []
+            const seen = new Set(tags.map(tag => tag.toLowerCase()))
+            const added: string[] = []
+            const skipped: string[] = []
+            for (const tag of requested) {
+                const key = tag.toLowerCase()
+                if (seen.has(key)) continue
+                seen.add(key)
+                if (tags.length >= SESSION_TAGS_MAX_COUNT) skipped.push(tag)
+                else { tags.push(tag); added.push(tag) }
+            }
+            const outcome = { tags, added, skipped, limitReached: tags.length >= SESSION_TAGS_MAX_COUNT }
+            if (!added.length) return outcome
+            const result = this.store.sessions.updateSessionMetadata(
+                sessionId, { ...metadata }, stored.metadataVersion, namespace,
+                { touchUpdatedAt: false, tags }
+            )
+            if (result.result === 'success') {
+                this.refreshSession(sessionId)
+                return outcome
+            }
+            this.refreshSession(sessionId)
+            if (result.result === 'error') {
+                this.requireTagSession(sessionId, namespace)
+                throw new SessionTagsOperationError('failed', 'Failed to append session tags')
+            }
+        }
+        throw new SessionTagsOperationError('conflict', 'Session was modified concurrently. Please try again.')
     }
 
     async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean, tags?: string[]): Promise<void> {

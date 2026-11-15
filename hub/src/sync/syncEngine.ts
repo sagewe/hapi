@@ -1,4 +1,4 @@
-import type { InitChunkedUploadRequest } from '@hapi/protocol/apiTypes'
+import type { InitChunkedUploadRequest, AgentSessionTagsResult, SessionTagsContext } from '@hapi/protocol/apiTypes'
 /**
  * Sync Engine for HAPI Telegram Bot (Direct Connect)
  *
@@ -2593,6 +2593,14 @@ export class SyncEngine {
             throw new Error('Conversation history action already in progress')
         }
         await this.rpcGateway.switchSession(sessionId, to)
+    }
+
+    getSessionTagsContext(sessionId: string, namespace: string): SessionTagsContext {
+        return this.sessionCache.getSessionTagsContext(sessionId, namespace)
+    }
+
+    async appendSessionTags(sessionId: string, namespace: string, tags: string[]): Promise<AgentSessionTagsResult> {
+        return await this.sessionCache.appendSessionTags(sessionId, namespace, tags)
     }
 
     async renameSession(sessionId: string, name: string | undefined, titleLocked?: boolean, tags?: string[]): Promise<void> {

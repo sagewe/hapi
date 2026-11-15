@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import {
+    AgentSessionTagsRequestSchema,
     CreateOrLoadMachineRequestSchema,
     CreateOrLoadSessionRequestSchema,
     ClearOpencodeSessionCallbackRequestSchema,
@@ -13,6 +14,7 @@ import { constantTimeEquals } from '../../utils/crypto'
 import { parseAccessToken } from '../../utils/accessToken'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import { SessionIdentityConflictError, SessionNotAdoptableError } from '../../store/sessions'
+import { SessionTagsOperationError } from '../../sync/sessionCache'
 
 const bearerSchema = z.string().regex(/^Bearer\s+(.+)$/i)
 
@@ -174,6 +176,37 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
                 return c.json({ error: error.message }, status)
             }
             throw error
+        }
+    })
+
+    app.get('/sessions/:id/tags', (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const namespace = c.get('namespace')
+        const access = resolveSessionForNamespace(engine, c.req.param('id'), namespace)
+        if (!access.ok) return c.json({ error: access.error }, access.status)
+        try {
+            return c.json(engine.getSessionTagsContext(access.sessionId, namespace))
+        } catch (error) {
+            if (!(error instanceof SessionTagsOperationError)) throw error
+            return c.json({ error: error.message }, error.code === 'not-found' ? 404 : error.code === 'access-denied' ? 403 : 500)
+        }
+    })
+
+    app.post('/sessions/:id/tags', async (c) => {
+        const engine = getSyncEngine()
+        if (!engine) return c.json({ error: 'Not ready' }, 503)
+        const namespace = c.get('namespace')
+        const access = resolveSessionForNamespace(engine, c.req.param('id'), namespace)
+        if (!access.ok) return c.json({ error: access.error }, access.status)
+        const parsed = AgentSessionTagsRequestSchema.safeParse(await c.req.json().catch(() => null))
+        if (!parsed.success) return c.json({ error: 'Invalid body', issues: parsed.error.flatten() }, 400)
+        try {
+            return c.json(await engine.appendSessionTags(access.sessionId, namespace, parsed.data.tags))
+        } catch (error) {
+            if (!(error instanceof SessionTagsOperationError)) throw error
+            const status = error.code === 'not-found' ? 404 : error.code === 'access-denied' ? 403 : error.code === 'conflict' ? 409 : 500
+            return c.json({ error: error.message }, status)
         }
     })
 
