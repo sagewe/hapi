@@ -130,6 +130,8 @@ type TailSyncController = {
 const states = new Map<string, InternalState>()
 const listeners = new Map<string, Set<() => void>>()
 const tailSyncControllers = new Map<string, TailSyncController>()
+// Tracks navigation intent before any asynchronous tail-drain/context work.
+const contextLoadRequests = new Map<string, symbol>()
 const messageWindowTargetLocks = new Set<string>()
 const appliedRewindLocalIds = new Map<string, Set<string>>()
 
@@ -1533,17 +1535,37 @@ export async function loadMessageContext(
     sessionId: string,
     messageId: string
 ): Promise<boolean> {
+    // A newer target supersedes a context load even while it is only waiting
+    // for initial tail synchronization and has not set isLoadingMore yet.
+    if (contextLoadRequests.has(sessionId)) cancelOlderMessageLoad(sessionId)
+    const request = Symbol('message-context')
+    contextLoadRequests.set(sessionId, request)
+    try {
+        return await loadMessageContextForRequest(api, sessionId, messageId, request)
+    } finally {
+        if (contextLoadRequests.get(sessionId) === request) contextLoadRequests.delete(sessionId)
+    }
+}
+
+async function loadMessageContextForRequest(
+    api: ApiClient,
+    sessionId: string,
+    messageId: string,
+    request: symbol
+): Promise<boolean> {
     // HappyThread may call this from a child layout effect. Yield to the next
     // task so the parent useMessages layout effect can register the initial
     // tail sync before we inspect the window and start a competing context
     // request.
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    if (contextLoadRequests.get(sessionId) !== request) return false
     let initial = getState(sessionId)
     const activeTailSync = tailSyncControllers.get(sessionId)
     if (initial.isSyncingTail || activeTailSync?.running) {
         if (activeTailSync?.running) {
             await waitForTailSyncDrain(sessionId, activeTailSync, activeTailSync.running)
         }
+        if (contextLoadRequests.get(sessionId) !== request) return false
         initial = getState(sessionId)
     }
     if (initial.isSyncingTail || initial.isLoadingMore) {
@@ -1560,7 +1582,7 @@ export async function loadMessageContext(
 
     try {
         const response = await api.getMessageContext(sessionId, messageId)
-        if (getState(sessionId).olderGeneration !== generation) {
+        if (contextLoadRequests.get(sessionId) !== request || getState(sessionId).olderGeneration !== generation) {
             return false
         }
 
@@ -1647,7 +1669,7 @@ export async function loadMessageContext(
         }, true)
         return applied
     } catch (error) {
-        if (getState(sessionId).olderGeneration !== generation) {
+        if (contextLoadRequests.get(sessionId) !== request || getState(sessionId).olderGeneration !== generation) {
             return false
         }
         updateState(sessionId, (previous) => {
@@ -1802,6 +1824,7 @@ export async function fetchNewerMessages(
 }
 
 export function cancelOlderMessageLoad(sessionId: string): void {
+    contextLoadRequests.delete(sessionId)
     updateState(sessionId, (previous) => {
         if (!previous.isLoadingMore) {
             return previous
@@ -1872,6 +1895,7 @@ export function subscribeMessageWindow(sessionId: string, listener: () => void):
 }
 
 export function clearMessageWindow(sessionId: string): void {
+    contextLoadRequests.delete(sessionId)
     messageWindowTargetLocks.delete(sessionId)
     tailSyncControllers.delete(sessionId)
     clearPersistedState(sessionId)
@@ -1885,6 +1909,7 @@ export function clearMessageWindow(sessionId: string): void {
 }
 
 function markMessageWindowForLatestReset(sessionId: string, messages: DecryptedMessage[]): void {
+    contextLoadRequests.delete(sessionId)
     const previous = states.get(sessionId)
     if (!previous) return
 

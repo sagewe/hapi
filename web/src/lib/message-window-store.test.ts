@@ -2445,6 +2445,62 @@ describe('search-target message context', () => {
         expect(getMessageContext).toHaveBeenCalledWith(id, 'target')
     })
 
+    it('supersedes an old target that is still waiting for the initial tail drain', async () => {
+        const id = sessionId('pending-context-superseded-during-tail')
+        const tail = deferred<MessagesResponse>()
+        const latest = makeAgentMessage({ id: 'latest', seq: 100, at: 100_000 })
+        const target = makeAgentMessage({ id: 'new-target', seq: 40, at: 40_000 })
+        const api = createApi(vi.fn(async () => await tail.promise))
+        api.getMessageContext = vi.fn(async () => contextResponse([target], {
+            targetMessageId: target.id, epoch: 7, hasMore: false,
+            nextBeforeAt: 40_000, nextBeforeSeq: 40, snapshotHeadAt: 100_000, snapshotHeadSeq: 100
+        }))
+        const syncing = syncTailMessages(api, id)
+        await vi.waitFor(() => expect(getMessageWindowState(id).isSyncingTail).toBe(true))
+        const oldLoad = loadMessageContext(api, id, 'tool-call:old')
+        // Let the old operation enter its tail-drain wait, before any context
+        // fetch (or isLoadingMore generation) can have started.
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(getMessageWindowState(id).isLoadingMore).toBe(false)
+        const newLoad = loadMessageContext(api, id, 'tool-call:new')
+        tail.resolve(latestResponse([latest], { epoch: 7 }))
+        await syncing
+        await expect(oldLoad).resolves.toBe(false)
+        await expect(newLoad).resolves.toBe(true)
+        expect(api.getMessageContext).toHaveBeenCalledExactlyOnceWith(id, 'tool-call:new')
+        expect(getMessageWindowState(id).messages.map(message => message.id)).toEqual(['new-target'])
+    })
+
+    it.each(['cancel', 'clear'] as const)('does not resurrect a target after %s during tail drain', async (action) => {
+        const id = sessionId(`pending-context-${action}-during-tail`)
+        const tail = deferred<MessagesResponse>()
+        const latest = makeAgentMessage({ id: 'latest', seq: 100, at: 100_000 })
+        const api = createApi(vi.fn(async () => await tail.promise))
+        api.getMessageContext = vi.fn(async () => null)
+        const syncing = syncTailMessages(api, id)
+        await vi.waitFor(() => expect(getMessageWindowState(id).isSyncingTail).toBe(true))
+        const loading = loadMessageContext(api, id, 'tool-call:abandoned')
+        await new Promise(resolve => setTimeout(resolve, 0))
+        expect(getMessageWindowState(id).isLoadingMore).toBe(false)
+        if (action === 'cancel') cancelOlderMessageLoad(id)
+        else clearMessageWindow(id)
+        tail.resolve(latestResponse([latest], { epoch: 7 }))
+        await syncing
+        await expect(loading).resolves.toBe(false)
+        expect(api.getMessageContext).not.toHaveBeenCalled()
+        expect(getMessageWindowState(id).isLoadingMore).toBe(false)
+    })
+
+    it('cancels a target before its initial task yield completes', async () => {
+        const id = sessionId('pending-context-cancel-before-yield')
+        const api = createApi(vi.fn(async () => latestResponse([])))
+        api.getMessageContext = vi.fn(async () => null)
+        const loading = loadMessageContext(api, id, 'tool-call:abandoned')
+        cancelOlderMessageLoad(id)
+        await expect(loading).resolves.toBe(false)
+        expect(api.getMessageContext).not.toHaveBeenCalled()
+    })
+
     it('loads a bounded context, enters history mode, and preserves the latest reset boundary', async () => {
         const id = sessionId('search-context')
         const latest = makeAgentMessage({ id: 'latest', seq: 100, at: 100_000 })
