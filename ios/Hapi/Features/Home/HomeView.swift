@@ -243,7 +243,7 @@ struct HomeView: View {
     private var connectionNotice: SessionConnectionNotice {
         SessionConnectionNotice(
             state: session.connectionState,
-            showsCachedSessions: listModel.isOffline && listModel.hasLoaded,
+            showsCachedSessions: listModel.refreshFailed && listModel.hasLoaded,
             lastRefreshedAt: listModel.lastRefreshedAt,
             showsTransientStatus: connectionStatusRevealed && !subtitleCarriesConnectionStatus,
             onRetry: { Task { await listModel.refresh() } }
@@ -388,7 +388,11 @@ struct SessionConnectionNotice: View {
     var onRetry: (() -> Void)? = nil
 
     var message: String? {
-        if showsCachedSessions { return String(localized: "Offline — showing cached sessions") }
+        if showsCachedSessions {
+            return state == .connected
+                ? String(localized: "Session list refresh failed")
+                : String(localized: "Offline — showing cached sessions")
+        }
         switch state {
         case .connected: return nil
         case .connecting: return String(localized: "Connecting…")
@@ -422,7 +426,7 @@ struct SessionConnectionNotice: View {
 
     private var offlineBanner: some View {
         HStack(spacing: 8) {
-            Image(systemName: "icloud.slash")
+            Image(systemName: state == .connected ? "arrow.clockwise" : "icloud.slash")
                 .foregroundStyle(attentionColor)
             offlineText
                 .lineLimit(2)
@@ -449,8 +453,14 @@ struct SessionConnectionNotice: View {
         if let lastRefreshedAt {
             // Minute ticks keep "updated … ago" honest while offline.
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text("Offline · updated \(relativeAge(of: lastRefreshedAt, now: context.date))")
+                if state == .connected {
+                    Text("List refresh failed · updated \(relativeAge(of: lastRefreshedAt, now: context.date))")
+                } else {
+                    Text("Offline · updated \(relativeAge(of: lastRefreshedAt, now: context.date))")
+                }
             }
+        } else if state == .connected {
+            Text("Session list refresh failed")
         } else {
             Text("Offline — showing cached sessions")
         }

@@ -250,11 +250,10 @@ final class SessionListModel {
     /// The split detail's session stays listed under the unread lens.
     var selectedSessionId: String?
     private(set) var isRefreshing = false
-    /// Last refresh failed — show the offline state over snapshot data.
-    private(set) var isOffline = false
-    /// Last successful list fetch, for the offline notice's "updated …".
-    private(set) var lastRefreshedAt: Date?
-    private(set) var hasRefreshedOnce = false
+    /// Read shared store health so resyncs and scheduled refreshes also recover the UI.
+    var refreshFailed: Bool { sessionStore.refreshFailed }
+    var lastRefreshedAt: Date? { sessionStore.lastRefreshedAt }
+    var hasRefreshedOnce: Bool { lastRefreshedAt != nil }
     @ObservationIgnored private var hasAttemptedRefresh = false
     /// Transient row-action failure for an alert.
     var actionError: String?
@@ -1107,13 +1106,10 @@ final class SessionListModel {
         do {
             try await sessionStore.refresh()
             reconcileFilters()
-            isOffline = false
-            lastRefreshedAt = Date()
-            hasRefreshedOnce = true
             do { try await machineStore.refresh() }
             catch { actionError = error.localizedDescription }
         } catch {
-            isOffline = true
+            // The store owns refresh health, including cancellation and request ordering.
         }
     }
 

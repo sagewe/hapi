@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import HapiClient
 import HapiProtocol
 import Testing
@@ -91,6 +94,57 @@ struct SessionListStoreTests {
     }
 
     // MARK: - refresh
+
+    @Test func refreshHealthRecoversThroughFullResyncAndScheduledRefresh() async throws {
+        let (performer, store) = try makeStore()
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s1")))
+        try await store.refresh()
+        let initialDate = try #require(store.lastRefreshedAt)
+        await performer.enqueue(status: 503)
+        do { try await store.refresh(); Issue.record("Expected failure") } catch {}
+        #expect(store.refreshFailed)
+        #expect(store.lastRefreshedAt == initialDate)
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s2")))
+        try await store.fullResync()
+        #expect(!store.refreshFailed)
+        #expect(store.sessions.map(\.id) == ["s2"])
+        await performer.enqueue(status: 503)
+        do { try await store.refresh(); Issue.record("Expected failure") } catch {}
+        await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s3")))
+        store.scheduleRefresh()
+        try await expectEventually { !store.refreshFailed && store.sessions.first?.id == "s3" }
+    }
+
+    @Test func overlappingRefreshHealthFollowsNewerRequest() async throws {
+        for newerFails in [false, true] {
+            let performer = OrderedListRefreshPerformer()
+            let api = try makeStoreAPIClient(performer: performer)
+            let store = SessionListStore(api: api)
+            let older = Task { try? await store.refresh() }
+            #expect(await waitUntil { await performer.count == 1 })
+            let newer = Task { try? await store.refresh() }
+            #expect(await waitUntil { await performer.count == 2 })
+            await performer.complete(1, fails: newerFails)
+            await newer.value
+            #expect(store.refreshFailed == newerFails)
+            await performer.complete(0, fails: !newerFails)
+            await older.value
+            #expect(store.refreshFailed == newerFails, "Late older outcome must not overwrite newer health")
+        }
+    }
+
+    @Test func cancellationDoesNotChangeRefreshHealth() async throws {
+        for error in [CancellationError() as any Error & Sendable, URLError(.cancelled)] {
+            let (performer, store) = try makeStore()
+            await performer.enqueue(json: try sessionsResponseJSON(storeSummary("s1")))
+            try await store.refresh()
+            let date = store.lastRefreshedAt
+            await performer.setError(error)
+            do { try await store.refresh(); Issue.record("Expected cancellation") } catch {}
+            #expect(!store.refreshFailed)
+            #expect(store.lastRefreshedAt == date)
+        }
+    }
 
     @Test func refreshReplacesTheListWithTheSortedServerResponse() async throws {
         let (performer, store) = try makeStore()
@@ -575,5 +629,21 @@ struct SessionListStoreTests {
         #expect(cold.sessions.first?.pinned == true)
         let file = directory.appendingPathComponent("sessions.json")
         #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+}
+
+/// Responses released explicitly to verify out-of-order completion without sleeps.
+private actor OrderedListRefreshPerformer: HTTPPerforming {
+    private(set) var count = 0
+    private var pending: [Int: CheckedContinuation<(Data, HTTPURLResponse), any Error>] = [:]
+    func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let id = count
+        count += 1
+        return try await withCheckedThrowingContinuation { pending[id] = $0 }
+    }
+    func complete(_ id: Int, fails: Bool) {
+        let response = HTTPURLResponse(url: URL(string: "https://hub.test/api/sessions")!,
+                                       statusCode: fails ? 503 : 200, httpVersion: nil, headerFields: nil)!
+        pending.removeValue(forKey: id)?.resume(returning: (Data("{\"sessions\":[]}".utf8), response))
     }
 }

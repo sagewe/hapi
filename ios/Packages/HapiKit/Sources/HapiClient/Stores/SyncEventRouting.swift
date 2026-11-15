@@ -16,9 +16,9 @@ import HapiProtocol
 /// - `toast` → the injected callback;
 /// - a `gap` handshake verdict triggers the full REST resync (session list +
 ///   cached details + machines); `ok` means the hub replays every missed
-///   event right after the handshake, so the REST resync is skipped;
-/// - `heartbeat`/`connection-changed`/unknown types are engine/no-op
-///   territory here.
+///   event right after the handshake, so healthy lists skip REST resync;
+/// - failed list fetches retry on a successful resume or global heartbeat;
+/// - `connection-changed`/unknown types are engine/no-op territory here.
 ///
 /// The app's `HubSession` owns one of these per hub and calls
 /// ``handleHandshake(resume:)`` / ``route(_:scope:)`` from its SSE consume
@@ -44,12 +44,16 @@ public struct SyncEventRouter {
         self.onToast = onToast
     }
 
-    /// `resume == .ok` skips the resync (the replay that follows covers every
-    /// missed event); `.gap` — or, defensively, anything else — triggers the
+    /// `resume == .ok` skips the resync for a healthy list (replay covers every
+    /// missed event), but retries a failed REST fetch; `.gap` — or, defensively, anything else — triggers the
     /// full refetch. (`SSEClient` already maps an absent wire verdict to
     /// `.gap`, per the contract's absence rule.)
     public func handleHandshake(resume: ResumeVerdict?) {
-        guard resume != .ok else { return }
+        if resume == .ok {
+            // Replay repairs missed events, but cannot repair a failed REST baseline.
+            if sessions.refreshFailed { sessions.scheduleRefresh() }
+            return
+        }
         requestFullResync()
     }
 
@@ -90,10 +94,14 @@ public struct SyncEventRouter {
         case .toast(_, let payload):
             onToast(payload)
 
-        case .heartbeat, .connectionChanged, .unknown:
-            // Heartbeats feed the SSE watchdog; the handshake surfaces
-            // through `handleHandshake`; unknown types are forward-compat
-            // no-ops.
+        case .heartbeat:
+            // A REST failure can occur while SSE remains connected. Retry on
+            // the server's heartbeat cadence, with store-side coalescing.
+            if scope == .global, sessions.refreshFailed { sessions.scheduleRefresh() }
+
+        case .connectionChanged, .unknown:
+            // The handshake surfaces through `handleHandshake`; unknown
+            // types are forward-compatible no-ops.
             break
         }
     }
