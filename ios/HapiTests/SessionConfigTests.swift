@@ -7,6 +7,30 @@ import XCTest
 
 @MainActor
 final class SessionConfigTests: XCTestCase {
+    func testQuotaGaugeUsesExactRemainingFractionWithoutMinimumOrPlaceholder() throws {
+        for (used, remaining) in [(0.0, 1.0), (1.0, 0.99), (5.0, 0.95),
+                                   (18.0, 0.82), (80.25, 0.1975), (99.9, 0.001), (100.0, 0.0)] {
+            let gauge = ComposerQuotaGaugeIcon(usedPercent: used, accentColor: .primary)
+            XCTAssertEqual(try XCTUnwrap(gauge.remainingFraction), remaining, accuracy: 0.000001)
+        }
+        XCTAssertNil(ComposerQuotaGaugeIcon(usedPercent: nil, accentColor: .primary).remainingFraction)
+        XCTAssertNil(ComposerQuotaGaugeIcon(usedPercent: .nan, accentColor: .primary).remainingFraction)
+        XCTAssertEqual(ComposerQuotaGaugeIcon(usedPercent: -10, accentColor: .primary).remainingFraction, 1)
+        XCTAssertEqual(ComposerQuotaGaugeIcon(usedPercent: 110, accentColor: .primary).remainingFraction, 0)
+    }
+
+    func testQuotaPeakPreservesFractionalUsage() async throws {
+        let harness = try await SessionConfigTestHarness(flavor: "codex")
+        await harness.http.setQuotaUsedPercent(20.25)
+        let model = SessionConfigModel(interactor: harness.interactor, api: harness.api, machineId: "machine-1")
+        model.loadQuota()
+        try await configEventually {
+            if case .loaded = model.quotaState { return true }
+            return false
+        }
+        XCTAssertEqual(try XCTUnwrap(model.quotaPeakUsedPercent), 20.25, accuracy: 0.000001)
+    }
+
     #if !targetEnvironment(macCatalyst)
     func testCompactControlsWrapLongModelName() async throws {
         let harness = try await SessionConfigTestHarness(flavor: "codex")
@@ -891,6 +915,8 @@ actor SessionConfigTestHTTP: HTTPPerforming {
         CodexModelSummary(id: "fast", displayName: "Fast", isDefault: false, supportedReasoningEfforts: ["low", "high"]),
         CodexModelSummary(id: "deep", displayName: "Deep", isDefault: true, supportedReasoningEfforts: ["high", "xhigh"]),
     ]
+    private var quotaUsedPercent = 20.0
+    func setQuotaUsedPercent(_ value: Double) { quotaUsedPercent = value }
     private var modelsFailure = false
     private var changesRejected = false
     private var postsHeld = false
@@ -921,7 +947,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
                 agent: .agy,
                 templateId: "agy-subscription",
                 status: "success",
-                fiveHour: UsageQueryWindow(usedPercent: 20, resetsAt: 1_760_000_000_000),
+                fiveHour: UsageQueryWindow(usedPercent: quotaUsedPercent, resetsAt: 1_760_000_000_000),
                 sevenDay: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_500_000_000),
                 groups: [
                     UsageQueryGroup(
@@ -932,7 +958,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
                     UsageQueryGroup(
                         id: "claude_gpt",
                         name: "Claude and GPT models",
-                        fiveHour: UsageQueryWindow(usedPercent: 20, resetsAt: 1_760_000_000_000),
+                        fiveHour: UsageQueryWindow(usedPercent: quotaUsedPercent, resetsAt: 1_760_000_000_000),
                         sevenDay: UsageQueryWindow(usedPercent: 1, resetsAt: 1_760_500_000_000)
                     )
                 ],

@@ -199,7 +199,7 @@ struct SessionConfigView: View {
                     .font(.caption.monospaced().weight(.semibold))
                 Spacer()
                 if let window {
-                    Text(String(format: String(localized: "%lld%% used · %lld%% left"), Int64(window.usedPercentInt), Int64(window.remainingPercentInt)))
+                    Text(String(format: String(localized: "%@%% used · %@%% left"), max(0, min(100, window.usedPercent)).formatted(.number.precision(.fractionLength(0...1))), max(0, min(100, 100 - window.usedPercent)).formatted(.number.precision(.fractionLength(0...1)))))
                         .font(.caption.monospacedDigit())
                     if window.resetsAt != nil {
                         Text(verbatim: "· ↻ \(window.formatResetCountdown())")
@@ -213,7 +213,7 @@ struct SessionConfigView: View {
                 }
             }
             if let window {
-                let used = window.usedPercentInt
+                let used = max(0, min(100, window.usedPercent))
                 ProgressView(value: Double(used), total: 100)
                     .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
             }

@@ -96,16 +96,16 @@ final class SessionConfigModel {
         return String(localized: "Permission: \(permission.label)")
     }
 
-    var quotaPeakUsedPercent: Int? {
+    var quotaPeakUsedPercent: Double? {
         guard case .loaded(let result) = quotaState else { return nil }
-        var values: [Int] = []
-        if let five = result.fiveHour?.usedPercentInt { values.append(five) }
-        if let seven = result.sevenDay?.usedPercentInt { values.append(seven) }
+        var values: [Double] = []
+        if let five = result.fiveHour?.usedPercent { values.append(five) }
+        if let seven = result.sevenDay?.usedPercent { values.append(seven) }
         for group in result.groups ?? [] {
-            if let five = group.fiveHour?.usedPercentInt { values.append(five) }
-            if let seven = group.sevenDay?.usedPercentInt { values.append(seven) }
+            if let five = group.fiveHour?.usedPercent { values.append(five) }
+            if let seven = group.sevenDay?.usedPercent { values.append(seven) }
         }
-        return values.max()
+        return values.max().map { max(0, min(100, $0)) }
     }
 
     var permission: PermissionMode { config.permissionMode ?? .default }
