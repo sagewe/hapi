@@ -8,25 +8,50 @@ import Testing
 private final class RouteClock: @unchecked Sendable {
     private let lock = NSLock()
     private var value = Date(timeIntervalSince1970: 1000)
+    private var monotonic: TimeInterval = 500
     func now() -> Date { lock.lock(); defer { lock.unlock() }; return value }
-    func advance(_ seconds: Double) { lock.lock(); defer { lock.unlock() }; value.addTimeInterval(seconds) }
+    func uptime() -> TimeInterval { lock.lock(); defer { lock.unlock() }; return monotonic }
+    func advance(_ seconds: Double) { lock.lock(); defer { lock.unlock() }; value.addTimeInterval(seconds); monotonic += seconds }
+    func advanceUptimeMs(_ ms: Int) { lock.lock(); defer { lock.unlock() }; monotonic += Double(ms) / 1000.0 }
 }
 
 private actor RouteHTTP: HTTPPerforming {
     var directUp = true
     var sameIdentity = true
     var publicUp = true
+    var directTimeoutCount = 0
+    var directLatencyMs = 0
+    var publicLatencyMs = 0
+    var privateOrigin = "https://direct.example.test"
+    var onAdvanceUptimeMs: (@Sendable (Int) -> Void)?
     private(set) var requests: [URLRequest] = []
     func direct(_ up: Bool) { directUp = up }
     func mismatch() { sameIdentity = false }
     func publicDown() { publicUp = false }
+    func directTimeouts(_ count: Int) { directTimeoutCount = count }
+    func latencies(directMs: Int, publicMs: Int, clock: RouteClock) {
+        directLatencyMs = directMs
+        publicLatencyMs = publicMs
+        onAdvanceUptimeMs = { clock.advanceUptimeMs($0) }
+    }
+    func advertise(_ origin: String) { privateOrigin = origin }
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         requests.append(request)
         let url = try #require(request.url)
-        if url.host == "direct.example.test" && !directUp { throw URLError(.networkConnectionLost) }
-        if url.host == "public.example.test" && !publicUp { throw URLError(.cannotConnectToHost) }
+        if url.host == "direct.example.test" || url.host == "direct2.example.test" {
+            if directLatencyMs > 0 { onAdvanceUptimeMs?(directLatencyMs) }
+            if directTimeoutCount > 0 {
+                directTimeoutCount -= 1
+                throw URLError(.timedOut)
+            }
+            if !directUp { throw URLError(.networkConnectionLost) }
+        }
+        if url.host == "public.example.test" {
+            if publicLatencyMs > 0 { onAdvanceUptimeMs?(publicLatencyMs) }
+            if !publicUp { throw URLError(.cannotConnectToHost) }
+        }
         let body: String
-        if url.path == "/api/connection" { body = #"{"hubId":"same-hub","privateUrl":"https://direct.example.test"}"# }
+        if url.path == "/api/connection" { body = "{\"hubId\":\"same-hub\",\"privateUrl\":\"\(privateOrigin)\"}" }
         else if url.path == "/health" { body = "{\"status\":\"ok\",\"hubId\":\"\(sameIdentity ? "same-hub" : "wrong-hub")\"}" }
         else { body = #"{"ok":true}"# }
         return (Data(body.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
@@ -199,5 +224,83 @@ struct HubConnectionRouterTests {
         let relaunched = HubConnectionRouter(canonicalURL: canonical, performer: offlinePublic)
         #expect(try await relaunched.resolve(token: "test-only").host == "direct.example.test")
         #expect(await offlinePublic.requests.allSatisfy { $0.url?.host == "direct.example.test" })
+    }
+
+    @Test func singlePeriodicProbeGlitchKeepsActivePrivateRouteUntilSecondFailureOrNetworkChange() async throws {
+        let clock = RouteClock(); let http = RouteHTTP()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
+                                         now: { clock.now() }, uptime: { clock.uptime() })
+        let direct = try await router.resolve(token: "test-only")
+        #expect(direct.host == "direct.example.test")
+
+        await http.direct(false)
+        clock.advance(31)
+        #expect(try await router.resolve() == direct)
+
+        clock.advance(11)
+        #expect(try await router.resolve() == canonical)
+        #expect(await router.diagnostics().reason == .privateUnavailable)
+
+        await http.direct(true)
+        clock.advance(31); _ = try await router.resolve()
+        clock.advance(31); #expect(try await router.resolve() == direct)
+
+        await http.direct(false)
+        await router.networkChanged()
+        #expect(try await router.resolve() == canonical)
+    }
+
+    @Test func periodicDiscoveryRefreshRunsInBackgroundAndAppliesChangedOrigin() async throws {
+        let clock = RouteClock(); let http = RouteHTTP()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
+                                         now: { clock.now() }, uptime: { clock.uptime() })
+        let direct = try await router.resolve(token: "test-only")
+        #expect(direct.host == "direct.example.test")
+
+        await http.advertise("https://direct2.example.test")
+        clock.advance(301)
+        // Resolve returns cached verified direct route without waiting on discovery;
+        // once background discovery finishes, the updated private origin takes effect.
+        _ = try await router.resolve(token: "test-only")
+        await router.awaitBackgroundTasksForTesting()
+        #expect(try await router.resolve(token: "test-only").host == "direct2.example.test")
+    }
+
+    @Test func coldStartTimeoutFallsBackFastAndWarmProbesPrivateInBackground() async throws {
+        let clock = RouteClock(); let http = RouteHTTP()
+        await http.directTimeouts(1)
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
+                                         now: { clock.now() }, uptime: { clock.uptime() })
+        #expect(try await router.resolve(token: "test-only") == canonical)
+        await router.awaitBackgroundTasksForTesting()
+        #expect(await router.diagnostics().reason == .awaitingRecovery)
+
+        clock.advance(31)
+        #expect(try await router.resolve().host == "direct.example.test")
+    }
+
+    @Test func severelySlowerPrivateRoutePrefersFastPublicRelayInAutomaticModeOnly() async throws {
+        let clock = RouteClock(); let http = RouteHTTP()
+        await http.latencies(directMs: 380, publicMs: 45, clock: clock)
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
+                                         now: { clock.now() }, uptime: { clock.uptime() })
+        #expect(try await router.resolve(token: "test-only") == canonical)
+        #expect(await router.diagnostics().reason == .privateSlowerThanPublic)
+
+        await router.setMode(.privateOnly)
+        #expect(try await router.resolve().host == "direct.example.test")
+
+        await router.setMode(.automatic)
+        await http.latencies(directMs: 30, publicMs: 50, clock: clock)
+        let direct = try await router.resolve(token: "test-only")
+        #expect(direct.host == "direct.example.test")
+
+        // Active private connection requires two slow checks before demoting.
+        await http.latencies(directMs: 420, publicMs: 50, clock: clock)
+        clock.advance(31)
+        #expect(try await router.resolve() == direct)
+        clock.advance(11)
+        #expect(try await router.resolve() == canonical)
+        #expect(await router.diagnostics().reason == .privateSlowerThanPublic)
     }
 }

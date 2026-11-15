@@ -21,6 +21,7 @@
     "Tailscale selected manually" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已手动选择 Tailscale"}}}},
     "Private request failed; falling back to public relay" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内网请求失败，回退公网中继"}}}},
     "Public request failed; checking private connectivity" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "公网请求失败，正在检查内网"}}}},
+    "Private route is much slower; using public relay" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "内网耗时明显偏高，暂用公网中继"}}}},
     "HTTP round trip" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "HTTP 往返"}}}},
     "Reused connection" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "复用已有连接"}}}},
     "New connection, including handshake" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "新建连接，包含握手耗时"}}}},

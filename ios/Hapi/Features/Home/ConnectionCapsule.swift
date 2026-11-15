@@ -151,6 +151,7 @@ struct ConnectionDiagnosticsView: View {
         case .forcedPrivate: String(localized: "Tailscale selected manually")
         case .privateNetworkFailure: String(localized: "Private request failed; falling back to public relay")
         case .publicNetworkFailure: String(localized: "Public request failed; checking private connectivity")
+        case .privateSlowerThanPublic: String(localized: "Private route is much slower; using public relay")
         }
     }
 }

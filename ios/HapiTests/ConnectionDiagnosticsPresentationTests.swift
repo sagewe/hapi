@@ -20,6 +20,9 @@ final class ConnectionDiagnosticsPresentationTests: XCTestCase {
         let failed = HubConnectionDiagnostics(mode: .automatic, isPrivate: true, reason: .privateUnavailable,
             privateMeasurement: timeout, activeEventIsPrivate: true)
         XCTAssertEqual(ConnectionCapsuleLabel(snapshot: failed, referenceDate: now).latencyTitle, "—")
+        let slower = HubConnectionDiagnostics(mode: .automatic, isPrivate: false, reason: .privateSlowerThanPublic,
+            privateMeasurement: direct, publicMeasurement: relay, activeEventIsPrivate: false)
+        XCTAssertEqual(ConnectionCapsuleLabel(snapshot: slower, referenceDate: now).latencyTitle, "96 ms")
         XCTAssertEqual(ConnectionCapsuleLabel(snapshot: nil, referenceDate: now).latencyTitle, "—")
     }
 

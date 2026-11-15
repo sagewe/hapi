@@ -20,7 +20,7 @@ public struct HubEndpointMeasurement: Equatable, Sendable {
 public struct HubConnectionDiagnostics: Sendable {
     public enum Reason: Sendable, Equatable {
         case starting, privateVerified, privateUnavailable, awaitingRecovery, noPrivateEndpoint
-        case forcedPublic, forcedPrivate, privateNetworkFailure, publicNetworkFailure
+        case forcedPublic, forcedPrivate, privateNetworkFailure, publicNetworkFailure, privateSlowerThanPublic
     }
     public let mode: HubConnectionMode
     public let isPrivate: Bool
