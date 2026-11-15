@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,9 @@ export type ResolvedUsageCredentials = {
     apiKey: string
     baseUrlSource: UsageQueryCredentialStatus['source']
     apiKeySource: UsageQueryCredentialStatus['source']
+    /** Internal only: binds native probes and cache entries to an auth snapshot. */
+    identityFingerprint?: string
+    codexAccount?: { id: string; email?: string }
 }
 
 type JsonObject = Record<string, unknown>
@@ -291,8 +295,10 @@ async function resolveClaudeCredentials(env: NodeJS.ProcessEnv): Promise<Resolve
 async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<ResolvedUsageCredentials> {
     const codexHome = nonEmptyString(env.CODEX_HOME) ?? join(homedir(), '.codex')
     let config: CodexConfigSnapshot = { activeProvider: null, providers: new Map() }
+    let configText = ''
     try {
-        config = parseCodexConfig(await readFile(join(codexHome, 'config.toml'), 'utf8'))
+        configText = await readFile(join(codexHome, 'config.toml'), 'utf8')
+        config = parseCodexConfig(configText)
     } catch {
         // Missing Codex config uses the default OpenAI credential path.
     }
@@ -304,6 +310,8 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
     let apiKey = ''
     let baseUrlSource: UsageQueryCredentialStatus['source'] = 'none'
     let apiKeySource: UsageQueryCredentialStatus['source'] = 'none'
+    let identityFingerprint: string | undefined
+    let codexAccount: ResolvedUsageCredentials['codexAccount']
 
     if (!isOpenAiProvider) {
         baseUrl = selected?.baseUrl ?? ''
@@ -329,6 +337,18 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
                     ?? (nonEmptyString(auth?.auth_mode)?.toLowerCase() === 'chatgpt' ? 'chatgpt-oauth' : null)
                 if (oauthIdentity) {
                     apiKey = oauthIdentity
+                    identityFingerprint = createHash('sha256')
+                        .update(JSON.stringify({ codexHome, configText, auth })).digest('hex')
+                    const accountId = firstObjectString(tokens, ['account_id'])
+                    if (accountId) {
+                        let email: string | null = null
+                        try {
+                            const idToken = firstObjectString(tokens, ['id_token'])
+                            const claims = idToken ? JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString()) : null
+                            email = nonEmptyString(claims?.email)
+                        } catch { /* Missing claims cannot prove a native account's email. */ }
+                        codexAccount = { id: accountId, ...(email ? { email } : {}) }
+                    }
                     apiKeySource = 'config'
                     if (!baseUrl) {
                         baseUrl = 'https://chatgpt.com/backend-api'
@@ -343,7 +363,9 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
         baseUrl,
         apiKey,
         baseUrlSource,
-        apiKeySource
+        apiKeySource,
+        ...(identityFingerprint ? { identityFingerprint } : {}),
+        ...(codexAccount ? { codexAccount } : {})
     }
 }
 

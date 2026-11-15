@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
@@ -17,8 +16,7 @@ import {
 } from '@hapi/protocol/usageQuery'
 import { getAgentLaunchCommand } from '@/agent/agentLaunchCommand'
 import { CodexAppServerClient } from '@/codex/codexAppServerClient'
-import { resolveCodexHome } from '@/codex/utils/codexHome'
-import type { ResolvedUsageCredentials } from './credentials'
+import { resolveUsageCredentials, type ResolvedUsageCredentials } from './credentials'
 
 type FetchResponseLike = {
     ok: boolean
@@ -472,88 +470,89 @@ export function normalizeAgyUsageOutput(rawOutput: string | unknown): {
     }
 }
 
-async function readLatestCodexSessionRateLimits(): Promise<{
-    fiveHour: UsageQueryWindow | null
-    sevenDay: UsageQueryWindow | null
-    planType?: string | null
-}> {
-    const sessionsRoot = join(resolveCodexHome(), 'sessions')
-    const jsonlFiles: Array<{ path: string; mtimeMs: number }> = []
-    const walk = async (dir: string, depth: number) => {
-        if (depth > 4) return
-        let entries: string[]
-        try {
-            entries = await readdir(dir)
-        } catch {
-            return
-        }
-        for (const name of entries) {
-            const full = join(dir, name)
-            try {
-                const info = await stat(full)
-                if (info.isDirectory()) {
-                    await walk(full, depth + 1)
-                } else if (name.endsWith('.jsonl')) {
-                    jsonlFiles.push({ path: full, mtimeMs: info.mtimeMs })
-                }
-            } catch {
-                continue
-            }
-        }
-    }
-    await walk(sessionsRoot, 0)
-    jsonlFiles.sort((left, right) => right.mtimeMs - left.mtimeMs)
-    for (const file of jsonlFiles.slice(0, 5)) {
-        try {
-            const content = await readFile(file.path, 'utf8')
-            const lines = content.trim().split(/\r?\n/)
-            for (let index = lines.length - 1; index >= 0; index -= 1) {
-                const line = lines[index]
-                if (!line || !line.includes('rate_limits')) continue
-                try {
-                    const parsed = JSON.parse(line) as { payload?: { rate_limits?: unknown } }
-                    const normalized = normalizeCodexRateLimits(parsed?.payload?.rate_limits ?? parsed)
-                    if (normalized.fiveHour || normalized.sevenDay) return normalized
-                } catch {
-                    continue
-                }
-            }
-        } catch {
-            continue
-        }
-    }
-    return emptyUsageWindows()
+type CodexQuotaClient = Pick<CodexAppServerClient, 'connect' | 'initialize' | 'disconnect'> & {
+    request(method: string, params?: unknown): Promise<unknown>
 }
 
-async function queryCodexNativeRateLimits(timeoutMs: number): Promise<{
-    fiveHour: UsageQueryWindow | null
-    sevenDay: UsageQueryWindow | null
-    planType?: string | null
-}> {
-    const client = new CodexAppServerClient({ cwd: homedir() })
-    try {
-        await client.connect()
-        await client.initialize({
-            clientInfo: {
-                name: 'hapi-codex-usage',
-                version: '1.0.0'
-            },
-            capabilities: {
-                experimentalApi: true
-            }
-        })
-        const response = await client.request<unknown>('account/rateLimits/read', {})
-        const normalized = normalizeCodexRateLimits(response)
-        if (normalized.fiveHour || normalized.sevenDay) {
-            return normalized
+/** A fresh process plus matching auth snapshots bind live quota data to one account.
+ * Historical rate_limit JSONL rows do not carry that proof and are never a fallback.
+ */
+export async function queryCodexNativeRateLimits(
+    timeoutMs: number,
+    credentials: ResolvedUsageCredentials,
+    dependencies: {
+        client?: CodexQuotaClient
+        resolveCredentials?: () => Promise<ResolvedUsageCredentials>
+    } = {}
+): Promise<{ fiveHour: UsageQueryWindow | null; sevenDay: UsageQueryWindow | null; planType?: string | null }> {
+    const expected = credentials.codexAccount
+    if (!credentials.identityFingerprint || !expected) {
+        throw new UsageQueryExecutionError('Codex quota unavailable: current OAuth account cannot be verified')
+    }
+    const resolveCredentials = dependencies.resolveCredentials ?? (() => resolveUsageCredentials('codex'))
+    const assertSnapshot = async () => {
+        const current = await resolveCredentials()
+        if (current.identityFingerprint !== credentials.identityFingerprint) {
+            throw new UsageQueryExecutionError('Codex quota unavailable: account changed during query')
         }
-    } catch {
-        // Fall through to recent session logs if the app-server rpc fails.
+    }
+    const client = dependencies.client ?? new CodexAppServerClient({ cwd: homedir() })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let expired = false
+    const assertAccount = (response: unknown) => {
+        const envelope = response && typeof response === 'object' ? response as Record<string, unknown> : {}
+        const account = envelope.account && typeof envelope.account === 'object'
+            ? envelope.account as Record<string, unknown> : {}
+        // Email is only a corroborating signal from this fresh process, not an
+        // account key: unchanged selected auth/home/config snapshots also bind
+        // the result to account_id, including same-email org/workspace changes.
+        const matches = typeof account.id === 'string'
+            ? account.id === expected.id
+            : expected.email && account.email === expected.email
+        if (account.type !== 'chatgpt' || !matches) {
+            throw new UsageQueryExecutionError('Codex quota unavailable: native account identity could not be verified')
+        }
+    }
+    try {
+        return await Promise.race([
+            (async () => {
+                await assertSnapshot()
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                await client.connect()
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                await client.initialize({
+                    clientInfo: { name: 'hapi-codex-usage', version: '1.0.0' },
+                    capabilities: { experimentalApi: true }
+                })
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                assertAccount(await client.request('account/read', { refreshToken: false }))
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                const response = await client.request('account/rateLimits/read', {})
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                assertAccount(await client.request('account/read', { refreshToken: false }))
+                await assertSnapshot()
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                const normalized = normalizeCodexRateLimits(response)
+                if (!normalized.fiveHour && !normalized.sevenDay) {
+                    throw new UsageQueryExecutionError('Codex quota unavailable: live response contained no quota windows')
+                }
+                return normalized
+            })(),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => {
+                    expired = true
+                    reject(new UsageQueryExecutionError('Codex quota probe timed out'))
+                }, timeoutMs)
+            })
+        ])
+    } catch (error) {
+        if (error instanceof UsageQueryExecutionError) throw error
+        throw new UsageQueryExecutionError('Codex quota unavailable: live account probe failed; historical logs have no account proof')
     } finally {
+        expired = true
+        clearTimeout(timer)
         await client.disconnect({ gracefulTimeoutMs: 500 }).catch(() => undefined)
     }
-
-    return await readLatestCodexSessionRateLimits()
 }
 
 function probeAgyUsageOutput(timeoutMs: number): Promise<string> {
@@ -659,7 +658,7 @@ export async function executeUsageQueryTemplate(
     if (template.adapter === 'codex-native') {
         const { fiveHour, sevenDay, planType } = options.codexQueryImpl
             ? normalizeCodexRateLimits(await options.codexQueryImpl({ timeoutMs }))
-            : await queryCodexNativeRateLimits(timeoutMs)
+            : await queryCodexNativeRateLimits(timeoutMs, credentials)
         if (!fiveHour && !sevenDay) {
             throw new UsageQueryExecutionError('Usage response contained no configured quota windows')
         }

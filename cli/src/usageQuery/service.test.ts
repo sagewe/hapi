@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     DEFAULT_USAGE_QUERY_TEMPLATES,
     type UsageQueryTemplate
@@ -226,7 +226,7 @@ describe('UsageQueryService', () => {
 
         releaseFirst()
         const firstResult = await firstRequest
-        expect(firstResult.fiveHour?.usedPercent).toBe(90)
+        expect(firstResult).toMatchObject({ status: 'error', fiveHour: null, sevenDay: null, stale: false })
 
         const thirdResult = await service.query('claude')
         expect(thirdResult.fiveHour?.usedPercent).toBe(50)
@@ -266,10 +266,85 @@ describe('UsageQueryService', () => {
 
         releaseFirst()
         const firstResult = await firstRequest
-        expect(firstResult.fiveHour?.usedPercent).toBe(90)
+        expect(firstResult).toMatchObject({ status: 'error', fiveHour: null, sevenDay: null, stale: false })
         const cachedRotated = await service.query('claude')
         expect(cachedRotated.fiveHour?.usedPercent).toBe(50)
         expect(calls).toBe(2)
+    })
+
+    it('suppresses an old-account completion even if no replacement query was started', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-usage-service-'))
+        let activeCredentials = { ...credentials, identityFingerprint: 'account-a-token-one' }
+        let release!: () => void
+        let started!: () => void
+        const ready = new Promise<void>((resolve) => { started = resolve })
+        const service = new UsageQueryService({
+            settingsFile: join(root, 'usage-query.json'),
+            resolveCredentials: async () => activeCredentials,
+            fetchImpl: async () => { started(); return await new Promise((resolve) => { release = () => resolve(makeResponse(10)) }) }
+        })
+        const template = DEFAULT_USAGE_QUERY_TEMPLATES[0]
+        await service.saveSettings('codex', { enabled: true, templateId: template.id, template })
+        const pending = service.query('codex')
+        await ready
+        activeCredentials = { ...credentials, identityFingerprint: 'account-b-token-two' }
+        release()
+        expect(await pending).toMatchObject({ status: 'error', fiveHour: null, sevenDay: null, stale: false })
+    })
+
+    it('does not attach old-account stale windows when a pending refresh fails after rotation', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-usage-service-'))
+        let activeCredentials = { ...credentials, identityFingerprint: 'account-a' }
+        let reject!: () => void
+        let started!: () => void
+        const ready = new Promise<void>((resolve) => { started = resolve })
+        let calls = 0
+        const service = new UsageQueryService({
+            settingsFile: join(root, 'usage-query.json'),
+            resolveCredentials: async () => activeCredentials,
+            fetchImpl: async () => {
+                if (++calls === 1) return makeResponse(10)
+                started()
+                return await new Promise((_resolve, rejectPromise) => { reject = () => rejectPromise(new Error('provider failed')) })
+            }
+        })
+        const template = DEFAULT_USAGE_QUERY_TEMPLATES[0]
+        await service.saveSettings('codex', { enabled: true, templateId: template.id, template })
+        expect((await service.query('codex')).fiveHour?.usedPercent).toBe(90)
+        const pending = service.query('codex', true)
+        await ready
+        activeCredentials = { ...credentials, identityFingerprint: 'account-b' }
+        reject()
+        expect(await pending).toMatchObject({ status: 'error', fiveHour: null, sevenDay: null, stale: false })
+    })
+
+    it('uses request generations when accounts switch A to B to A while all probes are pending', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-usage-service-'))
+        let activeCredentials = { ...credentials, identityFingerprint: 'account-a' }
+        const releases: Array<(value: ReturnType<typeof makeResponse>) => void> = []
+        const service = new UsageQueryService({
+            settingsFile: join(root, 'usage-query.json'),
+            resolveCredentials: async () => activeCredentials,
+            fetchImpl: async () => await new Promise((resolve) => { releases.push(resolve) })
+        })
+        const template = DEFAULT_USAGE_QUERY_TEMPLATES[0]
+        await service.saveSettings('codex', { enabled: true, templateId: template.id, template })
+        const oldA = service.query('codex')
+        await vi.waitFor(() => expect(releases).toHaveLength(1))
+        activeCredentials = { ...credentials, identityFingerprint: 'account-b' }
+        const b = service.query('codex')
+        await vi.waitFor(() => expect(releases).toHaveLength(2))
+        activeCredentials = { ...credentials, identityFingerprint: 'account-a' }
+        const newA = service.query('codex')
+        await vi.waitFor(() => expect(releases).toHaveLength(3))
+        releases[0](makeResponse(10))
+        expect(await oldA).toMatchObject({ status: 'error', fiveHour: null, stale: false })
+        releases[1](makeResponse(20))
+        expect(await b).toMatchObject({ status: 'error', fiveHour: null, stale: false })
+        releases[2](makeResponse(50))
+        expect((await newA).fiveHour?.usedPercent).toBe(50)
+        expect((await service.query('codex')).fiveHour?.usedPercent).toBe(50)
+        expect(releases).toHaveLength(3)
     })
 
     it('redacts credentials from provider error messages', async () => {

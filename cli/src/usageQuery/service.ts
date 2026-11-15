@@ -39,6 +39,7 @@ type CachedResult = {
 
 type InFlightRequest = {
     fingerprint: string
+    generation: symbol
     request: Promise<UsageQueryResult>
 }
 
@@ -51,6 +52,8 @@ function queryFingerprint(template: UsageQueryTemplate, credentials: ResolvedUsa
         .update(credentials.baseUrl)
         .update('\0')
         .update(credentials.apiKey)
+        .update('\0')
+        .update(credentials.identityFingerprint ?? '')
         .digest('hex')
 }
 
@@ -210,10 +213,15 @@ export class UsageQueryService {
         let credentials: ResolvedUsageCredentials | undefined
         try {
             credentials = await this.resolveCredentials(agent)
-            return await executeUsageQueryTemplate(agent, parsedTemplate, credentials, {
+            const result = await executeUsageQueryTemplate(agent, parsedTemplate, credentials, {
                 fetchImpl: this.fetchImpl,
                 now: this.now()
             })
+            const current = await this.resolveCredentials(agent)
+            if (queryFingerprint(parsedTemplate, current) !== queryFingerprint(parsedTemplate, credentials)) {
+                return emptyResult(agent, parsedTemplate.id, this.now(), 'Usage quota unavailable: account changed during query')
+            }
+            return result
         } catch (error) {
             return emptyResult(agent, parsedTemplate.id, this.now(), sanitizeError(error, credentials))
         }
@@ -253,8 +261,9 @@ export class UsageQueryService {
         const existing = this.inFlight.get(agent)
         if (existing?.fingerprint === fingerprint) return await existing.request
 
-        const request = this.runQuery(agent, configured, credentials, usableCached, now, fingerprint)
-        this.inFlight.set(agent, { fingerprint, request })
+        const generation = Symbol('quota-query')
+        const request = this.runQuery(agent, configured, credentials, usableCached, now, fingerprint, generation)
+        this.inFlight.set(agent, { fingerprint, generation, request })
         try {
             return await request
         } finally {
@@ -268,14 +277,18 @@ export class UsageQueryService {
         credentials: ResolvedUsageCredentials,
         cached: CachedResult | undefined,
         startedAt: number,
-        fingerprint: string
+        fingerprint: string,
+        generation: symbol
     ): Promise<UsageQueryResult> {
         try {
             const result = await executeUsageQueryTemplate(agent, configured.template, credentials, {
                 fetchImpl: this.fetchImpl,
                 now: startedAt
             })
-            if (this.inFlight.get(agent)?.fingerprint === fingerprint) {
+            if (!await this.isCurrentQuery(agent, fingerprint, generation)) {
+                return emptyResult(agent, configured.templateId, startedAt, 'Usage quota unavailable: account or settings changed during query')
+            }
+            if (this.inFlight.get(agent)?.generation === generation) {
                 this.cache.set(agent, {
                     templateId: configured.templateId,
                     queryFingerprint: fingerprint,
@@ -289,7 +302,10 @@ export class UsageQueryService {
         } catch (error) {
             const message = sanitizeError(error, credentials)
             const result = emptyResult(agent, configured.templateId, startedAt, message, cached?.result)
-            if (this.inFlight.get(agent)?.fingerprint === fingerprint) {
+            if (!await this.isCurrentQuery(agent, fingerprint, generation)) {
+                return emptyResult(agent, configured.templateId, startedAt, 'Usage quota unavailable: account or settings changed during query')
+            }
+            if (this.inFlight.get(agent)?.generation === generation) {
                 this.cache.set(agent, {
                     templateId: configured.templateId,
                     queryFingerprint: fingerprint,
@@ -300,6 +316,18 @@ export class UsageQueryService {
                 })
             }
             return result
+        }
+    }
+
+    private async isCurrentQuery(agent: UsageQueryAgent, fingerprint: string, generation: symbol): Promise<boolean> {
+        if (this.inFlight.get(agent)?.generation !== generation) return false
+        try {
+            const [settings, credentials] = await Promise.all([this.readSettings(), this.resolveCredentials(agent)])
+            return this.inFlight.get(agent)?.generation === generation
+                && settings[agent].enabled
+                && queryFingerprint(settings[agent].template, credentials) === fingerprint
+        } catch {
+            return false
         }
     }
 
