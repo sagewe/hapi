@@ -338,6 +338,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                             const converted = convertAgentMessage(message, msg.mode.model);
                             if (converted) session.client.sendAgentMessage(converted);
                         };
+                        this.elicitation?.beginPrompt();
                         await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
                         accepted = true;
                         acknowledge();

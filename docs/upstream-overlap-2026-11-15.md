@@ -46,7 +46,7 @@ In particular, upstream `0bea8967` caches parsed log tails using `(ino,size,mtim
 
 Upstream carries the native tool name/args into a canonical card mapper and preserves empty edit/write strings; these are useful semantics. The personal transcript formatter currently retains the original argument object, so its empty `Target`, `Replacement` and `Content` strings are not filtered out. However its generic `File …` / `Run …` cards do not automatically gain upstream canonical card selection. Proper adoption needs native identity on both live ACP and transcript-recovered calls, consistent call IDs, and generated client fixtures—not a mapper attached only to the unused upstream driver.
 
-The upstream form path also has better explicit free-text flags, a lifecycle gate for forms delivered after Stop, and rejection of approvals without usable answers. The personal adapter has a working question bridge but does not project `allowFreeText` end to end; directly porting only the reducer free-text enrichment would leave both Web/iOS parsing incomplete. These are specific follow-up improvements rather than claims of feature parity.
+The upstream form path also has better explicit free-text flags, a lifecycle gate for forms delivered after Stop, and rejection of approvals without usable answers. The lifecycle gate is now adapted into the executing personal adapter: cancellation closes admission synchronously even with no pending forms, and a new foreground prompt explicitly reopens it. Two regressions check late-form cancellation, existing promise settlement, and the next prompt accepting a question normally. The personal adapter has a working question bridge but does not project `allowFreeText` end to end; directly porting only the reducer free-text enrichment would leave both Web/iOS parsing incomplete. These are specific follow-up improvements rather than claims of feature parity.
 
 ### Background round metadata: #2405 / `e24ccf5e`
 
@@ -58,4 +58,5 @@ Upstream adds round counts and running command snapshots. The personal driver al
 - Runner upload handlers plus factory tests: 17 passed, including sequential bytes, per-session isolation, size/index validation, expiry, cleanup and finalization.
 - Hub upload storage, HTTP authorization/restart/completion, streaming, fallback and RPC suites: 30 passed. Coverage includes lost finalize acknowledgement, no fallback after an advertised init timeout, rejected chunk byte acknowledgements and 50 MiB policy preservation.
 - CLI, Hub, Web and relay TypeScript checks passed after the upload adaptation.
+- The larger agy and quota suites passed: 202 tests across 14 files. After the form lifecycle adaptation, adapter/driver regressions passed: 29 tests across 2 files; CLI typecheck was repeated.
 - No database migration, production configuration read, binary replacement, service restart, push or deployment is part of these changes.

@@ -109,6 +109,7 @@ export function parseAgyElicitationQuestions(
  * interactive `AskUserQuestion` permission flow across Web, iOS, and Mac Catalyst.
  */
 export class AgyElicitationAdapter {
+    private acceptingRequests = true;
     private readonly pending = new Map<string, PendingElicitationRequest>();
 
     constructor(
@@ -120,10 +121,15 @@ export class AgyElicitationAdapter {
         });
     }
 
+    beginPrompt(): void {
+        this.acceptingRequests = true;
+    }
+
     private async handleElicitationCreate(
         params: unknown,
         requestId: string | number | null
     ): Promise<{ action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }> {
+        if (!this.acceptingRequests) return { action: 'cancel' };
         const payload = isObject(params) ? params : {};
         const sessionId = asString(payload.sessionId) ?? '';
         const toolCallId = asString(payload.toolCallId);
@@ -261,6 +267,9 @@ export class AgyElicitationAdapter {
     }
 
     async cancelAll(reason: string): Promise<void> {
+        // Close synchronously even if there is nothing to sweep: a form can
+        // arrive after Stop while transport notifications are still draining.
+        this.acceptingRequests = false;
         if (this.pending.size === 0) return;
         const entries = Array.from(this.pending.values());
         this.pending.clear();
