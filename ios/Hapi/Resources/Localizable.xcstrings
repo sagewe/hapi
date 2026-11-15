@@ -1,6 +1,13 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Home network" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "家庭局域网"}}}, "extractionState": "manual"},
+    "Not configured" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "未配置"}}}, "extractionState": "manual"},
+    "Connected directly on your home network" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "正在通过家庭局域网直连"}}}, "extractionState": "manual"},
+    "Home network selected manually" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已手动选择家庭局域网"}}}, "extractionState": "manual"},
+    "Using public relay outside your home network" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "家庭局域网不可用，使用公网"}}}, "extractionState": "manual"},
+    "Public relay unavailable; using Tailscale" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "公网不可用，使用 Tailscale 备用连接"}}}, "extractionState": "manual"},
+    "Automatic uses your home network when available, public relay elsewhere, and Tailscale as a fallback. Manual selection stays on the chosen route." : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "自动优先使用家庭局域网，在外使用公网，Tailscale 作为备用。手动选择后固定使用该路径。"}}}, "extractionState": "manual"},
     "%@%% used · %@%% left" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "已用 %@%% · 剩余 %@%%"}}}},
     "More Settings" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "更多设置"}}}},
     "Lowest remaining %@%%" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "最低剩余 %@%%"}}}},

@@ -52,32 +52,34 @@ normalizer. It does not embed attachment binaries. The existing large-export
 confirmation and hard size limit remain in force; confirmation retains the
 chosen format. Files receives a `.md` document with Markdown content type.
 
-## Automatic Tailscale access
+## Automatic network access
 
-The Hub advertises its private HTTPS origin through authenticated
-`GET /api/connection` when configured with `HAPI_DIRECT_URL`. Paired clients
-discover and cache it automatically, validate the same public Hub identity over
-TLS, and prefer it without changing their paired Hub, Keychain, drafts or caches.
-Settings → Connection offers Automatic, Tailscale only and Public relay only.
-Tailscale must already be reachable via the device's existing Tailscale/Surge
-connection; HAPI does not start a VPN or embed another Tailscale identity.
+The Hub advertises separate LAN and Tailscale HTTPS origins through authenticated
+`GET /api/connection`, configured by `HAPI_LAN_URL` and `HAPI_DIRECT_URL`.
+The client keeps its paired public identity, Keychain, drafts and upload tasks.
+Alternate endpoints must pass normal TLS verification and match the paired Hub's
+public identity before receiving credentials. LAN access requires local-network
+permission and a separately configured trusted HTTPS endpoint.
 
-Automatic mode probes private connectivity with a one-second request timeout,
-falls back on network failure, and requires two spaced successful probes before
-upgrading an established public route. Foreground event streams recheck every
-15 seconds; private probes are spaced 30 seconds. Background suspension stops
-those stream checks. Existing sockets are not transferred mid-operation.
-Mutation failures keep their normal uncertainty/reconciliation semantics.
+Automatic mode prefers LAN with a short 350 ms health budget, then the public
+relay. Tailscale is used only after a public request fails. Established fallback
+connections require two spaced successful probes to return to a preferred route;
+a single periodic LAN probe failure does not disconnect a healthy stream.
+Changing network revalidates endpoints. The client does not start a VPN.
 
-The session-list connection capsule shows the actual established global event
-route, with a house/cloud icon and recent HTTP health latency. Tap it for both
-endpoints, timestamps, connection reuse/new-handshake information and the last
-routing reason; Settings → Connection opens the same details. Samples over 60
-seconds old and failed probes never appear as a current numeric latency. New
-request selection is shown separately while a live stream is changing routes.
-Diagnostics refresh at most every 15 seconds while the view is foregrounded,
-respect forced routing modes and never force route selection. These are HTTP
-round trips, not ICMP ping or a measure of upload throughput.
+Tap the session-list connection capsule to choose Automatic, Home network,
+Public relay or Tailscale. Settings opens the same Connection destination.
+iPhone presents a sheet; wider interfaces use a popover. The checkmark identifies
+the saved policy; Current connection reports the actual event stream, with Next
+connection shown during transitions. Manual modes never silently fall back.
+Unconfigured LAN or Tailscale choices are disabled. Diagnostics are one level
+deeper, with timestamps and HTTP latency rather than ping or upload bandwidth.
+
+Stream checks observe policy changes within two seconds while foregrounded;
+network probes remain spaced 30 seconds (10 seconds after a first LAN failure).
+Existing voice/terminal sockets stay on their original route until reconnecting.
+Reads may retry on a verified alternative; uncertain mutations are never replayed
+by routing. SSE reconnects retain their existing cursor handling.
 
 ## Resumable message attachments
 

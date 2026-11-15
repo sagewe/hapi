@@ -23,6 +23,11 @@ private actor RouteHTTP: HTTPPerforming {
     var directLatencyMs = 0
     var publicLatencyMs = 0
     var privateOrigin = "https://direct.example.test"
+    var lanAdvertised = true
+    var delayLAN = false
+    func slowLAN() { delayLAN = true }
+    func noLAN() { lanAdvertised = false }
+    func publicRestore() { publicUp = true }
     var onAdvanceUptimeMs: (@Sendable (Int) -> Void)?
     private(set) var requests: [URLRequest] = []
     func direct(_ up: Bool) { directUp = up }
@@ -39,6 +44,7 @@ private actor RouteHTTP: HTTPPerforming {
         requests.append(request)
         let url = try #require(request.url)
         if url.host == "direct.example.test" || url.host == "direct2.example.test" {
+            if delayLAN { try await Task.sleep(for: .seconds(10)) }
             if directLatencyMs > 0 { onAdvanceUptimeMs?(directLatencyMs) }
             if directTimeoutCount > 0 {
                 directTimeoutCount -= 1
@@ -51,7 +57,7 @@ private actor RouteHTTP: HTTPPerforming {
             if !publicUp { throw URLError(.cannotConnectToHost) }
         }
         let body: String
-        if url.path == "/api/connection" { body = "{\"hubId\":\"same-hub\",\"privateUrl\":\"\(privateOrigin)\"}" }
+        if url.path == "/api/connection" { body = "{\"hubId\":\"same-hub\",\"privateUrl\":\"https://tailscale.example.test\",\"lanUrl\":\(lanAdvertised ? "\"\(privateOrigin)\"" : "null")}" }
         else if url.path == "/health" { body = "{\"status\":\"ok\",\"hubId\":\"\(sameIdentity ? "same-hub" : "wrong-hub")\"}" }
         else { body = #"{"ok":true}"# }
         return (Data(body.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
@@ -77,20 +83,20 @@ struct HubConnectionRouterTests {
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
         let direct = try await router.resolve(token: "test-only")
         let first = await router.diagnostics()
-        #expect(first.privateMeasurement?.outcome == .reachable)
-        #expect((first.privateMeasurement?.milliseconds ?? -1) >= 0)
+        #expect(first.lanMeasurement?.outcome == .reachable)
+        #expect((first.lanMeasurement?.milliseconds ?? -1) >= 0)
         await http.direct(false)
         await router.refreshDiagnostics(force: true)
         let measured = await router.diagnostics()
         #expect(measured.isPrivate)
-        #expect(measured.privateMeasurement?.outcome == .unavailable)
+        #expect(measured.lanMeasurement?.outcome == .unavailable)
         #expect(measured.publicMeasurement?.outcome == .reachable)
         #expect(measured.reason == first.reason)
         await router.setMode(.publicOnly)
         let count = await http.requests.filter { $0.url?.host == direct.host }.count
         await router.refreshDiagnostics(force: true)
         #expect(await http.requests.filter { $0.url?.host == direct.host }.count == count)
-        await router.setMode(.privateOnly)
+        await router.setMode(.lanOnly)
         let publicCount = await http.requests.filter { $0.url?.host == canonical.host }.count
         await router.refreshDiagnostics(force: true)
         #expect(await http.requests.filter { $0.url?.host == canonical.host }.count == publicCount)
@@ -176,7 +182,7 @@ struct HubConnectionRouterTests {
         #expect(router.rewrite(request, to: direct).url?.absoluteString == "wss://direct.example.test/api/ws?session=a%2Fb")
         await router.setMode(.publicOnly)
         #expect(try await router.resolve() == canonical)
-        await router.setMode(.privateOnly); await http.direct(false)
+        await router.setMode(.lanOnly); await http.direct(false)
         #expect(await capturedError { try await router.resolve() } is URLError)
     }
 
@@ -191,7 +197,7 @@ struct HubConnectionRouterTests {
         #expect(await http.requests.filter { $0.url?.path == "/api/connection" }.count == 1)
         await http.direct(true); await http.publicDown()
         _ = try await RoutingHTTPPerformer(router: router, underlying: http).perform(URLRequest(url: canonical.appendingPathComponent("api/sessions")))
-        #expect(await http.requests.last?.url?.host == "direct.example.test")
+        #expect(await http.requests.last?.url?.host == "tailscale.example.test")
     }
 
     @Test func routeChangeClosesTheOldEventStreamForCursorPreservingReconnect() async throws {
@@ -266,41 +272,64 @@ struct HubConnectionRouterTests {
         #expect(try await router.resolve(token: "test-only").host == "direct2.example.test")
     }
 
-    @Test func coldStartTimeoutFallsBackFastAndWarmProbesPrivateInBackground() async throws {
+    @Test func coldLANTimeoutUsesPublicWithoutTryingTailscale() async throws {
         let clock = RouteClock(); let http = RouteHTTP()
         await http.directTimeouts(1)
-        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
-                                         now: { clock.now() }, uptime: { clock.uptime() })
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false, now: { clock.now() })
         #expect(try await router.resolve(token: "test-only") == canonical)
-        await router.awaitBackgroundTasksForTesting()
-        #expect(await router.diagnostics().reason == .awaitingRecovery)
-
-        clock.advance(31)
-        #expect(try await router.resolve().host == "direct.example.test")
+        #expect(await http.requests.allSatisfy { $0.url?.host != "tailscale.example.test" })
+        clock.advance(31); #expect(try await router.resolve() == canonical)
+        clock.advance(31); #expect(try await router.resolve().host == "direct.example.test")
     }
 
-    @Test func severelySlowerPrivateRoutePrefersFastPublicRelayInAutomaticModeOnly() async throws {
+    @Test func outsideHomePrefersPublicAndOnlyFallsBackAfterFailure() async throws {
+        let clock = RouteClock(); let http = RouteHTTP(); await http.noLAN()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false, now: { clock.now() })
+        #expect(try await router.resolve(token: "test-only") == canonical)
+        #expect(await http.requests.allSatisfy { $0.url?.host != "tailscale.example.test" })
+        await http.publicDown(); await router.failed(canonical)
+        #expect(try await router.resolve().host == "tailscale.example.test")
+        #expect(await router.diagnostics().selectedRoute == .tailscale)
+        await http.publicRestore()
+        clock.advance(31); #expect(try await router.resolve().host == "tailscale.example.test")
+        clock.advance(31); #expect(try await router.resolve() == canonical)
+    }
+
+    @Test func forcedUnavailableLANDoesNotSilentlyReturnPublicOnSecondAttempt() async throws {
         let clock = RouteClock(); let http = RouteHTTP()
-        await http.latencies(directMs: 380, publicMs: 45, clock: clock)
-        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false,
-                                         now: { clock.now() }, uptime: { clock.uptime() })
-        #expect(try await router.resolve(token: "test-only") == canonical)
-        #expect(await router.diagnostics().reason == .privateSlowerThanPublic)
-
-        await router.setMode(.privateOnly)
-        #expect(try await router.resolve().host == "direct.example.test")
-
-        await router.setMode(.automatic)
-        await http.latencies(directMs: 30, publicMs: 50, clock: clock)
-        let direct = try await router.resolve(token: "test-only")
-        #expect(direct.host == "direct.example.test")
-
-        // Active private connection requires two slow checks before demoting.
-        await http.latencies(directMs: 420, publicMs: 50, clock: clock)
-        clock.advance(31)
-        #expect(try await router.resolve() == direct)
-        clock.advance(11)
-        #expect(try await router.resolve() == canonical)
-        #expect(await router.diagnostics().reason == .privateSlowerThanPublic)
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false, now: { clock.now() })
+        _ = try await router.resolve(token: "test-only")
+        await router.setMode(.lanOnly); await http.direct(false)
+        #expect(await capturedError { try await router.resolve() } is URLError)
+        #expect(await capturedError { try await router.resolve() } is URLError)
     }
+    @Test func manualTailscaleSelectionClosesLANStreamWithoutMarkingNewRouteFailed() async throws {
+        let http = RouteHTTP()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
+        let transport = RoutingSSETransport(router: router, underlying: ConnectedSSE(), recheckInterval: .milliseconds(5))
+        let request = URLRequest(url: URL(string: canonical.absoluteString + "/api/events?all=true&token=test-only")!)
+        var iterator = transport.connect(request).makeAsyncIterator()
+        _ = try await iterator.next()
+        #expect(await router.diagnostics().activeRoute == .lan)
+        await router.setMode(.privateOnly)
+        #expect(await capturedError { try await iterator.next() } is URLError)
+        #expect(try await router.resolve().host == "tailscale.example.test")
+        #expect(await router.diagnostics().reason == .forcedPrivate)
+    }
+
+    @Test func changingModeCancelsInFlightLANProbeWithoutRestoringOldSelection() async throws {
+        let http = RouteHTTP(); await http.slowLAN()
+        let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
+        let task = Task { try await router.resolve(token: "test-only") }
+        for _ in 0..<1000 {
+            if await http.requests.contains(where: { $0.url?.path == "/health" }) { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        await router.setMode(.publicOnly)
+        _ = await capturedError { try await task.value }
+        #expect(try await router.resolve() == canonical)
+        #expect(await router.diagnostics().mode == .publicOnly)
+        #expect(await router.diagnostics().selectedRoute == .relay)
+    }
+
 }

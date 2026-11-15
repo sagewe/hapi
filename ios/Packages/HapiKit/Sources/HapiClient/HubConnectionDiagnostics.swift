@@ -21,7 +21,13 @@ public struct HubConnectionDiagnostics: Sendable {
     public enum Reason: Sendable, Equatable {
         case starting, privateVerified, privateUnavailable, awaitingRecovery, noPrivateEndpoint
         case forcedPublic, forcedPrivate, privateNetworkFailure, publicNetworkFailure, privateSlowerThanPublic
+        case lanVerified, forcedLAN, publicPreferred, tailscaleFallback
     }
+    public let lanMeasurement: HubEndpointMeasurement?
+    public let selectedRoute: HubConnectionRoute
+    public let activeRoute: HubConnectionRoute?
+    public let hasLAN: Bool
+    public let hasTailscale: Bool
     public let mode: HubConnectionMode
     public let isPrivate: Bool
     public let reason: Reason
@@ -31,13 +37,23 @@ public struct HubConnectionDiagnostics: Sendable {
     public let reasonUpdatedAt: Date?
     public init(mode: HubConnectionMode, isPrivate: Bool, reason: Reason,
                 privateMeasurement: HubEndpointMeasurement? = nil, publicMeasurement: HubEndpointMeasurement? = nil,
-                activeEventIsPrivate: Bool? = nil, reasonUpdatedAt: Date? = nil) {
+                activeEventIsPrivate: Bool? = nil, reasonUpdatedAt: Date? = nil,
+                lanMeasurement: HubEndpointMeasurement? = nil, selectedRoute: HubConnectionRoute? = nil,
+                activeRoute: HubConnectionRoute? = nil, hasLAN: Bool = false, hasTailscale: Bool = false) {
+        self.lanMeasurement = lanMeasurement
+        self.selectedRoute = selectedRoute ?? (isPrivate ? .tailscale : .relay)
+        self.activeRoute = activeRoute ?? activeEventIsPrivate.map { $0 ? .tailscale : .relay }
+        self.hasLAN = hasLAN; self.hasTailscale = hasTailscale
         self.mode = mode; self.isPrivate = isPrivate; self.reason = reason
         self.privateMeasurement = privateMeasurement; self.publicMeasurement = publicMeasurement
         self.activeEventIsPrivate = activeEventIsPrivate; self.reasonUpdatedAt = reasonUpdatedAt
     }
     public var currentMeasurement: HubEndpointMeasurement? {
-        (activeEventIsPrivate ?? isPrivate) ? privateMeasurement : publicMeasurement
+        switch activeRoute ?? selectedRoute {
+        case .lan: lanMeasurement
+        case .tailscale: privateMeasurement
+        case .relay: publicMeasurement
+        }
     }
 }
 

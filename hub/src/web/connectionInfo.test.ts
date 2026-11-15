@@ -2,7 +2,7 @@ import { describe, it, expect } from 'bun:test'
 import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { hubIdentity, privateConnectionURL } from './connectionInfo'
+import { hubIdentity, privateConnectionURL, connectionOrigins } from './connectionInfo'
 
 describe('Hub connection identity', () => {
     it('persists a public identity independently of credentials and addresses', () => {
@@ -19,5 +19,15 @@ describe('Hub connection identity', () => {
         for (const value of ['', 'http://host', 'https://a:b@host', 'https://host/path', 'https://host/?key=private']) {
             expect(privateConnectionURL(value)).toBeNull()
         }
+    })
+})
+
+describe('LAN discovery', () => {
+    it('keeps LAN distinct from the existing tailnet endpoint', () => {
+        expect(connectionOrigins('https://tail.example', '')).toEqual({ privateUrl: 'https://tail.example', lanUrl: null })
+        expect(connectionOrigins('https://tail.example', 'https://home.example:8443')).toEqual({ privateUrl: 'https://tail.example', lanUrl: 'https://home.example:8443' })
+        expect(connectionOrigins('https://tail.example', 'https://tail.example/').lanUrl).toBeNull()
+        expect(connectionOrigins('', 'http://192.168.1.2').lanUrl).toBeNull()
+        expect(connectionOrigins('', 'https://user:secret@home.example').lanUrl).toBeNull()
     })
 })

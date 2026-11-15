@@ -69,8 +69,6 @@ struct SettingsView: View {
     @State private var model: SettingsModel
     @State private var languagePrefs: LanguagePrefs
     @State private var confirmSignOut = false
-    @State private var connectionMode: HubConnectionMode = .automatic
-    @State private var usingPrivateConnection: Bool?
     @Environment(AppModel.self) private var appModel
     @Environment(ThemePrefs.self) private var themePrefs
     @Environment(\.dismiss) private var dismiss
@@ -112,13 +110,7 @@ struct SettingsView: View {
             .task {
                 model.start()
                 PushCoordinator.shared.refreshStatus()
-                while !Task.isCancelled {
-                    if let connection = session.api.connection {
-                        let status = await connection.diagnostics()
-                        connectionMode = status.mode; usingPrivateConnection = status.activeEventIsPrivate
-                    }
-                    do { try await Task.sleep(for: .seconds(2)) } catch { break }
-                }
+
             }
         }
         // The sheet is its own presentation; re-apply the explicit override
@@ -127,20 +119,9 @@ struct SettingsView: View {
     }
 
     private var connectionSection: some View {
-        Section("Connection") {
-            Picker("Connection", selection: Binding(get: { connectionMode }, set: { value in
-                connectionMode = value
-                Task { await session.api.connection?.setMode(value) }
-            })) {
-                Text("Automatic").tag(HubConnectionMode.automatic)
-                Text("Tailscale only").tag(HubConnectionMode.privateOnly)
-                Text("Public relay only").tag(HubConnectionMode.publicOnly)
-            }
-            LabeledContent("Current connection", value: usingPrivateConnection.map {
-                $0 ? "Tailscale" : String(localized: "Public relay")
-            } ?? String(localized: "Disconnected"))
+        Section {
             if let router = session.api.connection {
-                NavigationLink("Connection details") { ConnectionDiagnosticsView(router: router) }
+                NavigationLink("Connection") { ConnectionSelectionView(router: router) }
             }
         }
     }

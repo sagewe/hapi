@@ -3,15 +3,13 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public enum HubConnectionMode: String, CaseIterable, Sendable { case automatic, privateOnly, publicOnly }
+public enum HubConnectionMode: String, CaseIterable, Sendable { case automatic, lanOnly, privateOnly, publicOnly }
+public enum HubConnectionRoute: String, Sendable { case lan, tailscale, relay }
 
-/// Keeps logical Hub identity, auth storage and all stores on the paired origin.
-/// Only transports rewrite origins, after checking the same public Hub identity.
+/// The paired origin remains the identity for authentication, drafts and caches.
+/// Alternate origins receive credentials only after TLS and Hub identity checks.
 public actor HubConnectionRouter {
-    private struct Advertisement: Codable { let hubId: String; let privateUrl: URL? }
-    private static let privateSlowThresholdMs = 250
-    private static let privateRelayPenaltyMs = 150
-    private static let measurementFreshness: TimeInterval = 60
+    private struct Advertisement: Codable, Equatable { let hubId: String; let privateUrl: URL?; let lanUrl: URL? }
     public let canonicalURL: URL
     private let performer: any HTTPPerforming
     private let defaults: UserDefaults?
@@ -21,35 +19,29 @@ public actor HubConnectionRouter {
     private var advertisement: Advertisement?
     private var selected: URL
     private var mode: HubConnectionMode
+    private var generation = 0
     private var lastDiscovery = Date.distantPast
     private var lastProbe = Date.distantPast
-    private var failuresUntil = Date.distantPast
-    private var successes = 0
-    private var privateProbeFailures = 0
-    private var privateSlowStrikes = 0
-    private var networkJustChanged = false
+    private var blockedUntil: [URL: Date] = [:]
+    private var successes: [URL: Int] = [:]
+    private var probeFailures = 0
     private var initialized = false
     private var flight: Task<URL, Error>?
     private var discoveryFlight: Task<Void, Never>?
-    private var warmProbeFlight: Task<Void, Never>?
     private var diagnosticsFlight: Task<Void, Never>?
     private var lastDiagnostics = Date.distantPast
-    private var privateMeasurement: HubEndpointMeasurement?
-    private var publicMeasurement: HubEndpointMeasurement?
+    private var measurements: [URL: HubEndpointMeasurement] = [:]
     private var reason: HubConnectionDiagnostics.Reason = .starting {
         didSet { if reason != oldValue { reasonUpdatedAt = now() } }
     }
     private var reasonUpdatedAt: Date?
-    private var activeGlobalStream: (id: UUID, origin: URL)?
+    private var activeGlobalStream: (id: UUID, origin: URL, route: HubConnectionRoute)?
 
     public init(canonicalURL: URL, performer: any HTTPPerforming = URLSessionHTTPPerformer.shared,
                 persistent: Bool = true, now: @escaping @Sendable () -> Date = { Date() },
                 uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.canonicalURL = canonicalURL
-        self.selected = canonicalURL
-        self.performer = performer
-        self.now = now
-        self.uptime = uptime
+        self.canonicalURL = canonicalURL; selected = canonicalURL
+        self.performer = performer; self.now = now; self.uptime = uptime
         let defaults: UserDefaults? = persistent ? .standard : nil
         self.defaults = defaults
         key = "run.hapi.connection.\(canonicalURL.absoluteString)"
@@ -57,27 +49,32 @@ public actor HubConnectionRouter {
         mode = defaults?.string(forKey: key + ".mode").flatMap(HubConnectionMode.init(rawValue:)) ?? .automatic
     }
 
+    private func route(_ origin: URL) -> HubConnectionRoute {
+        if origin == canonicalURL { return .relay }
+        return origin == advertisement?.lanUrl ? .lan : .tailscale
+    }
     public func status() -> (mode: HubConnectionMode, isPrivate: Bool) { (mode, selected != canonicalURL) }
-
     public func diagnostics() -> HubConnectionDiagnostics {
         HubConnectionDiagnostics(mode: mode, isPrivate: selected != canonicalURL, reason: reason,
-                                 privateMeasurement: privateMeasurement, publicMeasurement: publicMeasurement,
-                                 activeEventIsPrivate: activeGlobalStream.map { $0.origin != canonicalURL }, reasonUpdatedAt: reasonUpdatedAt)
+            privateMeasurement: advertisement?.privateUrl.flatMap { measurements[$0] }, publicMeasurement: measurements[canonicalURL],
+            activeEventIsPrivate: activeGlobalStream.map { $0.origin != canonicalURL }, reasonUpdatedAt: reasonUpdatedAt,
+            lanMeasurement: advertisement?.lanUrl.flatMap { measurements[$0] }, selectedRoute: mode == .automatic ? route(selected) : forcedOrigin().map(route) ?? route(selected),
+            activeRoute: activeGlobalStream?.route, hasLAN: advertisement?.lanUrl != nil,
+            hasTailscale: advertisement?.privateUrl != nil)
     }
-
-    func eventStreamOpened(id: UUID, origin: URL) { activeGlobalStream = (id, origin) }
+    func eventStreamOpened(id: UUID, origin: URL) { activeGlobalStream = (id, origin, route(origin)) }
     func eventStreamClosed(id: UUID) { if activeGlobalStream?.id == id { activeGlobalStream = nil } }
 
-    /// Read-only diagnostics never count toward routing hysteresis or force a
-    /// route change. Callers own the foreground-only refresh loop.
     public func refreshDiagnostics(force: Bool = false) async {
         if let diagnosticsFlight { await diagnosticsFlight.value; return }
         guard force || now().timeIntervalSince(lastDiagnostics) >= 15 else { return }
         lastDiagnostics = now()
+        let candidates = mode == .automatic
+            ? [advertisement?.lanUrl, canonicalURL, force || selected == advertisement?.privateUrl ? advertisement?.privateUrl : nil].compactMap { $0 }
+            : [forcedOrigin()].compactMap { $0 }
         let task = Task {
-            if self.mode != .privateOnly { _ = await self.probe(self.canonicalURL, timeout: 3) }
-            if self.mode != .publicOnly, let direct = self.advertisement?.privateUrl, Self.validPrivateOrigin(direct) {
-                _ = await self.probe(direct, timeout: 3)
+            await withTaskGroup(of: Void.self) { group in
+                for origin in candidates { group.addTask { _ = await self.probe(origin, timeout: 2) } }
             }
         }
         diagnosticsFlight = task
@@ -86,6 +83,9 @@ public actor HubConnectionRouter {
     }
 
     private func probe(_ origin: URL, timeout: TimeInterval) async -> Bool {
+        guard Self.validOrigin(origin) else { return false }
+        let expected = advertisement?.hubId
+        let version = generation
         var request = URLRequest(url: origin.appendingPathComponent("health"))
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -99,42 +99,43 @@ public actor HubConnectionRouter {
                 (data, response, reused) = try await performer.measuredProbe(request)
             } else { (data, response) = try await performer.perform(request) }
             struct Health: Decodable { let status: String; let hubId: String? }
-            if response.statusCode != 200 { outcome = .httpError(response.statusCode) }
+            if response.url?.scheme != origin.scheme || response.url?.host != origin.host || response.url?.port != origin.port {
+                outcome = .identityMismatch
+            } else if response.statusCode != 200 { outcome = .httpError(response.statusCode) }
             else if let health = try? JSONDecoder().decode(Health.self, from: data), health.status == "ok" {
-                if let expected = advertisement?.hubId, health.hubId != expected { outcome = .identityMismatch }
-                else { outcome = .reachable }
+                if let expected, health.hubId == expected { outcome = .reachable }
+                else if origin == canonicalURL && expected == nil { outcome = .reachable }
+                else { outcome = .identityMismatch }
             }
-        } catch {
-            if (error as? URLError)?.code == .timedOut { outcome = .timeout }
-        }
-        let measurement = HubEndpointMeasurement(url: origin, checkedAt: now(),
-            milliseconds: Int((uptime() - started) * 1000), outcome: outcome, reusedConnection: reused)
-        if origin == canonicalURL { publicMeasurement = measurement } else { privateMeasurement = measurement }
+        } catch { if (error as? URLError)?.code == .timedOut { outcome = .timeout } }
+        guard version == generation, !Task.isCancelled else { return false }
+        measurements[origin] = HubEndpointMeasurement(url: origin, checkedAt: now(), milliseconds: Int((uptime() - started) * 1000), outcome: outcome, reusedConnection: reused)
         return outcome == .reachable
     }
 
-    /// A new pairing must not inherit endpoint trust from previous credentials
-    /// at the same public address. The old session is torn down by AppModel.
     public nonisolated static func forget(hubURL: String) {
         let origin = HubURLNormalization.normalize(hubURL) ?? hubURL
         let key = "run.hapi.connection.\(origin)"
         UserDefaults.standard.removeObject(forKey: key)
         UserDefaults.standard.removeObject(forKey: key + ".mode")
     }
-
+    private func forcedOrigin() -> URL? {
+        switch mode {
+        case .automatic, .publicOnly: canonicalURL
+        case .lanOnly: advertisement?.lanUrl
+        case .privateOnly: advertisement?.privateUrl
+        }
+    }
     public func setMode(_ value: HubConnectionMode) {
-        mode = value
-        defaults?.set(value.rawValue, forKey: key + ".mode")
+        guard mode != value else { return }
+        mode = value; defaults?.set(value.rawValue, forKey: key + ".mode")
+        generation += 1
         flight?.cancel(); flight = nil
         discoveryFlight?.cancel(); discoveryFlight = nil
-        warmProbeFlight?.cancel(); warmProbeFlight = nil
-        lastDiscovery = .distantPast
-        lastProbe = .distantPast; failuresUntil = .distantPast; initialized = false
-        successes = 0; privateProbeFailures = 0; privateSlowStrikes = 0; networkJustChanged = false
-        if value == .publicOnly { selected = canonicalURL }
-        reason = value == .publicOnly ? .forcedPublic : value == .privateOnly ? .forcedPrivate : .starting
+        lastProbe = .distantPast; initialized = false; successes = [:]; probeFailures = 0; blockedUntil = [:]
+        selected = canonicalURL
+        reason = value == .automatic ? .starting : value == .publicOnly ? .forcedPublic : value == .lanOnly ? .forcedLAN : .forcedPrivate
     }
-
     public func resolve(token: String? = nil) async throws -> URL {
         if mode == .publicOnly { return canonicalURL }
         if let flight { return try await flight.value }
@@ -143,173 +144,122 @@ public actor HubConnectionRouter {
         defer { if flight == task { flight = nil } }
         return try await task.value
     }
-
-    func awaitBackgroundTasksForTesting() async {
-        await discoveryFlight?.value
-        await warmProbeFlight?.value
-    }
-
+    func awaitBackgroundTasksForTesting() async { await discoveryFlight?.value }
     private func fetchAdvertisement(token: String) async -> Advertisement? {
-        var request = URLRequest(url: canonicalURL.appendingPathComponent("api/connection"))
+        // A verified LAN can refresh discovery even when the relay is down.
+        var request = URLRequest(url: selected.appendingPathComponent("api/connection"))
         request.timeoutInterval = 2
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.cachePolicy = .reloadIgnoringLocalCacheData
         guard let (data, response) = try? await performer.perform(request), response.statusCode == 200,
-              let candidate = try? JSONDecoder().decode(Advertisement.self, from: data),
-              !candidate.hubId.isEmpty,
-              candidate.privateUrl.map(Self.validPrivateOrigin) ?? true else { return nil }
+              let candidate = try? JSONDecoder().decode(Advertisement.self, from: data), !candidate.hubId.isEmpty,
+              candidate.privateUrl.map(Self.validOrigin) ?? true, candidate.lanUrl.map(Self.validOrigin) ?? true,
+              candidate.lanUrl == nil || candidate.lanUrl != candidate.privateUrl,
+              candidate.lanUrl != canonicalURL, candidate.privateUrl != canonicalURL else { return nil }
         return candidate
     }
-
     private func applyAdvertisement(_ candidate: Advertisement) {
-        if advertisement?.hubId != candidate.hubId || advertisement?.privateUrl != candidate.privateUrl {
-            selected = canonicalURL; lastProbe = .distantPast; initialized = false
-            successes = 0; privateProbeFailures = 0; privateSlowStrikes = 0
+        if advertisement != candidate {
+            generation += 1; selected = canonicalURL; lastProbe = .distantPast; initialized = false
+            successes = [:]; probeFailures = 0; measurements = [:]; blockedUntil = [:]
         }
         advertisement = candidate
-        if let encoded = try? JSONEncoder().encode(candidate) { defaults?.set(encoded, forKey: key) }
+        if let data = try? JSONEncoder().encode(candidate) { defaults?.set(data, forKey: key) }
     }
-
-    private func scheduleBackgroundDiscovery(token: String, reference: Date) {
-        guard discoveryFlight == nil else { return }
-        lastDiscovery = reference
-        let task = Task {
-            guard let candidate = await self.fetchAdvertisement(token: token),
-                  !Task.isCancelled, self.mode == .automatic else { return }
-            self.applyAdvertisement(candidate)
-        }
-        discoveryFlight = task
-        Task {
-            await task.value
-            if self.discoveryFlight == task { self.discoveryFlight = nil }
-        }
-    }
-
-    private func scheduleColdWarmProbe(_ direct: URL) {
-        guard warmProbeFlight == nil else { return }
-        let task = Task {
-            let verified = await self.probe(direct, timeout: 3)
-            guard !Task.isCancelled, self.mode == .automatic else { return }
-            if verified, self.selected == self.canonicalURL, self.successes == 0,
-               !(await self.isPrivateSeverelySlowerThanPublic(at: self.now())) {
-                self.successes = 1
-                self.reason = .awaitingRecovery
+    private func discover(token: String) async throws {
+        if advertisement == nil {
+            lastDiscovery = now()
+            if let candidate = await fetchAdvertisement(token: token) { try Task.checkCancellation(); applyAdvertisement(candidate) }
+        } else if initialized && now().timeIntervalSince(lastDiscovery) >= 300 && discoveryFlight == nil {
+            lastDiscovery = now()
+            let version = generation
+            let task = Task {
+                if let candidate = await self.fetchAdvertisement(token: token), !Task.isCancelled, version == self.generation {
+                    self.applyAdvertisement(candidate)
+                }
             }
-        }
-        warmProbeFlight = task
-        Task {
-            await task.value
-            if self.warmProbeFlight == task { self.warmProbeFlight = nil }
+            discoveryFlight = task
+            Task { await task.value; if self.discoveryFlight == task { self.discoveryFlight = nil } }
         }
     }
-
-    private func freshPublicLatency(at reference: Date) -> Int? {
-        guard let pub = publicMeasurement, pub.outcome == .reachable,
-              abs(reference.timeIntervalSince(pub.checkedAt)) <= Self.measurementFreshness else { return nil }
-        return pub.milliseconds
-    }
-
-    private func isPrivateSeverelySlowerThanPublic(at reference: Date) async -> Bool {
-        guard mode == .automatic, let priv = privateMeasurement, priv.outcome == .reachable,
-              priv.milliseconds > Self.privateSlowThresholdMs else { return false }
-        let publicMs: Int?
-        if let cached = freshPublicLatency(at: reference) {
-            publicMs = cached
-        } else if await probe(canonicalURL, timeout: 1), let measured = publicMeasurement, measured.outcome == .reachable {
-            publicMs = measured.milliseconds
-        } else {
-            publicMs = nil
-        }
-        guard let publicMs else { return false }
-        return (priv.milliseconds - publicMs) >= Self.privateRelayPenaltyMs
-    }
-
+    private func usable(_ origin: URL) -> Bool { now() >= (blockedUntil[origin] ?? .distantPast) }
     private func choose(token: String?) async throws -> URL {
-        let reference = now()
-        if mode == .privateOnly && advertisement == nil { throw URLError(.cannotConnectToHost) }
-        if mode == .automatic, let token, reference.timeIntervalSince(lastDiscovery) >= 300,
-           advertisement?.privateUrl == nil || initialized {
-            if advertisement == nil {
-                lastDiscovery = reference
-                if let candidate = await fetchAdvertisement(token: token) {
-                    try Task.checkCancellation()
-                    applyAdvertisement(candidate)
-                }
-            } else {
-                scheduleBackgroundDiscovery(token: token, reference: reference)
-            }
-        }
-        guard let advertisement, let direct = advertisement.privateUrl, Self.validPrivateOrigin(direct) else {
-            reason = .noPrivateEndpoint
-            if mode == .privateOnly { throw URLError(.cannotConnectToHost) }
-            return canonicalURL
-        }
-        let recheckInterval: TimeInterval = (selected == direct && (privateProbeFailures > 0 || privateSlowStrikes > 0)) ? 10 : 30
-        if reference >= failuresUntil && reference.timeIntervalSince(lastProbe) >= recheckInterval {
-            let wasInitialized = initialized
-            let postNetworkChange = networkJustChanged
-            networkJustChanged = false
-            lastProbe = reference
-            let verified = await probe(direct, timeout: 1)
-            try Task.checkCancellation()
-            if verified {
-                privateProbeFailures = 0
-                let severelySlow = await isPrivateSeverelySlowerThanPublic(at: now())
+        if let token { try await discover(token: token) }
+        try Task.checkCancellation()
+        if mode != .automatic {
+            guard let origin = forcedOrigin() else { throw URLError(.cannotConnectToHost) }
+            if !initialized || now().timeIntervalSince(lastProbe) >= 30 {
+                lastProbe = now()
+                let good = await probe(origin, timeout: 1)
                 try Task.checkCancellation()
-                if severelySlow {
-                    if wasInitialized && selected == direct && !postNetworkChange {
-                        privateSlowStrikes += 1
-                        if privateSlowStrikes >= 2 {
-                            selected = canonicalURL; successes = 0; privateSlowStrikes = 0
-                            reason = .privateSlowerThanPublic
-                        }
-                    } else {
-                        selected = canonicalURL; successes = 0; privateSlowStrikes = 0
-                        reason = .privateSlowerThanPublic
-                    }
-                } else {
-                    privateSlowStrikes = 0
-                    successes += 1
-                    if !wasInitialized || selected == direct || successes >= 2 || mode == .privateOnly {
-                        selected = direct; reason = mode == .privateOnly ? .forcedPrivate : .privateVerified
-                    } else { reason = .awaitingRecovery }
+                guard good else { initialized = false; throw URLError(.cannotConnectToHost) }
+                selected = origin; initialized = true
+            }
+            return selected
+        }
+        let wasInitialized = initialized
+        let coolingLAN = advertisement?.lanUrl.flatMap { blockedUntil[$0] } != nil
+        let interval: TimeInterval = probeFailures > 0 ? 10 : coolingLAN ? 15 : 30
+        guard !initialized || now().timeIntervalSince(lastProbe) >= interval else { return selected }
+        lastProbe = now()
+        // LAN has a short budget. Tailscale is never probed before a healthy relay.
+        if let lan = advertisement?.lanUrl, usable(lan) {
+            blockedUntil[lan] = nil
+            let good = await probe(lan, timeout: 0.35)
+            try Task.checkCancellation()
+            if good {
+                successes[lan, default: 0] += 1
+                if !wasInitialized || selected == lan || successes[lan, default: 0] >= 2 {
+                    selected = lan; reason = .lanVerified; probeFailures = 0; initialized = true
+                    return selected
                 }
-            } else if mode == .automatic && wasInitialized && selected == direct && !postNetworkChange {
-                privateProbeFailures += 1
-                if privateProbeFailures >= 2 {
-                    successes = 0; privateProbeFailures = 0; privateSlowStrikes = 0
-                    selected = canonicalURL; reason = .privateUnavailable
-                }
+                reason = .awaitingRecovery
             } else {
-                successes = 0; privateProbeFailures = 0; privateSlowStrikes = 0
-                selected = canonicalURL; reason = .privateUnavailable
-                if !wasInitialized && mode == .automatic && privateMeasurement?.outcome == .timeout {
-                    scheduleColdWarmProbe(direct)
+                successes[lan] = 0
+                if selected == lan {
+                    probeFailures += 1
+                    if wasInitialized && probeFailures < 2 { return selected }
+                    selected = canonicalURL; reason = .privateUnavailable; probeFailures = 0
                 }
             }
-            initialized = true
         }
-        if mode == .privateOnly && selected != direct { throw URLError(.cannotConnectToHost) }
+        initialized = true
+        if selected == advertisement?.privateUrl {
+            let recovered = await probe(canonicalURL, timeout: 1)
+            try Task.checkCancellation()
+            successes[canonicalURL] = recovered ? successes[canonicalURL, default: 0] + 1 : 0
+            if successes[canonicalURL, default: 0] >= 2 {
+                selected = canonicalURL; blockedUntil[canonicalURL] = nil; reason = .publicPreferred
+            }
+            return selected
+        }
+        if usable(canonicalURL) {
+            selected = canonicalURL
+            if reason != .awaitingRecovery && reason != .privateUnavailable && reason != .privateNetworkFailure { reason = .publicPreferred }
+            return selected
+        }
+        if let direct = advertisement?.privateUrl, usable(direct) {
+            let good = await probe(direct, timeout: 1)
+            try Task.checkCancellation()
+            if good { selected = direct; reason = .tailscaleFallback; return selected }
+        }
+        // No healthy alternative; let the canonical request report the error.
+        selected = canonicalURL; reason = .publicNetworkFailure
         return selected
     }
-
     public func failed(_ origin: URL) {
-        if origin == selected {
-            selected = canonicalURL; successes = 0; privateProbeFailures = 0; privateSlowStrikes = 0; initialized = true
-            failuresUntil = now().addingTimeInterval(15)
-            lastProbe = .distantPast
-            if origin == canonicalURL { initialized = false; failuresUntil = .distantPast }
-            reason = origin == canonicalURL ? .publicNetworkFailure : .privateNetworkFailure
-        }
+        guard origin == selected else { return }
+        blockedUntil[origin] = now().addingTimeInterval(15)
+        successes = [:]; probeFailures = 0; lastProbe = .distantPast
+        initialized = true; selected = canonicalURL
+        reason = origin == canonicalURL ? .publicNetworkFailure : .privateNetworkFailure
     }
-
     public func networkChanged() {
-        warmProbeFlight?.cancel(); warmProbeFlight = nil
-        lastProbe = .distantPast; failuresUntil = .distantPast
-        privateProbeFailures = 0; privateSlowStrikes = 0; networkJustChanged = true
+        generation += 1; flight?.cancel(); flight = nil
+        lastProbe = .distantPast; blockedUntil = [:]; successes = [:]; probeFailures = 0
+        initialized = false; selected = canonicalURL
     }
-
-    private static func validPrivateOrigin(_ url: URL) -> Bool {
+    private static func validOrigin(_ url: URL) -> Bool {
         url.scheme == "https" && url.host != nil && url.user == nil && url.password == nil
             && ["", "/"].contains(url.path) && url.query == nil && url.fragment == nil
     }
@@ -380,7 +330,7 @@ public struct RoutingSSETransport: SSETransport {
     private let router: HubConnectionRouter
     private let underlying: any SSETransport
     private let recheckInterval: Duration
-    public init(router: HubConnectionRouter, underlying: any SSETransport = URLSessionSSETransport(), recheckInterval: Duration = .seconds(15)) {
+    public init(router: HubConnectionRouter, underlying: any SSETransport = URLSessionSSETransport(), recheckInterval: Duration = .seconds(2)) {
         self.router = router; self.underlying = underlying; self.recheckInterval = recheckInterval
     }
     public func connect(_ request: URLRequest) -> AsyncThrowingStream<SSETransportEvent, Error> {
@@ -420,8 +370,7 @@ public struct RoutingSSETransport: SSETransport {
                     if isGlobal { await router.eventStreamClosed(id: streamId) }
                     // A deliberate route change must not mark the newly selected
                     // endpoint down. Actual transport failures invalidate only it.
-                    if let origin, HubConnectionRouter.isNetworkFailure(error),
-                       (await router.status()).isPrivate == (origin != router.canonicalURL) { await router.failed(origin) }
+                    if let origin, HubConnectionRouter.isNetworkFailure(error) { await router.failed(origin) }
                     continuation.finish(throwing: error)
                 }
             }

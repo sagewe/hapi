@@ -21,3 +21,10 @@ export function privateConnectionURL(raw = process.env.HAPI_DIRECT_URL): string 
         return url.origin
     } catch { return null }
 }
+
+/** LAN and tailnet are separate failure domains; never alias an absent LAN to Tailscale. */
+export function connectionOrigins(direct = process.env.HAPI_DIRECT_URL, lan = process.env.HAPI_LAN_URL) {
+    const privateUrl = privateConnectionURL(direct ?? '')
+    const candidate = privateConnectionURL(lan ?? '')
+    return { privateUrl, lanUrl: candidate === privateUrl ? null : candidate }
+}

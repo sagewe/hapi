@@ -8,8 +8,7 @@ struct ConnectionCapsuleLabel: View {
     var referenceDate = Date()
 
     var routeTitle: String {
-        guard let active = snapshot?.activeEventIsPrivate else { return String(localized: "Disconnected") }
-        return active ? String(localized: "Private route") : String(localized: "Public route")
+        snapshot?.activeRoute.map(connectionRouteTitle) ?? String(localized: "Disconnected")
     }
     var latencyTitle: String {
         guard snapshot?.activeEventIsPrivate != nil, let sample = snapshot?.currentMeasurement,
@@ -20,7 +19,7 @@ struct ConnectionCapsuleLabel: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: snapshot?.activeEventIsPrivate.map { $0 ? "house" : "cloud" } ?? "network")
+            Image(systemName: snapshot?.activeRoute.map(connectionRouteIcon) ?? "network")
                 .font(.caption)
                 .frame(width: 16)
             Text(routeTitle).font(.caption.weight(.medium))
@@ -48,21 +47,24 @@ struct ConnectionCapsule: View {
     @State private var expanded = false
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button { expanded = true } label: { ConnectionCapsuleLabel(snapshot: snapshot) }
             .buttonStyle(.plain)
             .accessibilityIdentifier("home.connection")
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: snapshot?.activeEventIsPrivate)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: snapshot?.activeRoute)
             .popover(isPresented: $expanded) {
                 NavigationStack {
-                    ConnectionDiagnosticsView(router: router)
+                    ConnectionSelectionView(router: router)
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) { Button("Done") { expanded = false } }
                         }
                 }
-                .frame(idealWidth: 340, idealHeight: 510)
-                .presentationCompactAdaptation(.popover)
+                .frame(idealWidth: 360, idealHeight: 540)
+                .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(560), .large])
+                .presentationDragIndicator(.visible)
+                .presentationCompactAdaptation(.sheet)
             }
             .task(id: phase) {
                 guard phase == .active else { return }
@@ -81,6 +83,95 @@ struct ConnectionCapsule: View {
     }
 }
 
+func connectionRouteTitle(_ route: HubConnectionRoute) -> String {
+    switch route {
+    case .lan: String(localized: "Home network")
+    case .relay: String(localized: "Public relay")
+    case .tailscale: "Tailscale"
+    }
+}
+
+func connectionRouteIcon(_ route: HubConnectionRoute) -> String {
+    switch route { case .lan: "house"; case .relay: "cloud"; case .tailscale: "network" }
+}
+
+/// One shared destination from the home status capsule and Settings.
+struct ConnectionSelectionView: View {
+    let router: HubConnectionRouter
+    @State private var snapshot: HubConnectionDiagnostics?
+    @State private var changing = false
+    @Environment(\.scenePhase) private var phase
+
+    var body: some View {
+        ConnectionSelectionContent(router: router, snapshot: snapshot, changing: changing) { mode in
+            changing = true
+            Task {
+                await router.setMode(mode)
+                snapshot = await router.diagnostics()
+                changing = false
+            }
+        }
+        .task(id: phase) {
+            guard phase == .active else { return }
+            while !Task.isCancelled {
+                snapshot = await router.diagnostics()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
+        }
+    }
+
+}
+
+struct ConnectionSelectionContent: View {
+    let router: HubConnectionRouter
+    let snapshot: HubConnectionDiagnostics?
+    var changing = false
+    let select: (HubConnectionMode) -> Void
+
+    var body: some View {
+        List {
+            Section {
+                LabeledContent("Current connection", value: snapshot?.activeRoute.map(connectionRouteTitle) ?? String(localized: "Disconnected"))
+                if let snapshot, snapshot.activeRoute != snapshot.selectedRoute {
+                    LabeledContent("Next connection", value: connectionRouteTitle(snapshot.selectedRoute))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                option(.automatic, title: String(localized: "Automatic"), icon: "arrow.triangle.branch")
+                option(.lanOnly, title: String(localized: "Home network"), icon: "house", available: snapshot?.hasLAN == true)
+                option(.publicOnly, title: String(localized: "Public relay"), icon: "cloud")
+                option(.privateOnly, title: "Tailscale", icon: "network", available: snapshot?.hasTailscale == true)
+            } footer: {
+                Text("Automatic uses your home network when available, public relay elsewhere, and Tailscale as a fallback. Manual selection stays on the chosen route.")
+            }
+            Section {
+                NavigationLink("Connection details") { ConnectionDiagnosticsView(router: router) }
+            }
+        }
+        .navigationTitle("Connection")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func option(_ mode: HubConnectionMode, title: String, icon: String, available: Bool = true) -> some View {
+        Button {
+            select(mode)
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                Spacer()
+                if !available { Text("Not configured").font(.caption).foregroundStyle(.secondary) }
+                if snapshot?.mode == mode { Image(systemName: "checkmark").foregroundStyle(.tint) }
+            }
+            .contentShape(Rectangle())
+        }
+        .foregroundStyle(.primary)
+        .disabled(changing || !available || snapshot == nil)
+        .accessibilityAddTraits(snapshot?.mode == mode ? .isSelected : [])
+        .accessibilityIdentifier("connection.mode.\(mode.rawValue)")
+    }
+}
+
 struct ConnectionDiagnosticsView: View {
     let router: HubConnectionRouter
     @State private var snapshot: HubConnectionDiagnostics?
@@ -92,9 +183,8 @@ struct ConnectionDiagnosticsView: View {
             if let snapshot {
                 Section {
                     LabeledContent("Current connection", value: activeTitle(snapshot))
-                    let nextIsPrivate = snapshot.isPrivate || snapshot.mode == .privateOnly
-                    if snapshot.activeEventIsPrivate != nextIsPrivate {
-                        LabeledContent("Next connection", value: nextIsPrivate ? "Tailscale" : String(localized: "Public relay"))
+                    if snapshot.activeRoute != snapshot.selectedRoute {
+                        LabeledContent("Next connection", value: connectionRouteTitle(snapshot.selectedRoute))
                     }
                     Text(reasonTitle(snapshot.reason)).font(.footnote).foregroundStyle(.secondary)
                     if let date = snapshot.reasonUpdatedAt {
@@ -102,6 +192,7 @@ struct ConnectionDiagnosticsView: View {
                             .font(.caption).foregroundStyle(.tertiary)
                     }
                 }
+                Section("Home network") { EndpointMeasurementRows(sample: snapshot.lanMeasurement) }
                 Section("Tailscale") { EndpointMeasurementRows(sample: snapshot.privateMeasurement) }
                 Section("Public relay") { EndpointMeasurementRows(sample: snapshot.publicMeasurement) }
             }
@@ -137,11 +228,14 @@ struct ConnectionDiagnosticsView: View {
     }
 
     private func activeTitle(_ snapshot: HubConnectionDiagnostics) -> String {
-        guard let active = snapshot.activeEventIsPrivate else { return String(localized: "Disconnected") }
-        return active ? "Tailscale" : String(localized: "Public relay")
+        snapshot.activeRoute.map(connectionRouteTitle) ?? String(localized: "Disconnected")
     }
     private func reasonTitle(_ reason: HubConnectionDiagnostics.Reason) -> String {
         switch reason {
+        case .lanVerified: String(localized: "Connected directly on your home network")
+        case .forcedLAN: String(localized: "Home network selected manually")
+        case .publicPreferred: String(localized: "Using public relay outside your home network")
+        case .tailscaleFallback: String(localized: "Public relay unavailable; using Tailscale")
         case .starting: String(localized: "Checking connection")
         case .privateVerified: String(localized: "Private endpoint verified")
         case .privateUnavailable: String(localized: "Last private routing probe did not succeed")
