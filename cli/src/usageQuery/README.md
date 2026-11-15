@@ -10,7 +10,11 @@ The Codex adapter reads quotas from one freshly owned app-server process, with a
 bounded deadline. It corroborates authenticated `account/read` responses before
 and after `account/rateLimits/read`, and verifies the selected local OAuth auth,
 CODEX_HOME and complete config snapshot before starting and before returning.
-The snapshot fingerprint includes account ID and token rotation. Email can
+The snapshot fingerprint includes account ID, token rotation and the OpenAI base
+URL override. Relative CODEX_HOME values cannot establish native proof because
+the Runner and spawned app-server have different working directories; those
+probes return unavailable before process startup. Generic API-key/template
+credential resolution is unchanged. Email can
 corroborate a current app-server response, but is never the account key: two
 workspaces/organizations with the same email still have distinct snapshots.
 OAuth ID-token email claims are decoded only to compare local account metadata;

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import type {
     UsageQueryAgent,
     UsageQueryAdapter,
@@ -488,6 +488,11 @@ export async function queryCodexNativeRateLimits(
     const expected = credentials.codexAccount
     if (!credentials.identityFingerprint || !expected) {
         throw new UsageQueryExecutionError('Codex quota unavailable: current OAuth account cannot be verified')
+    }
+    // The native child runs from homedir(), while a relative CODEX_HOME was
+    // read relative to the Runner cwd. Email cannot disambiguate those homes.
+    if (!credentials.codexHome || !isAbsolute(credentials.codexHome)) {
+        throw new UsageQueryExecutionError('Codex quota unavailable: CODEX_HOME must be absolute for account verification')
     }
     const resolveCredentials = dependencies.resolveCredentials ?? (() => resolveUsageCredentials('codex'))
     const assertSnapshot = async () => {

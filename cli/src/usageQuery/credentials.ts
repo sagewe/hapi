@@ -11,6 +11,7 @@ export type ResolvedUsageCredentials = {
     apiKeySource: UsageQueryCredentialStatus['source']
     /** Internal only: binds native probes and cache entries to an auth snapshot. */
     identityFingerprint?: string
+    codexHome?: string
     codexAccount?: { id: string; email?: string }
 }
 
@@ -338,7 +339,7 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
                 if (oauthIdentity) {
                     apiKey = oauthIdentity
                     identityFingerprint = createHash('sha256')
-                        .update(JSON.stringify({ codexHome, configText, auth })).digest('hex')
+                        .update(JSON.stringify({ codexHome, configText, auth, openAiBaseUrl: nonEmptyString(env.OPENAI_BASE_URL) })).digest('hex')
                     const accountId = firstObjectString(tokens, ['account_id'])
                     if (accountId) {
                         let email: string | null = null
@@ -364,7 +365,7 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
         apiKey,
         baseUrlSource,
         apiKeySource,
-        ...(identityFingerprint ? { identityFingerprint } : {}),
+        ...(identityFingerprint ? { identityFingerprint, codexHome } : {}),
         ...(codexAccount ? { codexAccount } : {})
     }
 }

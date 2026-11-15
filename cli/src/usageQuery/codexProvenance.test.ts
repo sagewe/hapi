@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveUsageCredentials, type ResolvedUsageCredentials } from './credentials'
 import { queryCodexNativeRateLimits } from './execute'
@@ -10,7 +10,7 @@ const account = (id: string) => ({ account: { type: 'chatgpt', id, email: 'same@
 const identity = (id: string, fingerprint = id): ResolvedUsageCredentials => ({
     baseUrl: 'https://chatgpt.com/backend-api', apiKey: id,
     apiKeySource: 'config', baseUrlSource: 'config',
-    identityFingerprint: fingerprint, codexAccount: { id, email: 'same@example.test' }
+    identityFingerprint: fingerprint, codexHome: '/isolated/codex-home', codexAccount: { id, email: 'same@example.test' }
 })
 function fakeClient(handler: (method: string) => Promise<unknown>) {
     return {
@@ -53,6 +53,11 @@ describe('Codex quota account provenance', () => {
         await writeFile(join(homeB, 'config.toml'), 'profile = "work"\n[profiles.work]\nmodel = "example"\n')
         expect((await resolveUsageCredentials('codex', { CODEX_HOME: homeB })).identityFingerprint)
             .not.toBe(profile.identityFingerprint)
+        const overridden = await resolveUsageCredentials('codex', { CODEX_HOME: homeA, OPENAI_BASE_URL: 'https://proxy.example.test' })
+        expect(overridden.identityFingerprint).not.toBe(profile.identityFingerprint)
+        const apiKeyMode = await resolveUsageCredentials('codex', { CODEX_HOME: homeA, OPENAI_API_KEY: 'api-key-fixture' })
+        expect(apiKeyMode.identityFingerprint).toBeUndefined()
+        expect(apiKeyMode.codexAccount).toBeUndefined()
         expect(JSON.stringify(profile)).not.toContain('token-three')
     })
 
@@ -125,6 +130,23 @@ describe('Codex quota account provenance', () => {
         await expect(queryCodexNativeRateLimits(1000, { ...identity('a'), codexAccount: undefined }, { client }))
             .rejects.toThrow('current OAuth account cannot be verified')
         expect(client.connect).not.toHaveBeenCalled()
+    })
+
+    it('refuses native proof for a relative home before starting a same-email account process', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-codex-relative-home-'))
+        await writeFile(join(root, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: {
+            account_id: 'account-a', access_token: 'token-fixture',
+            id_token: `header.${Buffer.from(JSON.stringify({ email: 'same@example.test' })).toString('base64url')}.signature`
+        } }))
+        const relativeHome = relative(process.cwd(), root)
+        const credentials = await resolveUsageCredentials('codex', { CODEX_HOME: relativeHome })
+        expect(credentials).toMatchObject({ codexHome: relativeHome, apiKey: 'account-a', codexAccount: { id: 'account-a' } })
+        const client = fakeClient(async (method) => method === 'account/read'
+            ? { account: { type: 'chatgpt', email: 'same@example.test' } } : limits)
+        await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+            .rejects.toThrow('CODEX_HOME must be absolute')
+        expect(client.connect).not.toHaveBeenCalled()
+        expect(client.request).not.toHaveBeenCalled()
     })
 
     it('stops issuing follow-up RPCs after a quota request times out', async () => {
