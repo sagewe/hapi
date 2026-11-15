@@ -316,10 +316,35 @@ The first message is required and verified in the transcript before success;
 machine-spawn HTTP 200 alone does not prove the task was delivered. In-session
 spawns add a Parent `[title](/sessions/<uuid>)` citation so parent renames do not
 change its identity.
-With `waitForReply` on `ping_peer` or `spawn_peer`, the peer's reply is posted
-back into the calling session when the peer's turn ends (Pi peers are not
-supported). The caller's CLI process does the polling, so if that process exits
-first, the reply is not posted back; it stays in the peer session.
+With optional MCP `waitForReply: true` on `ping_peer` or `spawn_peer`, the
+caller runtime watches the delivered task's `localId` and queues one result here.
+It waits for the first attributable foreground turn, not completion of the whole
+objective or Antigravity background work. Existing auto/queue/steer delivery and
+explicit `wake` rules are unchanged; the result itself never resumes or steers
+its caller. Claude's embedded server, Codex's stdio bridge and integrations that
+start the common embedded bridge expose the option. Personal agy can be observed
+as a peer, but its custom launcher does not expose a per-session HAPI MCP caller
+bridge; this feature does not add global agy configuration. Pi peers lack the
+required turn-end signal and return an explicit `inspect_peer` fallback.
+
+Only post-consumption assistant text before a provable turn boundary is eligible.
+Another independently consumed prompt, including a same-timestamp batch, makes
+attribution ambiguous: a diagnostic links the peer without copying mixed or later
+answers. A stale ready event alone does not prove the new task ran. An offline
+unconsumed peer remains queued until it resumes or the watch expires; no watcher
+issues a resume. Deleted/forbidden peers or callers end the watch; brief caller
+disconnects have bounded grace. Stopping the caller bridge aborts sleeps and HTTP
+immediately. Watches are process-local and are not restored after process exit.
+
+Limits: one poll per 10 seconds, at most 6 hours/2160 polls, 20 pages/4000 rows per
+scan at one epoch/snapshot head, 4 MiB HTTP responses, 32 KiB UTF-8 result text with
+a visible truncation marker, 128 concurrent watches and 512 recent dedup entries.
+Duplicate transports join the same watch. A deterministic `ping-peer-reply-…`
+localId makes repeated/lost-response submissions idempotent in the Hub. Results
+use a separate bounded delivery grace/retry budget; failures retain the original
+reply only in the peer history. End your turn after requesting a reply instead
+of starting another inspection loop. There is no shell CLI wait flag.
+
 On a remote runner host, configure the matching hub URL and token so shell
 commands reach the same hub (`hapi auth login` saves the token).
 

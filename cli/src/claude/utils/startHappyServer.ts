@@ -25,6 +25,7 @@ import { resolveSkill } from "@/modules/common/skills";
 import { SESSION_NAME_MAX_LENGTH, toSessionSummaryMetadata } from '@hapi/protocol'
 import { isPeerToolsDisabled } from "@/modules/common/peerTools";
 import {
+    normalizeSessionIdPrefix,
     INSPECT_PEER_TOOL_DESCRIPTION,
     LIST_PEERS_INCLUDE_INACTIVE_PARAM_DESCRIPTION,
     LIST_PEERS_TOOL_DESCRIPTION,
@@ -108,7 +109,8 @@ function createHapiMcpServer(
     enableChangeTitle: boolean,
     skillLookup: StartHappyServerOptions['skillLookup'],
     workingDirectory: string | undefined,
-    onChangeTitle?: StartHappyServerOptions['onChangeTitle']
+    onChangeTitle?: StartHappyServerOptions['onChangeTitle'],
+    peerReplySignal?: AbortSignal
 ): McpServer {
     const handler = async (title: string) => {
         logger.debug('[hapiMCP] Changing title to:', title);
@@ -187,9 +189,9 @@ function createHapiMcpServer(
         if (!waitForReply) return '';
         if (!task.localId) return '; the delivered message could not be identified, so check the reply with inspect_peer';
         if (!supportsPeerReply(task.flavor)) return `; ${task.flavor} peers do not report turn ends, so check the reply with inspect_peer`;
-        forwardPeerReply({ peerSessionId: task.sessionId, taskLocalId: task.localId, callerSessionId: client.sessionId })
-            .catch((error) => logger.debug('[hapiMCP] peer reply forwarding failed:', error));
-        return '; its reply will be posted here';
+        forwardPeerReply({ peerSessionId: task.sessionId, taskLocalId: task.localId, callerSessionId: client.sessionId, signal: peerReplySignal })
+            .catch((error) => logger.debug('[hapiMCP] peer reply forwarding failed:', error instanceof Error ? error.message : 'request failed'));
+        return '; reply forwarding requested while this session runtime remains running';
     };
 
     const pingPeerInputSchema: z.ZodTypeAny = z.object({
@@ -418,6 +420,9 @@ function createHapiMcpServer(
         }, async (args: { sessionIdPrefix: string; message: string; deliveryMode?: PeerDeliveryMode; wake?: boolean; waitForReply?: boolean }) => {
             logger.debug('[hapiMCP] ping_peer:', args.sessionIdPrefix);
             try {
+                if (args.waitForReply && normalizeSessionIdPrefix(args.sessionIdPrefix) && client.sessionId.startsWith(normalizeSessionIdPrefix(args.sessionIdPrefix))) {
+                    throw new Error('Cannot wait for a reply from this same session');
+                }
                 const result = await pingPeer({
                     sessionIdPrefix: args.sessionIdPrefix,
                     message: args.message,
@@ -674,6 +679,7 @@ function readMcpSessionId(req: IncomingMessage): string | undefined {
 export async function startHappyServer(client: ApiSessionClient, options: StartHappyServerOptions = {}) {
     const emitTitleSummary = options.emitTitleSummary ?? true;
     const enableChangeTitle = options.enableChangeTitle ?? true;
+    const peerReplyController = new AbortController();
     const transports = new Map<string, StreamableHTTPServerTransport>();
     const mcps = new Map<string, McpServer>();
 
@@ -684,7 +690,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
             enableChangeTitle,
             options.skillLookup,
             options.workingDirectory,
-            options.onChangeTitle
+            options.onChangeTitle,
+            peerReplyController.signal
         );
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
@@ -756,6 +763,7 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
         toolNames,
         stop: () => {
             logger.debug('[hapiMCP] Stopping server');
+            peerReplyController.abort();
             for (const mcp of mcps.values()) {
                 mcp.close();
             }

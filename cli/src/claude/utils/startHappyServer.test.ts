@@ -334,12 +334,53 @@ describe('startHappyServer skill_lookup', () => {
                 name: 'spawn_peer',
                 arguments: { directory: '/srv/project', message: 'Run the tests', waitForReply: true },
             }) as ToolResult
-            expect(result.content?.[0]?.text).toBe('Spawned child-id (Worker); its reply will be posted here')
-            expect(forward).toHaveBeenCalledWith({ peerSessionId: 'child-id', taskLocalId: 'ping-peer-1', callerSessionId: 'parent-id' })
+            expect(result.content?.[0]?.text).toBe('Spawned child-id (Worker); reply forwarding requested while this session runtime remains running')
+            expect(forward).toHaveBeenCalledWith({ peerSessionId: 'child-id', taskLocalId: 'ping-peer-1', callerSessionId: 'parent-id', signal: expect.any(AbortSignal) })
+            const signal = forward.mock.calls[0]![0].signal!
+            expect(signal.aborted).toBe(false)
+            stopServer?.()
+            stopServer = null
+            expect(signal.aborted).toBe(true)
         } finally {
             spawn.mockRestore()
             forward.mockRestore()
         }
+    })
+
+    it('passes waitForReply through ping_peer and refuses self waits before sending', async () => {
+        const ping = vi.spyOn(peerMessages, 'pingPeer').mockResolvedValue({
+            sessionId: 'peer-id', name: 'Worker', resumed: false, delivery: 'accepted', localId: 'ping-peer-task', flavor: 'agy'
+        })
+        const forward = vi.spyOn(peerMessages, 'forwardPeerReply').mockResolvedValue()
+        try {
+            const mcp = await connect(false)
+            const result = await mcp.callTool({ name: 'ping_peer', arguments: {
+                sessionIdPrefix: 'peer-id', message: 'Check the result', deliveryMode: 'queue', waitForReply: true
+            } }) as ToolResult
+            expect(result.isError).toBe(false)
+            expect(ping).toHaveBeenCalledWith(expect.objectContaining({ deliveryMode: 'queue', wake: false }))
+            expect(forward).toHaveBeenCalledWith(expect.objectContaining({ peerSessionId: 'peer-id', callerSessionId: 'parent-id', taskLocalId: 'ping-peer-task' }))
+            const self = await mcp.callTool({ name: 'ping_peer', arguments: {
+                sessionIdPrefix: 'parent-id', message: 'Self', waitForReply: true
+            } }) as ToolResult
+            expect(self.isError).toBe(true)
+            expect(ping).toHaveBeenCalledTimes(1)
+        } finally { ping.mockRestore(); forward.mockRestore() }
+    })
+
+    it('explains unsupported Pi reply watches without registering a forwarder', async () => {
+        const ping = vi.spyOn(peerMessages, 'pingPeer').mockResolvedValue({
+            sessionId: 'pi-id', name: 'Pi', resumed: false, delivery: 'accepted', localId: 'ping-peer-pi', flavor: 'pi'
+        })
+        const forward = vi.spyOn(peerMessages, 'forwardPeerReply').mockResolvedValue()
+        try {
+            const mcp = await connect(false)
+            const result = await mcp.callTool({ name: 'ping_peer', arguments: {
+                sessionIdPrefix: 'pi-id', message: 'Check', waitForReply: true
+            } }) as ToolResult
+            expect(result.content?.[0]?.text).toContain('pi peers do not report turn ends')
+            expect(forward).not.toHaveBeenCalled()
+        } finally { ping.mockRestore(); forward.mockRestore() }
     })
 
     it('forwards cross-machine spawn settings with the calling session identity and cwd', async () => {
