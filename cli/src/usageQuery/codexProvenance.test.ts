@@ -12,10 +12,13 @@ const identity = (id: string, fingerprint = id): ResolvedUsageCredentials => ({
     apiKeySource: 'config', baseUrlSource: 'config',
     identityFingerprint: fingerprint, codexHome: '/isolated/codex-home', codexAccount: { id, email: 'same@example.test' }
 })
-function fakeClient(handler: (method: string) => Promise<unknown>) {
+function fakeClient(handler: (method: string) => Promise<unknown>, effectiveConfig: unknown = { config: { cli_auth_credentials_store: 'file' } }) {
     return {
         connect: vi.fn(async () => {}), initialize: vi.fn(async () => ({})),
-        request: vi.fn(async <T = unknown>(method: string): Promise<T> => await handler(method) as T),
+        request: vi.fn(async <T = unknown>(method: string): Promise<T> => {
+            if (method === 'config/read') return (typeof effectiveConfig === 'function' ? effectiveConfig() : effectiveConfig) as T
+            return await handler(method) as T
+        }),
         disconnect: vi.fn(async () => {})
     }
 }
@@ -67,7 +70,7 @@ describe('Codex quota account provenance', () => {
         const result = await queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials })
         expect(result).toMatchObject({ fiveHour: { usedPercent: 37 }, planType: 'pro' })
         expect(client.request.mock.calls.map(([method]) => method))
-            .toEqual(['account/read', 'account/rateLimits/read', 'account/read'])
+            .toEqual(['config/read', 'account/read', 'account/rateLimits/read', 'config/read', 'account/read'])
         expect(client.disconnect).toHaveBeenCalledOnce()
     })
 
@@ -121,7 +124,7 @@ describe('Codex quota account provenance', () => {
             const client = fakeClient(async () => response)
             await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
                 .rejects.toThrow('identity could not be verified')
-            expect(client.request).toHaveBeenCalledTimes(1)
+            expect(client.request).toHaveBeenCalledTimes(2)
         }
     })
 
@@ -144,9 +147,80 @@ describe('Codex quota account provenance', () => {
         const client = fakeClient(async (method) => method === 'account/read'
             ? { account: { type: 'chatgpt', email: 'same@example.test' } } : limits)
         await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
-            .rejects.toThrow('CODEX_HOME must be absolute')
+            .rejects.toThrow('CODEX_HOME must be absolute and unaltered')
         expect(client.connect).not.toHaveBeenCalled()
         expect(client.request).not.toHaveBeenCalled()
+    })
+
+    it('rejects same-email keyring/auto accounts before starting from stale file credentials', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-codex-auth-store-'))
+        await writeFile(join(root, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: {
+            account_id: 'file-account-a', access_token: 'file-token-fixture',
+            id_token: `header.${Buffer.from(JSON.stringify({ email: 'same@example.test' })).toString('base64url')}.signature`
+        } }))
+        for (const mode of ['keyring', 'auto', 'ephemeral']) {
+            await writeFile(join(root, 'config.toml'), `cli_auth_credentials_store = "${mode}"\n`)
+            const credentials = await resolveUsageCredentials('codex', { CODEX_HOME: root })
+            expect(credentials.codexAuthStore).toBe('non-file')
+            const client = fakeClient(async () => ({ account: { type: 'chatgpt', email: 'same@example.test' } }),
+                { config: { cli_auth_credentials_store: mode } })
+            await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+                .rejects.toThrow('selected credential store is not proven file storage')
+            expect(client.connect).not.toHaveBeenCalled()
+            expect(client.request).not.toHaveBeenCalled()
+        }
+    })
+
+    it('requires effective file mode even when a local root flag says file', async () => {
+        const credentials = { ...identity('file-account-a'), codexAuthStore: 'file' as const }
+        for (const effectiveConfig of [{ config: { cli_auth_credentials_store: 'auto' } },
+            { config: { cli_auth_credentials_store: 'keyring' } }, { config: {} }, {}]) {
+            const client = fakeClient(async () => ({ account: { type: 'chatgpt', email: 'same@example.test' } }), effectiveConfig)
+            await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+                .rejects.toThrow('effective credential store is not proven file storage')
+            expect(client.request.mock.calls.map(([method]) => method)).toEqual(['config/read'])
+        }
+    })
+
+    it('permits omitted/default local mode only when effective config explicitly proves file', async () => {
+        const credentials = { ...identity('file-account-a'), codexAuthStore: 'unknown' as const }
+        const client = fakeClient(async (method) => method === 'account/read'
+            ? { account: { type: 'chatgpt', email: 'same@example.test' } } : limits)
+        expect((await queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+            .fiveHour?.usedPercent).toBe(37)
+    })
+
+    it('rejects an effective store change before publishing live limits', async () => {
+        const credentials = identity('file-account-a')
+        let reads = 0
+        const client = fakeClient(async (method) => method === 'account/read' ? account('file-account-a') : limits,
+            () => ({ config: { cli_auth_credentials_store: ++reads === 1 ? 'file' : 'auto' } }))
+        await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+            .rejects.toThrow('effective credential store is not proven file storage')
+    })
+
+    it('rejects whitespace-altered homes instead of trusting the trimmed file path', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-codex-whitespace-home-'))
+        await writeFile(join(root, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: {
+            account_id: 'file-account-a', access_token: 'token-fixture'
+        } }))
+        for (const rawHome of [` ${root}`, `${root} `]) {
+            const credentials = await resolveUsageCredentials('codex', { CODEX_HOME: rawHome })
+            expect(credentials.codexHome).toBe(rawHome)
+            expect(credentials.apiKey).toBe('file-account-a')
+            const client = fakeClient(async () => limits)
+            await expect(queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials }))
+                .rejects.toThrow('CODEX_HOME must be absolute and unaltered')
+            expect(client.connect).not.toHaveBeenCalled()
+        }
+    })
+
+    it('checks cached identity with config/account RPCs and no quota polling', async () => {
+        const credentials = identity('account-a')
+        const client = fakeClient(async () => account('account-a'))
+        await queryCodexNativeRateLimits(1000, credentials, { client, resolveCredentials: async () => credentials, identityOnly: true })
+        expect(client.request.mock.calls.map(([method]) => method))
+            .toEqual(['config/read', 'account/read', 'config/read', 'account/read'])
     })
 
     it('stops issuing follow-up RPCs after a quota request times out', async () => {
@@ -158,7 +232,7 @@ describe('Codex quota account provenance', () => {
             .rejects.toThrow('timed out')
         release(limits)
         await new Promise((resolve) => setTimeout(resolve, 0))
-        expect(client.request.mock.calls.map(([method]) => method)).toEqual(['account/read', 'account/rateLimits/read'])
+        expect(client.request.mock.calls.map(([method]) => method)).toEqual(['config/read', 'account/read', 'account/rateLimits/read'])
         expect(client.disconnect).toHaveBeenCalledOnce()
     })
 

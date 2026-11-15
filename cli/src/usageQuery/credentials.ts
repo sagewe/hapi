@@ -12,6 +12,7 @@ export type ResolvedUsageCredentials = {
     /** Internal only: binds native probes and cache entries to an auth snapshot. */
     identityFingerprint?: string
     codexHome?: string
+    codexAuthStore?: 'file' | 'non-file' | 'unknown'
     codexAccount?: { id: string; email?: string }
 }
 
@@ -293,6 +294,25 @@ async function resolveClaudeCredentials(env: NodeJS.ProcessEnv): Promise<Resolve
     }
 }
 
+/** A local hint can reject a known secure/ephemeral store early, but only
+ * app-server config/read can prove the effective mode after configuration layers.
+ */
+function codexAuthStoreHint(configText: string): 'file' | 'non-file' | 'unknown' {
+    let inRoot = true
+    let hint: 'file' | 'non-file' | 'unknown' = 'unknown'
+    for (const raw of configText.split(/\r?\n/)) {
+        const line = stripTomlComment(raw).trim()
+        if (line.startsWith('[')) inRoot = false
+        if (!inRoot) continue
+        const match = /^(?:cli_auth_credentials_store|"cli_auth_credentials_store"|'cli_auth_credentials_store')\s*=\s*(.+)$/.exec(line)
+        if (!match) continue
+        const mode = unquoteTomlString(match[1])
+        if (mode === 'keyring' || mode === 'auto' || mode === 'ephemeral') return 'non-file'
+        hint = mode === 'file' ? 'file' : 'unknown'
+    }
+    return hint
+}
+
 async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<ResolvedUsageCredentials> {
     const codexHome = nonEmptyString(env.CODEX_HOME) ?? join(homedir(), '.codex')
     let config: CodexConfigSnapshot = { activeProvider: null, providers: new Map() }
@@ -339,7 +359,7 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
                 if (oauthIdentity) {
                     apiKey = oauthIdentity
                     identityFingerprint = createHash('sha256')
-                        .update(JSON.stringify({ codexHome, configText, auth, openAiBaseUrl: nonEmptyString(env.OPENAI_BASE_URL) })).digest('hex')
+                        .update(JSON.stringify({ codexHome, rawCodexHome: env.CODEX_HOME, configText, auth, openAiBaseUrl: nonEmptyString(env.OPENAI_BASE_URL) })).digest('hex')
                     const accountId = firstObjectString(tokens, ['account_id'])
                     if (accountId) {
                         let email: string | null = null
@@ -365,7 +385,11 @@ async function resolveCodexCredentials(env: NodeJS.ProcessEnv): Promise<Resolved
         apiKey,
         baseUrlSource,
         apiKeySource,
-        ...(identityFingerprint ? { identityFingerprint, codexHome } : {}),
+        ...(identityFingerprint ? {
+            identityFingerprint,
+            codexHome: env.CODEX_HOME ?? codexHome,
+            codexAuthStore: codexAuthStoreHint(configText)
+        } : {}),
         ...(codexAccount ? { codexAccount } : {})
     }
 }

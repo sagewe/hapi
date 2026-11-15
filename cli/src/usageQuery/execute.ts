@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute } from 'node:path'
 import type {
     UsageQueryAgent,
     UsageQueryAdapter,
@@ -483,6 +483,7 @@ export async function queryCodexNativeRateLimits(
     dependencies: {
         client?: CodexQuotaClient
         resolveCredentials?: () => Promise<ResolvedUsageCredentials>
+        identityOnly?: boolean
     } = {}
 ): Promise<{ fiveHour: UsageQueryWindow | null; sevenDay: UsageQueryWindow | null; planType?: string | null }> {
     const expected = credentials.codexAccount
@@ -491,8 +492,12 @@ export async function queryCodexNativeRateLimits(
     }
     // The native child runs from homedir(), while a relative CODEX_HOME was
     // read relative to the Runner cwd. Email cannot disambiguate those homes.
-    if (!credentials.codexHome || !isAbsolute(credentials.codexHome)) {
-        throw new UsageQueryExecutionError('Codex quota unavailable: CODEX_HOME must be absolute for account verification')
+    if (!credentials.codexHome || !isAbsolute(credentials.codexHome)
+        || credentials.codexHome !== credentials.codexHome.trim()) {
+        throw new UsageQueryExecutionError('Codex quota unavailable: CODEX_HOME must be absolute and unaltered for account verification')
+    }
+    if (credentials.codexAuthStore === 'non-file') {
+        throw new UsageQueryExecutionError('Codex quota unavailable: selected credential store is not proven file storage')
     }
     const resolveCredentials = dependencies.resolveCredentials ?? (() => resolveUsageCredentials('codex'))
     const assertSnapshot = async () => {
@@ -504,6 +509,14 @@ export async function queryCodexNativeRateLimits(
     const client = dependencies.client ?? new CodexAppServerClient({ cwd: homedir() })
     let timer: ReturnType<typeof setTimeout> | undefined
     let expired = false
+    const assertFileStore = (response: unknown) => {
+        const envelope = response && typeof response === 'object' ? response as Record<string, unknown> : {}
+        const config = envelope.config && typeof envelope.config === 'object'
+            ? envelope.config as Record<string, unknown> : {}
+        if (config.cli_auth_credentials_store !== 'file') {
+            throw new UsageQueryExecutionError('Codex quota unavailable: effective credential store is not proven file storage')
+        }
+    }
     const assertAccount = (response: unknown) => {
         const envelope = response && typeof response === 'object' ? response as Record<string, unknown> : {}
         const account = envelope.account && typeof envelope.account === 'object'
@@ -530,13 +543,19 @@ export async function queryCodexNativeRateLimits(
                     capabilities: { experimentalApi: true }
                 })
                 if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                assertFileStore(await client.request('config/read', { includeLayers: false }))
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
                 assertAccount(await client.request('account/read', { refreshToken: false }))
                 if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
-                const response = await client.request('account/rateLimits/read', {})
+                const response = dependencies.identityOnly
+                    ? null : await client.request('account/rateLimits/read', {})
+                if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                assertFileStore(await client.request('config/read', { includeLayers: false }))
                 if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
                 assertAccount(await client.request('account/read', { refreshToken: false }))
                 await assertSnapshot()
                 if (expired) throw new UsageQueryExecutionError('Codex quota probe timed out')
+                if (dependencies.identityOnly) return emptyUsageWindows()
                 const normalized = normalizeCodexRateLimits(response)
                 if (!normalized.fiveHour && !normalized.sevenDay) {
                     throw new UsageQueryExecutionError('Codex quota unavailable: live response contained no quota windows')

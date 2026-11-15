@@ -6,6 +6,7 @@ import {
     CODEX_SUBSCRIPTION_USAGE_QUERY_TEMPLATE,
     DEFAULT_USAGE_QUERY_TEMPLATE,
     USAGE_QUERY_CACHE_TTL_MS,
+    USAGE_QUERY_TIMEOUT_MS,
     USAGE_QUERY_RETRY_COOLDOWN_MS,
     UsageQueryAgentSettingsSchema,
     UsageQuerySettingsSchema,
@@ -19,13 +20,15 @@ import {
 } from '@hapi/protocol/usageQuery'
 import { z } from 'zod'
 import { resolveUsageCredentials, type ResolvedUsageCredentials } from './credentials'
-import { executeUsageQueryTemplate, type UsageQueryFetch, UsageQueryExecutionError } from './execute'
+import { executeUsageQueryTemplate, queryCodexNativeRateLimits, type UsageQueryFetch, UsageQueryExecutionError } from './execute'
 
 type UsageQueryServiceOptions = {
     settingsFile: string
     now?: () => number
     fetchImpl?: UsageQueryFetch
     resolveCredentials?: (agent: UsageQueryAgent) => Promise<ResolvedUsageCredentials>
+    executeQuery?: typeof executeUsageQueryTemplate
+    verifyCodexIdentity?: (credentials: ResolvedUsageCredentials) => Promise<void>
 }
 
 type CachedResult = {
@@ -40,6 +43,7 @@ type CachedResult = {
 type InFlightRequest = {
     fingerprint: string
     generation: symbol
+    mode: 'query' | 'proof'
     request: Promise<UsageQueryResult>
 }
 
@@ -152,6 +156,8 @@ export class UsageQueryService {
     private readonly fetchImpl?: UsageQueryFetch
     private readonly resolveCredentials: (agent: UsageQueryAgent) => Promise<ResolvedUsageCredentials>
     private readonly settingsFile: string
+    private readonly executeQuery: typeof executeUsageQueryTemplate
+    private readonly verifyCodexIdentity: (credentials: ResolvedUsageCredentials) => Promise<void>
     private readonly cache = new Map<UsageQueryAgent, CachedResult>()
     private readonly inFlight = new Map<UsageQueryAgent, InFlightRequest>()
     private settingsWriteQueue: Promise<void> = Promise.resolve()
@@ -159,6 +165,10 @@ export class UsageQueryService {
     constructor(options: UsageQueryServiceOptions) {
         this.settingsFile = options.settingsFile
         this.now = options.now ?? Date.now
+        this.executeQuery = options.executeQuery ?? executeUsageQueryTemplate
+        this.verifyCodexIdentity = options.verifyCodexIdentity ?? (async (credentials) => {
+            await queryCodexNativeRateLimits(USAGE_QUERY_TIMEOUT_MS, credentials, { identityOnly: true })
+        })
         this.fetchImpl = options.fetchImpl
         this.resolveCredentials = options.resolveCredentials ?? ((agent) => resolveUsageCredentials(agent))
     }
@@ -213,7 +223,7 @@ export class UsageQueryService {
         let credentials: ResolvedUsageCredentials | undefined
         try {
             credentials = await this.resolveCredentials(agent)
-            const result = await executeUsageQueryTemplate(agent, parsedTemplate, credentials, {
+            const result = await this.executeQuery(agent, parsedTemplate, credentials, {
                 fetchImpl: this.fetchImpl,
                 now: this.now()
             })
@@ -231,7 +241,6 @@ export class UsageQueryService {
         const settings = await this.readSettings()
         const configured = settings[agent]
         const now = this.now()
-        const cached = this.cache.get(agent)
         if (!configured.enabled) {
             return emptyResult(agent, configured.templateId, now, 'Usage query is disabled')
         }
@@ -245,25 +254,26 @@ export class UsageQueryService {
         // before the in-memory cache entry is cleared (for example, when a
         // settings write races an already-running query). Credential changes
         // use the same rule, so never present another account's stale data.
+        const cached = this.cache.get(agent)
         const fingerprint = queryFingerprint(configured.template, credentials)
         const usableCached = cached !== undefined
             && cached.templateId === configured.templateId
             && cached.queryFingerprint === fingerprint
             ? cached
             : undefined
-        if (!force && usableCached) {
-            if (usableCached.lastError) {
-                if (now - usableCached.lastAttemptAt < USAGE_QUERY_RETRY_COOLDOWN_MS) return usableCached.result
-            } else if (now - usableCached.cachedAt < USAGE_QUERY_CACHE_TTL_MS) {
-                return usableCached.result
-            }
-        }
+        const cacheFresh = !force && usableCached && (usableCached.lastError
+            ? now - usableCached.lastAttemptAt < USAGE_QUERY_RETRY_COOLDOWN_MS
+            : now - usableCached.cachedAt < USAGE_QUERY_CACHE_TTL_MS)
+        if (cacheFresh && configured.template.adapter !== 'codex-native') return usableCached.result
+        // A managed store override can change without touching auth.json/config.
+        // Revalidate native ownership before cached presentation, without another
+        // quota read. It shares the same in-flight generation as full queries.
         const existing = this.inFlight.get(agent)
-        if (existing?.fingerprint === fingerprint) return await existing.request
+        if (existing?.fingerprint === fingerprint && (!force || existing.mode === 'query')) return await existing.request
 
         const generation = Symbol('quota-query')
-        const request = this.runQuery(agent, configured, credentials, usableCached, now, fingerprint, generation)
-        this.inFlight.set(agent, { fingerprint, generation, request })
+        const request = this.runQuery(agent, configured, credentials, usableCached, now, fingerprint, generation, Boolean(cacheFresh))
+        this.inFlight.set(agent, { fingerprint, generation, mode: cacheFresh ? 'proof' : 'query', request })
         try {
             return await request
         } finally {
@@ -278,13 +288,20 @@ export class UsageQueryService {
         cached: CachedResult | undefined,
         startedAt: number,
         fingerprint: string,
-        generation: symbol
+        generation: symbol,
+        cachedOnly: boolean
     ): Promise<UsageQueryResult> {
         try {
-            const result = await executeUsageQueryTemplate(agent, configured.template, credentials, {
-                fetchImpl: this.fetchImpl,
-                now: startedAt
-            })
+            let result: UsageQueryResult
+            if (cachedOnly && cached) {
+                await this.verifyCodexIdentity(credentials)
+                result = cached.result
+            } else {
+                result = await this.executeQuery(agent, configured.template, credentials, {
+                    fetchImpl: this.fetchImpl,
+                    now: startedAt
+                })
+            }
             if (!await this.isCurrentQuery(agent, fingerprint, generation)) {
                 return emptyResult(agent, configured.templateId, startedAt, 'Usage quota unavailable: account or settings changed during query')
             }
@@ -293,15 +310,15 @@ export class UsageQueryService {
                     templateId: configured.templateId,
                     queryFingerprint: fingerprint,
                     result,
-                    cachedAt: startedAt,
-                    lastAttemptAt: startedAt,
-                    lastError: null
+                    cachedAt: cachedOnly && cached ? cached.cachedAt : startedAt,
+                    lastAttemptAt: cachedOnly && cached ? cached.lastAttemptAt : startedAt,
+                    lastError: cachedOnly && cached ? cached.lastError : null
                 })
             }
             return result
         } catch (error) {
             const message = sanitizeError(error, credentials)
-            const result = emptyResult(agent, configured.templateId, startedAt, message, cached?.result)
+            const result = emptyResult(agent, configured.templateId, startedAt, message, configured.template.adapter === 'codex-native' ? undefined : cached?.result)
             if (!await this.isCurrentQuery(agent, fingerprint, generation)) {
                 return emptyResult(agent, configured.templateId, startedAt, 'Usage quota unavailable: account or settings changed during query')
             }

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     DEFAULT_USAGE_QUERY_TEMPLATES,
+    CODEX_SUBSCRIPTION_USAGE_QUERY_TEMPLATE,
     type UsageQueryTemplate
 } from '@hapi/protocol/usageQuery'
 import type { ResolvedUsageCredentials } from './credentials'
@@ -345,6 +346,60 @@ describe('UsageQueryService', () => {
         expect((await newA).fiveHour?.usedPercent).toBe(50)
         expect((await service.query('codex')).fiveHour?.usedPercent).toBe(50)
         expect(releases).toHaveLength(3)
+    })
+
+    it('revalidates cached native ownership without polling quotas or renewing the value age', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-usage-service-'))
+        let now = 100_000
+        let effectiveFile = true
+        const executeQuery = vi.fn(async () => ({
+            agent: 'codex' as const, templateId: 'codex-subscription', status: 'success' as const,
+            fiveHour: { usedPercent: 25, resetsAt: null }, sevenDay: null, queriedAt: now, stale: false
+        }))
+        const verifyCodexIdentity = vi.fn(async () => {
+            if (!effectiveFile) throw new Error('Effective credential store is not file')
+        })
+        const service = new UsageQueryService({ settingsFile: join(root, 'usage-query.json'),
+            now: () => now, resolveCredentials: async () => credentials, executeQuery, verifyCodexIdentity })
+        const first = await service.query('codex')
+        now += 240_000
+        expect(await service.query('codex')).toEqual(first)
+        expect(executeQuery).toHaveBeenCalledTimes(1)
+        expect(verifyCodexIdentity).toHaveBeenCalledTimes(1)
+        effectiveFile = false
+        expect(await service.query('codex')).toMatchObject({ status: 'error', fiveHour: null, sevenDay: null, stale: false })
+        expect(executeQuery).toHaveBeenCalledTimes(1)
+        // A failed native refresh also cannot inherit cached windows without proof.
+        executeQuery.mockRejectedValueOnce(new Error('Live probe failed'))
+        expect(await service.query('codex', true)).toMatchObject({ status: 'error', fiveHour: null, stale: false })
+    })
+
+    it('joins cached identity proofs but does not let a force refresh join the weaker proof', async () => {
+        root = await mkdtemp(join(tmpdir(), 'hapi-usage-service-'))
+        let polls = 0
+        let proofCalls = 0
+        let release!: () => void
+        const proof = new Promise<void>((resolve) => { release = resolve })
+        const executeQuery = vi.fn(async () => ({
+            agent: 'codex' as const, templateId: CODEX_SUBSCRIPTION_USAGE_QUERY_TEMPLATE.id,
+            status: 'success' as const, fiveHour: { usedPercent: ++polls === 1 ? 25 : 50, resetsAt: null },
+            sevenDay: null, queriedAt: polls, stale: false
+        }))
+        const verifyCodexIdentity = vi.fn(async () => { if (++proofCalls === 1) await proof })
+        const service = new UsageQueryService({ settingsFile: join(root, 'usage-query.json'),
+            resolveCredentials: async () => credentials, executeQuery, verifyCodexIdentity })
+        await service.query('codex')
+        const one = service.query('codex')
+        const two = service.query('codex')
+        await vi.waitFor(() => expect(verifyCodexIdentity).toHaveBeenCalledTimes(1))
+        expect((await service.query('codex', true)).fiveHour?.usedPercent).toBe(50)
+        expect(executeQuery).toHaveBeenCalledTimes(2)
+        release()
+        for (const result of await Promise.all([one, two])) {
+            expect(result).toMatchObject({ status: 'error', fiveHour: null, stale: false })
+        }
+        expect((await service.query('codex')).fiveHour?.usedPercent).toBe(50)
+        expect(executeQuery).toHaveBeenCalledTimes(2)
     })
 
     it('redacts credentials from provider error messages', async () => {
