@@ -68,6 +68,37 @@ describe('agy elicitation answer semantics', () => {
         }
     });
 
+    it('declines partial multi-question submissions when any fixed answer is unknown, missing, or blank', async () => {
+        const secondAnswers: Array<string[] | undefined> = [['stale custom text'], undefined, ['  ']];
+        for (const second of secondAnswers) {
+            const { adapter, handle, state } = setup();
+            const result = handle('partial', { requestedSchema: { type: 'object', required: ['q1', 'q2'], properties: {
+                q1: { type: 'string', title: 'First', oneOf: [{ const: 'one', title: 'One' }] },
+                q2: { type: 'string', title: 'Second', oneOf: [{ const: 'two', title: 'Two' }] }
+            } } });
+            await adapter.handlePermissionResponse({ id: 'partial', approved: true, answers: {
+                '0': ['One'], ...(second ? { '1': second } : {})
+            } });
+            expect(await result).toEqual({ action: 'decline' });
+            expect(state().requests).toEqual({});
+            expect(state().completedRequests?.partial).toMatchObject({ status: 'denied', decision: 'denied' });
+            expect(state().completedRequests?.partial?.answers).toBeUndefined();
+        }
+    });
+
+    it('accepts a mixed fixed/text form only when every emitted question has a usable answer', async () => {
+        const { adapter, handle, state } = setup();
+        const result = handle('mixed', { requestedSchema: { type: 'object', required: ['q1', 'q2_other'], properties: {
+            q1: { type: 'string', title: 'First', oneOf: [{ const: 'one', title: 'One' }] },
+            q2_other: { type: 'string', title: 'Explain?' }
+        } } });
+        await adapter.handlePermissionResponse({ id: 'mixed', approved: true, answers: {
+            '0': ['One'], '1': ['  useful explanation  ']
+        } });
+        expect(await result).toEqual({ action: 'accept', content: { q1: 'one', q2_other: 'useful explanation' } });
+        expect(state().completedRequests?.mixed?.status).toBe('approved');
+    });
+
     it('accepts a text-only question through qN_other and never inserts typed text into a fixed choice', async () => {
         const { adapter, handle, state } = setup();
         const result = handle('text', { sessionId: 'native', requestedSchema: { type: 'object', properties: {

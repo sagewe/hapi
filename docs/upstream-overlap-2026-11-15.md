@@ -71,3 +71,8 @@ Web, iOS and Mac Catalyst now parse `allowFreeText`, hide forbidden custom-answe
 The existing Stop admission gate and explicit reopening on the next foreground prompt stay in place. Request map keys remain unchanged; when the native form supplies a toolCallId, the request and completed record now retain that correlation metadata.
 
 Verification for this follow-up: 34 adapter/driver tests, 646 Web question/tool-card/reducer/fixture tests, all 82 Swift chat golden cases plus parser/fixture decoding checks, 411 Android protocol tests, and 17 isolated iOS Simulator draft/card tests passed. The simulator suite includes an actual editable-field check for fixed-choice versus text-only forms, and existing recycling/anchor/theme tests. Tests used private HAPI_HOME/TMPDIR and sanitized environments. No device, production account, deployment, push or service restart was used.
+
+
+### Follow-up review correction: partial multi-question answers
+
+The form adapter now validates every emitted question after mapping labels and allowed text into native fields. A usable first answer cannot conceal an unknown, missing or blank second answer: the whole submission declines and is recorded as denied without answer metadata. Fully answered mixed fixed-choice/text-only forms still accept. This matches the clients' existing all-questions-answered contract rather than accepting a nonempty partial content object. The new regression reproduced the previous partial-accept behavior before the correction. Afterward, all 36 adapter/driver tests and the CLI typecheck passed.

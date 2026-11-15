@@ -238,9 +238,14 @@ export class AgyElicitationAdapter {
                 }
             });
 
-            // A stale or forged client can submit blank/unsupported values.
-            // Never acknowledge them as an answer that agy cannot consume.
-            if (Object.keys(content).length === 0) {
+            // Match the clients' all-questions-answered contract after native
+            // validation. A valid answer to one question must not conceal an
+            // unsupported, missing, or blank answer to another question.
+            const allQuestionsAnswered = pending.questions.every((q) =>
+                (q.choiceKey !== null && Object.hasOwn(content, q.choiceKey))
+                || (q.otherKey !== null && Object.hasOwn(content, q.otherKey))
+            );
+            if (!allQuestionsAnswered) {
                 accepted = false;
                 decision = 'denied';
                 pending.resolve({ action: 'decline' });
