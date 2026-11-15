@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// A list-edge gesture for reopening the last chat after navigating back.
-/// Attaching to the navigation view leaves row swipe actions and vertical
-/// scrolling alone; it never creates a second ChatView behind the list.
+/// Swipe left over list whitespace or the title to reopen the last chat.
+/// Only a horizontal, single-finger drag is eligible; vertical scrolling stays
+/// with the list, and no second ChatView is kept alive behind it.
 struct SessionReturnGesture: UIViewControllerRepresentable {
     var isEnabled: Bool
     var onReturn: () -> Void
@@ -25,9 +25,9 @@ struct SessionReturnGesture: UIViewControllerRepresentable {
         var isEnabled = false {
             didSet { recognizer.isEnabled = isEnabled }
         }
-        lazy var recognizer: UIScreenEdgePanGestureRecognizer = {
-            let gesture = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handlePan))
-            gesture.edges = .left
+        lazy var recognizer: UIPanGestureRecognizer = {
+            let gesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
+            gesture.maximumNumberOfTouches = 1
             gesture.delegate = self
             gesture.name = "home.return-to-session"
             gesture.isEnabled = isEnabled
@@ -58,20 +58,40 @@ struct SessionReturnGesture: UIViewControllerRepresentable {
             surface.addGestureRecognizer(recognizer)
         }
 
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            Self.allowsStart(in: touch.view)
+        }
+
+        /// A row owns its swipe actions, and controls own their editing/tracking.
+        /// The navigation pan is only for the surrounding whitespace and title.
+        static func allowsStart(in view: UIView?) -> Bool {
+            guard let view else { return false }
+            var ancestor: UIView? = view
+            while let current = ancestor {
+                if current is UITableViewCell || current is UICollectionViewCell
+                    || current is UIControl || current is UITextView {
+                    return false
+                }
+                ancestor = current.superview
+            }
+            return true
+        }
+
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
             guard isEnabled, navigationController?.viewControllers.count == 1,
                   navigationController?.presentedViewController == nil else { return false }
-            let velocity = recognizer.velocity(in: recognizer.view)
-            return velocity.x > abs(velocity.y)
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: recognizer.view)
+            return -velocity.x > abs(velocity.y)
         }
 
-        @objc private func handlePan(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
             guard gesture.state == .ended else { return }
             complete(translation: gesture.translation(in: gesture.view))
         }
 
         func complete(translation: CGPoint) {
-            guard isEnabled, translation.x >= 60, translation.x > abs(translation.y) else { return }
+            guard isEnabled, translation.x <= -60, -translation.x > abs(translation.y) else { return }
             onReturn()
         }
     }

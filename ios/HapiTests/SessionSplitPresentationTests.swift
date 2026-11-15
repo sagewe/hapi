@@ -16,6 +16,11 @@ import XCTest
 final class SessionSplitPresentationTests: XCTestCase {
     private enum Page: Hashable { case files }
 
+    private final class PanVelocityProbe: UIPanGestureRecognizer {
+        var motion = CGPoint.zero
+        override func velocity(in view: UIView?) -> CGPoint { motion }
+    }
+
     @Observable fileprivate final class Probe {
         var instances: [String: UUID] = [:]
         /// The detail column's size class; ChatView keys folded-Duo chrome on it.
@@ -193,6 +198,31 @@ final class SessionSplitPresentationTests: XCTestCase {
         }
     }
 
+    func testRecentChatPanLeavesRowsAndControlsTheirOwnGestures() {
+        let background = UIView()
+        let title = UILabel()
+        background.addSubview(title)
+        XCTAssertTrue(SessionReturnGesture.Controller.allowsStart(in: background))
+        XCTAssertTrue(SessionReturnGesture.Controller.allowsStart(in: title))
+        XCTAssertFalse(SessionReturnGesture.Controller.allowsStart(in: nil))
+
+        let tableRow = UITableViewCell(style: .default, reuseIdentifier: nil)
+        let tableContent = UILabel()
+        tableRow.contentView.addSubview(tableContent)
+        XCTAssertFalse(SessionReturnGesture.Controller.allowsStart(in: tableContent))
+
+        let collectionRow = UICollectionViewCell(frame: .zero)
+        let collectionContent = UIView()
+        collectionRow.contentView.addSubview(collectionContent)
+        XCTAssertFalse(SessionReturnGesture.Controller.allowsStart(in: collectionContent))
+
+        for control in [UIButton(type: .system), UITextField(), UITextView()] {
+            let nestedContent = UIView()
+            control.addSubview(nestedContent)
+            XCTAssertFalse(SessionReturnGesture.Controller.allowsStart(in: nestedContent))
+        }
+    }
+
     func testPhoneListEdgeReturnsToLastChatAndForgetsRemovedChat() async throws {
         guard UIDevice.current.userInterfaceIdiom == .phone, !FoldableDevice.shared.hasHinge else {
             throw XCTSkip("This path is for the phone navigation stack")
@@ -218,15 +248,24 @@ final class SessionSplitPresentationTests: XCTestCase {
         try await settle { hub.openChatSessionId == "a" }
         try nativeBack(in: host)
         try await settle { hub.openChatSessionId == nil && edge.isEnabled && edge.recognizer.view != nil }
-        XCTAssertEqual(edge.recognizer.edges, .left)
+        XCTAssertFalse(edge.recognizer is UIScreenEdgePanGestureRecognizer,
+                       "Returning to the recent chat must not require an edge start")
+        XCTAssertEqual(edge.recognizer.maximumNumberOfTouches, 1)
+        let pan = PanVelocityProbe(target: nil, action: nil)
+        pan.motion = CGPoint(x: -200, y: 10)
+        XCTAssertTrue(edge.gestureRecognizerShouldBegin(pan))
+        pan.motion = CGPoint(x: 200, y: 10)
+        XCTAssertFalse(edge.gestureRecognizerShouldBegin(pan))
+        pan.motion = CGPoint(x: -80, y: 200)
+        XCTAssertFalse(edge.gestureRecognizerShouldBegin(pan))
         XCTAssertTrue(edge.recognizer.view === edge.navigationController?.view)
         XCTAssertNil(findController(TranscriptCollectionController<TranscriptRow>.self, in: host),
                      "Returning to the list must release the chat surface")
-        edge.complete(translation: CGPoint(x: 20, y: 0))
-        edge.complete(translation: CGPoint(x: 80, y: 150))
-        edge.complete(translation: CGPoint(x: -100, y: 0))
+        edge.complete(translation: CGPoint(x: -20, y: 0))
+        edge.complete(translation: CGPoint(x: -80, y: 150))
+        edge.complete(translation: CGPoint(x: 100, y: 0))
         XCTAssertNil(hub.openChatSessionId, "Short, vertical and reverse drags must not navigate")
-        edge.complete(translation: CGPoint(x: 120, y: 8))
+        edge.complete(translation: CGPoint(x: -120, y: 8))
         try await settle { hub.openChatSessionId == "a" }
         XCTAssertFalse(edge.isEnabled, "The list gesture must not run inside a chat")
 
@@ -237,13 +276,13 @@ final class SessionSplitPresentationTests: XCTestCase {
         try await settle { hub.openChatSessionId == "b" }
         try nativeBack(in: host)
         try await settle { hub.openChatSessionId == nil && edge.isEnabled }
-        edge.complete(translation: CGPoint(x: 120, y: 0))
+        edge.complete(translation: CGPoint(x: -60, y: 0))
         try await settle { hub.openChatSessionId == "b" }
         try nativeBack(in: host)
         try await settle { hub.openChatSessionId == nil && edge.isEnabled }
         hub.sessionStore.applySessionEvent(.sessionRemoved(namespace: nil, sessionId: "b"))
         try await settle { !edge.isEnabled }
-        edge.complete(translation: CGPoint(x: 120, y: 0))
+        edge.complete(translation: CGPoint(x: -120, y: 0))
         XCTAssertNil(hub.openChatSessionId)
     }
 
