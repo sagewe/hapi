@@ -29,6 +29,8 @@ export type PendingRequestKind = 'permission' | 'input'
 const INPUT_REQUEST_TOOLS = new Set([
     'AskUserQuestion',
     'ask_user_question',
+    'CursorAskQuestion',
+    'cursor_ask_question',
     'ask_question',
     'Run ask_question',
     'ExitPlanMode',

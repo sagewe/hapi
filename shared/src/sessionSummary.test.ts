@@ -60,6 +60,15 @@ describe('non-blocking questions', () => {
 })
 
 describe('getPendingRequestKinds', () => {
+    it.each(['CursorAskQuestion', 'cursor_ask_question'])('classifies Cursor question %s as reply attention', (tool) => {
+        const summary = toSessionSummary(makeSession({ agentState: { requests: {
+            cursor: { tool, arguments: { questions: [] }, createdAt: 1000 }
+        } } }))
+        expect(summary.pendingRequestsCount).toBe(1)
+        expect(summary.pendingRequestKinds).toEqual(['input'])
+        expect(summary.pendingRequests[0]?.kind).toBe('input')
+    })
+
     it('classifies ask-user tools as input', () => {
         const kinds = getPendingRequestKinds(makeSession({
             agentState: {
@@ -310,6 +319,15 @@ describe('getPendingRequests', () => {
 })
 
 describe('getPendingRequestKinds', () => {
+    it.each(['CursorAskQuestion', 'cursor_ask_question'])('classifies Cursor question %s as reply attention', (tool) => {
+        const summary = toSessionSummary(makeSession({ agentState: { requests: {
+            cursor: { tool, arguments: { questions: [] }, createdAt: 1000 }
+        } } }))
+        expect(summary.pendingRequestsCount).toBe(1)
+        expect(summary.pendingRequestKinds).toEqual(['input'])
+        expect(summary.pendingRequests[0]?.kind).toBe('input')
+    })
+
     it('reads from the FULL request set (not the capped pendingRequests slice)', () => {
         const requests: Record<string, { tool: string; arguments: unknown; createdAt: number }> = {}
         // First CAP requests are all permission, last one is input — must still

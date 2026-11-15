@@ -1,4 +1,5 @@
 import {
+    computePendingRequestKinds,
     getCodexCollaborationModeLabel,
     getCopilotAgentModeLabel,
     getPermissionModeLabel,
@@ -62,7 +63,8 @@ function getConnectionStatus(
     backgroundTaskCount: number,
     t: (key: string) => string
 ): { text: string; color: string; dotColor: string; isPulsing: boolean } {
-    const hasPermissions = agentState?.requests && Object.keys(agentState.requests).length > 0
+    const pendingKinds = computePendingRequestKinds(agentState)
+    const hasPermissions = pendingKinds.length > 0
 
     // Voice connecting takes priority
     if (voiceStatus === 'connecting') {
@@ -85,7 +87,7 @@ function getConnectionStatus(
 
     if (hasPermissions) {
         return {
-            text: t('misc.permissionRequired'),
+            text: t(pendingKinds.includes('permission') ? 'misc.permissionRequired' : 'session.badge.reply'),
             color: 'text-[#FF9500]',
             dotColor: 'bg-[#FF9500]',
             isPulsing: true
