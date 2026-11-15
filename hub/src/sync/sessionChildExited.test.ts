@@ -112,6 +112,32 @@ describe('handleSessionChildExited owner guard', () => {
         }
     })
 
+    it('keeps the personal parent edge and the live parent active when only its child exits', () => {
+        const { engine } = createEngine()
+        try {
+            registerMachine(engine)
+            const parent = createOwnedSession(engine, 'child-exit-parent', { hostPid: PID + 1 })
+            const child = createOwnedSession(engine, 'child-exit-linked-child', { parentSessionId: parent.id, claudeSessionId: 'claude-linked-child' })
+            markActive(engine, parent.id)
+            markActive(engine, child.id)
+
+            expect(engine.handleSessionChildExited({
+                machineId: MACHINE,
+                namespace: NAMESPACE,
+                sid: child.id,
+                pid: PID,
+                processStartMarker: START_MARKER,
+                time: Date.now()
+            })).toBe(true)
+            expect(engine.getSession(child.id)?.active).toBe(false)
+            expect(engine.getSession(child.id)?.metadata?.parentSessionId).toBe(parent.id)
+            expect(engine.getSession(parent.id)?.active).toBe(true)
+            expect(engine.getSession(parent.id)?.thinking).toBe(true)
+        } finally {
+            engine.stop()
+        }
+    })
+
     it('ignores a late notice about an older pid after the session was resumed elsewhere', () => {
         const { engine } = createEngine()
         try {

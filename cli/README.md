@@ -288,6 +288,8 @@ DSH owns MCP injection, live tool/reasoning telemetry and permission policy.
 
 ### Runner
 
+- `HAPI_API_FALLBACK_URLS` - Comma-separated alternative origins for the same Hub, used by the Runner machine socket after repeated connection failures. Every entry receives the same CLI credentials and extra headers; configure only trusted entry points to that Hub. This does not change existing child session connections or CLI REST requests.
+- `HAPI_API_FAILOVER_AFTER` - Consecutive Runner socket connection failures before trying the next entry (default: 5, minimum: 1). A connected fallback retries the primary after 30 minutes. Unset fallback URLs preserve single-entry behavior.
 - `HAPI_RUNNER_HEARTBEAT_INTERVAL` - Heartbeat interval in ms (default: 60000).
 - `HAPI_RUNNER_HTTP_TIMEOUT` - HTTP timeout for runner control in ms (default: 10000).
 - `HAPI_RUNNER_WEBHOOK_TIMEOUT_MS` - Session-start webhook timeout in ms (default: 15000); raise for slow agent startup/resume.

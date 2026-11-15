@@ -232,6 +232,7 @@ Ordinary web/native session updates use SSE, not the CLI Socket.IO namespace.
 - `session-ready` - Cursor ACP `session/load` (or `newSession`) succeeded; hub defers merge/dedup until this arrives on reopen.
 - `session-end` - Mark session ended.
 - `machine-alive` - Keep machine online.
+- `session-child-exited` - Runner reports an unexpected child exit; the Hub checks namespace, machine, pid and process generation before marking that session inactive. The row remains resumable and is not archived.
 - `rpc-register` - Register RPC handler.
 - `rpc-unregister` - Unregister RPC handler.
 
