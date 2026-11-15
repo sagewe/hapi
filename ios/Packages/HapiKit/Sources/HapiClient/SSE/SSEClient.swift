@@ -419,8 +419,13 @@ public actor SSEClient {
 
         switch decoded {
         case .heartbeat:
-            // Pure liveness; activity was already stamped per-chunk. Carries
-            // no id, so the sticky cursor is untouched by construction.
+            // Global store recovery uses the server cadence to retry a failed
+            // REST baseline even when the event connection never disconnected.
+            // Wait for the handshake; session pipes remain pure liveness.
+            if handshakeSeen, configuration.scope == .global {
+                continuation?.yield(.event(decoded))
+            }
+            // No cursor advancement for heartbeats, even if one carried an id.
             return
         case .connectionChanged(_, let payload):
             if !handshakeSeen, payload?.status == "connected" {

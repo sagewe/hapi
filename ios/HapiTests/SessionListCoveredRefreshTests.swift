@@ -14,8 +14,10 @@ final class SessionListCoveredRefreshTests: XCTestCase {
     @MainActor @Observable
     final class Sessions: SessionListStoring {
         var sessions: [SessionSummary]
+        var refreshFailed = false
+        var lastRefreshedAt: Date?
         init(_ sessions: [SessionSummary]) { self.sessions = sessions }
-        func refresh() async throws {}
+        func refresh() async throws { lastRefreshedAt = Date() }
         func scheduleRefresh() {}
         func fullResync() async throws {}
         func applySessionEvent(_ event: SyncEvent) {}

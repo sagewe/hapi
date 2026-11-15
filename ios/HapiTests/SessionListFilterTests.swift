@@ -13,13 +13,26 @@ final class SessionListFilterTests: XCTestCase {
         await model.refreshOnFirstAppearance()
         await model.refreshOnFirstAppearance()
         XCTAssertEqual(sessions.refreshCount, 1)
-        XCTAssertTrue(model.isOffline)
+        XCTAssertTrue(model.refreshFailed)
         sessions.failRefresh = false
         await model.refresh()
         XCTAssertEqual(sessions.refreshCount, 2)
-        XCTAssertFalse(model.isOffline)
+        XCTAssertFalse(model.refreshFailed)
         await model.refreshOnFirstAppearance()
         XCTAssertEqual(sessions.refreshCount, 2)
+    }
+
+    func testStoreRecoveryUpdatesModelWithoutPageRefresh() async throws {
+        let sessions = HomeFilterTestSessions()
+        let model = HomeFilterTestData.model(sessions: sessions)
+        sessions.failRefresh = true
+        await model.refresh()
+        XCTAssertTrue(model.refreshFailed)
+        sessions.failRefresh = false
+        try await sessions.fullResync()
+        XCTAssertFalse(model.refreshFailed)
+        XCTAssertEqual(model.lastRefreshedAt, sessions.lastRefreshedAt)
+        XCTAssertTrue(model.hasLoaded)
     }
 
     func testSidebarInitialRefreshOutlivesPresentationCancellation() async {
@@ -163,7 +176,7 @@ final class SessionListFilterTests: XCTestCase {
         XCTAssertEqual(model.rows.map(\.id), ["a"])
         sessions.failRefresh = true
         await model.refresh()
-        XCTAssertTrue(model.isOffline)
+        XCTAssertTrue(model.refreshFailed)
         XCTAssertEqual(model.rows.count, 1)
     }
 
@@ -318,7 +331,7 @@ final class SessionListFilterTests: XCTestCase {
         XCTAssertNil(SessionConnectionNotice(state: .connected, showsCachedSessions: false).message)
         XCTAssertEqual(SessionConnectionNotice(state: .backoff(attempt: 2), showsCachedSessions: false).message, "Reconnecting…")
         XCTAssertEqual(SessionConnectionNotice(state: .backoff(attempt: 2), showsCachedSessions: true).message, "Offline — showing cached sessions")
-        XCTAssertEqual(SessionConnectionNotice(state: .connected, showsCachedSessions: true).message, "Offline — showing cached sessions")
+        XCTAssertEqual(SessionConnectionNotice(state: .connected, showsCachedSessions: true).message, "Session list refresh failed")
         let states: [SSEConnectionState] = [.idle, .connecting, .suspended]
         for state in states {
             XCTAssertNotNil(SessionConnectionNotice(state: state, showsCachedSessions: false).message)
@@ -529,11 +542,18 @@ final class HomeFilterTestSessions: SessionListStoring {
     var refreshCount = 0
     var refreshWasCancelled = false
     var failRefresh = false
+    var refreshFailed = false
+    var lastRefreshedAt: Date?
     init(_ sessions: [SessionSummary] = []) { self.sessions = sessions }
     func refresh() async throws {
         refreshCount += 1
         refreshWasCancelled = Task.isCancelled
-        if failRefresh { throw URLError(.notConnectedToInternet) }
+        if failRefresh {
+            refreshFailed = true
+            throw URLError(.notConnectedToInternet)
+        }
+        refreshFailed = false
+        lastRefreshedAt = Date()
     }
     func scheduleRefresh() {}
     func fullResync() async throws { try await refresh() }

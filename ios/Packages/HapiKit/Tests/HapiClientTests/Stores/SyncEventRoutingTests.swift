@@ -9,6 +9,8 @@ import Testing
 @MainActor
 private final class FakeSessionListStore: SessionListStoring {
     var sessions: [SessionSummary] = []
+    var refreshFailed = false
+    var lastRefreshedAt: Date?
     var calls: [String] = []
 
     func refresh() async throws { calls.append("refresh") }
@@ -133,6 +135,27 @@ struct SyncEventRoutingTests {
         try await Task.sleep(for: .milliseconds(50))
         #expect(sessions.calls == [])
         #expect(machines.calls == [])
+    }
+
+    @Test func successfulResumeRetriesFailedListBaseline() {
+        let sessions = FakeSessionListStore()
+        sessions.refreshFailed = true
+        let router = SyncEventRouter(sessions: sessions, machines: FakeMachineListStore())
+        router.handleHandshake(resume: .ok)
+        #expect(sessions.calls == ["scheduleRefresh"])
+    }
+
+    @Test func onlyGlobalHeartbeatsRetryFailedRefreshes() throws {
+        let sessions = FakeSessionListStore()
+        let router = SyncEventRouter(sessions: sessions, machines: FakeMachineListStore())
+        let heartbeat = try decodeSyncEvent("{\"type\":\"heartbeat\"}")
+        router.route(heartbeat)
+        #expect(sessions.calls.isEmpty)
+        sessions.refreshFailed = true
+        router.route(heartbeat, scope: .session("s1"))
+        #expect(sessions.calls.isEmpty)
+        router.route(heartbeat)
+        #expect(sessions.calls == ["scheduleRefresh"])
     }
 
     @Test func toastEventsReachTheCallback() throws {

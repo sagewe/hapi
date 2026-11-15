@@ -532,17 +532,17 @@ struct SessionListView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if !model.hasLoaded && !model.isOffline {
+        if !model.hasLoaded && !model.refreshFailed {
             ContentUnavailableView {
                 Label("Loading sessions…", systemImage: "arrow.triangle.2.circlepath")
             } description: {
                 Text("Fetching the session list from the hub.")
             }
-        } else if model.isOffline {
+        } else if model.refreshFailed {
             ContentUnavailableView {
-                Label("Hub unreachable", systemImage: "wifi.slash")
-            } description: {
-                Text("Pull to retry once you are back online.")
+                Label("Session list refresh failed", systemImage: "arrow.clockwise")
+            } actions: {
+                Button("Retry") { Task { await model.refresh() } }
             }
         } else if model.isSearching {
             ContentUnavailableView.search(text: model.searchQuery)

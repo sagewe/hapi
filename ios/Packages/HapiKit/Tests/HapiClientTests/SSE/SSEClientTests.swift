@@ -143,6 +143,30 @@ struct SSEClientTests {
         await other.client.stop()
     }
 
+    @Test func globalHeartbeatReachesRecoveryOnlyAfterHandshake() async throws {
+        let h = await makeHarness()
+        let connection = try #require(await h.transport.nextConnection())
+        connection.open()
+        connection.sendHeartbeat()
+        connection.sendHandshake()
+        #expect(await waitUntil { !h.box.handshakes.isEmpty })
+        #expect(h.box.syncEvents.isEmpty)
+        connection.sendHeartbeat()
+        #expect(await waitUntil { h.box.syncEvents.contains { if case .heartbeat = $0 { true } else { false } } })
+        #expect(await h.client.lastEventId == nil)
+        await h.client.stop()
+
+        let chat = await makeHarness(scope: .session("s1"))
+        let chatConnection = try #require(await chat.transport.nextConnection())
+        chatConnection.open()
+        chatConnection.sendHandshake()
+        chatConnection.sendHeartbeat()
+        chatConnection.sendEvent("{\"type\":\"scheduled-matured\",\"sessionId\":\"s1\"}", id: "after-heartbeat")
+        #expect(await waitUntil { await chat.client.lastEventId == "after-heartbeat" })
+        #expect(!chat.box.syncEvents.contains { if case .heartbeat = $0 { true } else { false } })
+        await chat.client.stop()
+    }
+
     @Test func heartbeatKeepsWatchdogAliveButDoesNotMoveCursor() async throws {
         let h = await makeHarness()
         let connection = try #require(await h.transport.nextConnection())

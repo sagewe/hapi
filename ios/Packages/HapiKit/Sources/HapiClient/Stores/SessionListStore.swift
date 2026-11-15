@@ -11,6 +11,10 @@ public protocol SessionListStoring: AnyObject {
     /// Sorted with `sortSessionSummaries` (manual pins, then user-input recency).
     var sessions: [SessionSummary] { get }
 
+    /// Shared health of the last completed list fetch, independent of SSE reachability.
+    var refreshFailed: Bool { get }
+    var lastRefreshedAt: Date? { get }
+
     /// `GET /api/sessions` — replaces the list wholesale. Throws on failure.
     func refresh() async throws
 
@@ -92,6 +96,11 @@ extension SessionListStoring {
 /// details are memory-only (message windows own their snapshots in M2d).
 @MainActor @Observable
 public final class SessionListStore: SessionListStoring {
+    /// Shared REST health; successful background resyncs recover every observer.
+    public private(set) var refreshFailed = false
+    public private(set) var lastRefreshedAt: Date?
+    @ObservationIgnored private var lastRefreshOutcomeGeneration = 0
+
     /// Sorted list rows. Assigned only through ``setSessions(_:)`` so every
     /// real change also bumps ``listRevision`` and schedules a snapshot.
     public private(set) var sessions: [SessionSummary]
@@ -182,10 +191,27 @@ public final class SessionListStore: SessionListStoring {
     public func refresh() async throws {
         refreshGeneration += 1
         let generation = refreshGeneration
-        let list = try await api.listSessions()
+        let list: [SessionSummary]
+        do {
+            list = try await api.listSessions()
+        } catch {
+            // View disappearance and deliberate route changes cancel requests.
+            // Neither is evidence that the cached list or network is unhealthy.
+            if !(error is CancellationError), (error as? URLError)?.code != .cancelled,
+               !Task.isCancelled, generation > lastRefreshOutcomeGeneration {
+                lastRefreshOutcomeGeneration = generation
+                refreshFailed = true
+            }
+            throw error
+        }
         // A later-started refresh already applied fresher server truth.
         guard generation > lastAppliedRefresh else { return }
         lastAppliedRefresh = generation
+        lastRefreshedAt = Date()
+        if generation > lastRefreshOutcomeGeneration {
+            lastRefreshOutcomeGeneration = generation
+            refreshFailed = false
+        }
         // A user-input SSE patch can overtake an in-flight REST snapshot.
         let cachedRows = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
         let reconciled = list.map { row in
