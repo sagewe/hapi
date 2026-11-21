@@ -57,6 +57,10 @@ function parseFrontmatter(fileContent: string): { description?: string; content:
  */
 function getUserCommandsDir(agent: string): string | null {
     switch (agent) {
+        case 'agy': {
+            const configDir = process.env.AGY_CONFIG_DIR ?? join(homedir(), '.gemini', 'config');
+            return join(configDir, 'commands');
+        }
         case 'claude': {
             const configDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
             return join(configDir, 'commands');
@@ -83,6 +87,8 @@ function getUserCommandsDir(agent: string): string | null {
  */
 function getProjectCommandsDir(agent: string, projectDir: string): string | null {
     switch (agent) {
+        case 'agy':
+            return join(projectDir, '.gemini', 'commands');
         case 'claude':
             return join(projectDir, '.claude', 'commands');
         case 'codex':

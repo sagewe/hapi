@@ -49,6 +49,8 @@ function normalizeFlavor(flavor?: string): string {
 function getAgentConfigDir(flavor?: string): string {
     const normalizedFlavor = normalizeFlavor(flavor);
     switch (normalizedFlavor) {
+        case 'agy':
+            return process.env.AGY_CONFIG_DIR || join(getHomeDirectory(), '.gemini', 'config');
         case 'claude':
             return process.env.CLAUDE_CONFIG_DIR || join(getHomeDirectory(), '.claude');
         case 'codex':
@@ -67,6 +69,10 @@ function getUserSkillsRoots(flavor?: string): string[] {
     const home = getHomeDirectory();
     const roots = [join(home, '.agents', 'skills')];
     switch (normalizeFlavor(flavor)) {
+        case 'agy':
+            roots.push(join(getAgentConfigDir(flavor), 'skills'));
+            roots.push(join(home, '.gemini', 'skills'));
+            break;
         case 'claude':
             roots.push(join(getAgentConfigDir(flavor), 'skills'));
             break;
@@ -94,6 +100,9 @@ function getAdminSkillsRoot(): string {
 function getProjectSkillsRoots(directory: string, flavor?: string): string[] {
     const roots = [join(directory, '.agents', 'skills')];
     switch (normalizeFlavor(flavor)) {
+        case 'agy':
+            roots.push(join(directory, '.gemini', 'skills'));
+            break;
         case 'claude':
             roots.push(join(directory, '.claude', 'skills'));
             break;

@@ -3,7 +3,7 @@ import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { AgentSessionBase } from '@/agent/sessionBase';
 import type { AgyMode, PermissionMode } from './types';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
-import type { SessionEffort, SessionModel } from '@/api/types';
+import type { AttachmentMetadata, SessionEffort, SessionModel } from '@/api/types';
 
 type LocalLaunchFailure = {
     message: string;
@@ -19,6 +19,7 @@ export class AgySession extends AgentSessionBase<AgyMode> {
     localLaunchFailure: LocalLaunchFailure | null = null;
     /** Set by the headless driver; lets the CLI cancel a batch held in retry backoff. */
     cancelRetryDelivery: ((localId: string) => boolean) | null = null;
+    private readonly attachmentsByLocalId: Map<string, AttachmentMetadata[]>;
 
     constructor(opts: {
         api: ApiClient;
@@ -33,6 +34,7 @@ export class AgySession extends AgentSessionBase<AgyMode> {
         permissionMode?: PermissionMode;
         model?: SessionModel;
         effort?: SessionEffort;
+        attachmentsByLocalId?: Map<string, AttachmentMetadata[]>;
     }) {
         super({
             api: opts.api,
@@ -60,7 +62,23 @@ export class AgySession extends AgentSessionBase<AgyMode> {
         this.permissionMode = opts.permissionMode;
         this.model = opts.model;
         this.effort = opts.effort;
+        this.attachmentsByLocalId = opts.attachmentsByLocalId ?? new Map();
     }
+
+    getAttachmentsForLocalIds = (localIds: readonly string[]): AttachmentMetadata[] => {
+        const result: AttachmentMetadata[] = [];
+        for (const id of localIds) {
+            const items = this.attachmentsByLocalId.get(id);
+            if (items) result.push(...items);
+        }
+        return result;
+    };
+
+    clearAttachmentsForLocalIds = (localIds: readonly string[]): void => {
+        for (const id of localIds) {
+            this.attachmentsByLocalId.delete(id);
+        }
+    };
 
     setPermissionMode = (mode: PermissionMode): void => {
         this.permissionMode = mode;

@@ -44,8 +44,14 @@ export function buildAgyHeadlessArgs(opts: {
     if (opts.model) {
         args.push('--model', opts.model);
     }
-    if (opts.mode) {
-        args.push('--mode', opts.mode);
+    const effectiveMode = opts.mode ?? (
+        opts.permissionMode === 'acceptEdits' ? 'accept-edits'
+            : opts.permissionMode === 'auto' ? 'auto'
+                : opts.permissionMode === 'plan' ? 'plan'
+                    : undefined
+    );
+    if (effectiveMode) {
+        args.push('--mode', effectiveMode);
     }
     if (opts.effort && !selection.effort) {
         args.push('--effort', opts.effort);

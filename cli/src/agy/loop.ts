@@ -5,7 +5,7 @@ import { AgySession } from './session';
 import { agyAcpDriver } from './acp/agyAcpDriver';
 import { ApiClient, ApiSessionClient } from '@/lib';
 import type { AgyMode, PermissionMode } from './types';
-import type { SessionEffort, SessionModel } from '@/api/types';
+import type { AttachmentMetadata, SessionEffort, SessionModel } from '@/api/types';
 
 interface AgyLoopOptions {
     path: string;
@@ -19,6 +19,7 @@ interface AgyLoopOptions {
     model?: SessionModel;
     effort?: SessionEffort;
     resumeSessionId?: string;
+    attachmentsByLocalId?: Map<string, AttachmentMetadata[]>;
     onSessionReady?: (session: AgySession) => void;
 }
 
@@ -41,6 +42,7 @@ export async function agyLoop(opts: AgyLoopOptions): Promise<void> {
         permissionMode: opts.permissionMode,
         model: opts.model,
         effort: opts.effort,
+        attachmentsByLocalId: opts.attachmentsByLocalId,
     });
 
     // On resume, immediately persist the brain UUID into metadata so

@@ -18,6 +18,7 @@ import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
 import { mapAgyToolCall, mapAgyToolResult } from '../agyToolCards';
 import { AGY_HAPI_MCP_PROMPT, registerAgyMarkdownImages } from '../utils/agyMarkdownImages';
+import { buildAgyAcpPromptContent } from '../utils/agyPromptContent';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
 import { AgyReactiveContinuationPendingError, AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
@@ -59,6 +60,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private lastMode: AgyMode = { permissionMode: 'request-review', model: null, effort: null };
     private activeModeHash: string | null = null;
     private backendModeHash: string | null = null;
+    private backendSkipPermissions: boolean | null = null;
     private activeTurn: Promise<void> | null = null;
     private aborting: Promise<void> | null = null;
     private generation = 0;
@@ -175,6 +177,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         const backend = this.backend;
         this.backend = null;
         this.backendModeHash = null;
+        this.backendSkipPermissions = null;
         this.reactiveWakeup.reset();
         this.nativeToolNames.clear();
         this.emittedInlineImagePaths.clear();
@@ -195,7 +198,15 @@ export class AgyAcpDriver extends RemoteLauncherBase {
 
     private async ensureBackend(mode: AgyMode): Promise<AcpSdkBackend> {
         const modeHash = hashObject(mode);
-        if (this.backend && this.backendModeHash === modeHash) return this.backend;
+        const skipPermissions = mode.permissionMode === 'always-proceed';
+        if (this.backend && this.backendSkipPermissions === skipPermissions && this.session.sessionId) {
+            if (this.backendModeHash === modeHash) return this.backend;
+            // Hot-switch model, effort, and native ACP mode in place without restarting agy acp.
+            await configureAgyAcpSession(this.backend, this.session.sessionId, mode);
+            if (this.stopping) throw new Error('Antigravity session stopped');
+            this.backendModeHash = modeHash;
+            return this.backend;
+        }
         await this.closeBackend();
         const backend = this.createBackend(this.session.path, mode);
         this.backend = backend;
@@ -207,7 +218,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
             this.permission = new PermissionAdapter(
                 this.session.client,
                 backend,
-                () => mode.permissionMode,
+                () => this.lastMode.permissionMode,
                 (response) => elicitation.handlePermissionResponse(response)
             );
             await this.ensureMcpBridge();
@@ -230,6 +241,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
             this.reactiveWakeup.syncBaseline(id);
             await configureAgyAcpSession(backend, id, mode);
             if (this.stopping || this.backend !== backend) throw new Error('Antigravity session stopped');
+            this.backendSkipPermissions = skipPermissions;
             this.backendModeHash = modeHash;
             return backend;
         } catch (error) {
@@ -267,13 +279,19 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         if (!await this.session.client.setSteerDeliveryState([localId], 'dispatching')) {
             hold(); return { steered: false, error: 'Delivery state could not be persisted' };
         }
+        const steerAttachments = typeof this.session.getAttachmentsForLocalIds === 'function'
+            ? this.session.getAttachmentsForLocalIds([localId])
+            : [];
+        const steerPromptContent = steerAttachments.length > 0
+            ? await buildAgyAcpPromptContent(taken.item.message, steerAttachments)
+            : [{ type: 'text' as const, text: taken.item.message }];
         if (this.backend !== backend || this.generation !== generation || this.aborting
             || !backend.isPromptRequestInFlight() || taken.state !== 'dispatching') {
             await restore(); return { steered: false, error: 'Active turn changed' };
         }
         let request: ReturnType<AcpSdkBackend['beginSoftSteerPrompt']>;
         try {
-            request = backend.beginSoftSteerPrompt(id, [{ type: 'text', text: taken.item.message }]);
+            request = backend.beginSoftSteerPrompt(id, steerPromptContent);
         } catch (error) {
             if (isAcpIndeterminateError(error)) hold(); else await restore();
             return { steered: false, error: 'Could not dispatch message' };
@@ -283,6 +301,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         const settled = request.completed.then(async (reason) => {
             if (reason === 'cancelled') { hold(); return; }
             this.session.queue.commitReservation(taken);
+            this.session.clearAttachmentsForLocalIds?.([localId]);
             this.session.client.emitMessagesConsumed([localId], { steered: true });
         }, async (error) => {
             if (isAcpIndeterminateError(error)) hold(); else await restore();
@@ -443,7 +462,14 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         this.activeModeHash = msg.hash;
                         this.steering(true);
                         this.reactiveWakeup.beforePrompt(session.sessionId);
+                        const attachments = typeof session.getAttachmentsForLocalIds === 'function'
+                            ? session.getAttachmentsForLocalIds(ids)
+                            : [];
+                        const promptContent = attachments.length > 0
+                            ? await buildAgyAcpPromptContent(msg.message, attachments)
+                            : [{ type: 'text' as const, text: msg.message }];
                         acknowledge();
+                        session.clearAttachmentsForLocalIds?.(ids);
                         const onUpdate = (message: AgentMessage) => {
                             if (['text', 'reasoning', 'tool_call', 'tool_result'].includes(message.type)) {
                                 accepted = true;
@@ -453,7 +479,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                             this.forwardAgentMessage(message, msg.mode.model);
                         };
                         this.elicitation?.beginPrompt();
-                        await backend.prompt(session.sessionId!, [{ type: 'text', text: msg.message }], onUpdate);
+                        await backend.prompt(session.sessionId!, promptContent, onUpdate);
                         accepted = true;
                         acknowledge();
                         await backend.waitForResponseComplete();

@@ -2099,4 +2099,122 @@ describe('Antigravity ACP delivery', () => {
             rmSync(brainDir, { recursive: true, force: true });
         }
     });
+
+    it('hot-switches native ACP mode/model/effort in place without restarting, respawns for always-proceed, and sends image attachments as ACP image blocks', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-hotswitch-'));
+        const imgPath = join(brainDir, 'attach.png');
+        const pngBytes = Buffer.from([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        ]);
+        writeFileSync(imgPath, pngBytes);
+
+        const queue = new MessageQueue2<AgyMode>((m) => hashObject(m));
+        const attachmentsByLocalId = new Map([
+            ['turn-1', [{ id: 'a1', filename: 'attach.png', path: imgPath, mimeType: 'image/png', size: pngBytes.length }]],
+        ]);
+        const client = {
+            getMetadata: vi.fn(() => ({})),
+            updateAgentState: vi.fn(),
+            updateMetadata: vi.fn(),
+            rpcHandlerManager: { registerHandler: vi.fn() },
+            emitMessagesConsumed: vi.fn(),
+            sendAgentMessage: vi.fn(),
+            sendClaudeSessionMessage: vi.fn(),
+            setSteerDeliveryState: vi.fn(async () => true),
+            emitSteerIndeterminate: vi.fn()
+        };
+        const session = {
+            path: brainDir,
+            sessionId: null as string | null,
+            client,
+            queue,
+            setKillHandler: vi.fn(),
+            onThinkingChange: vi.fn(),
+            sendSessionEvent: vi.fn(),
+            onSessionFound: vi.fn((id: string) => { session.sessionId = id; }),
+            getAttachmentsForLocalIds: (ids: readonly string[]) => ids.flatMap((id) => attachmentsByLocalId.get(id) ?? []),
+            clearAttachmentsForLocalIds: (ids: readonly string[]) => { for (const id of ids) attachmentsByLocalId.delete(id); },
+        };
+
+        let currentAcpMode = 'default';
+        const makeBackend = () => ({
+            initialize: vi.fn(async () => {}),
+            newSession: vi.fn(async () => 'agy-hot'),
+            loadSession: vi.fn(async ({ sessionId }) => sessionId),
+            resumeSession: vi.fn(async ({ sessionId }) => sessionId),
+            registerExtensionRequestHandler: vi.fn(),
+            suppressUpdatesDuring: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+            isPromptRequestInFlight: () => false,
+            setModel: vi.fn(async () => {}),
+            setConfigOption: vi.fn(async (_id: string, configId: string, value: string) => {
+                if (configId === 'mode') currentAcpMode = value;
+            }),
+            getThoughtLevelConfigOption: () => ({ id: 'thought_level', options: [{ value: 'medium' }, { value: 'high' }] }),
+            getConfigOptionByCategory: (_id: string, category: string) => (
+                category === 'mode'
+                    ? { id: 'mode', currentValue: currentAcpMode, options: [{ value: 'default' }, { value: 'accept-edits' }, { value: 'auto' }, { value: 'plan' }] }
+                    : undefined
+            ),
+            prompt: vi.fn(async () => {}),
+            beginSoftSteerPrompt: vi.fn(),
+            waitForResponseComplete: vi.fn(async () => {}),
+            refreshSessionInfo: vi.fn(async () => {}),
+            cancelPrompt: vi.fn(async () => {}),
+            disconnect: vi.fn(async () => {})
+        });
+
+        const backends: Array<ReturnType<typeof makeBackend>> = [];
+        const factory = vi.fn(() => {
+            const b = makeBackend();
+            backends.push(b);
+            return b as unknown as AcpSdkBackend;
+        });
+        const driver = new TestDriver(
+            session as unknown as AgySession,
+            factory,
+            { brainDir },
+            vi.fn(async () => ({ server: { url: 'http://127.0.0.1:1/', stop: () => {} }, mcpServers: {} })) as unknown as typeof import('@/codex/utils/buildHapiMcpBridge').buildHapiMcpBridge
+        );
+
+        try {
+            const running = driver.run();
+            // Turn 1: request-review + image attachment
+            queue.push(`@${imgPath}\n\ncheck image`, { permissionMode: 'request-review', model: null, effort: null }, 'turn-1');
+            await vi.waitFor(() => expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            expect(factory).toHaveBeenCalledTimes(1);
+            expect(backends[0].prompt).toHaveBeenCalledWith(
+                'agy-hot',
+                [
+                    { type: 'image', mimeType: 'image/png', data: pngBytes.toString('base64') },
+                    { type: 'text', text: `[Attached image: ${imgPath}]\n\ncheck image` }
+                ],
+                expect.any(Function)
+            );
+            expect(attachmentsByLocalId.size).toBe(0);
+
+            // Turn 2: switch to plan + new model/effort — MUST hot-switch in place without respawning!
+            session.sendSessionEvent.mockClear();
+            queue.push('make a plan', { permissionMode: 'plan', model: 'gemini-4-neon-medium', effort: 'medium' }, 'turn-2');
+            await vi.waitFor(() => expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            expect(factory).toHaveBeenCalledTimes(1);
+            expect(backends[0].disconnect).not.toHaveBeenCalled();
+            expect(backends[0].setModel).toHaveBeenCalledWith('agy-hot', 'gemini-4-neon', { flavor: 'agy' });
+            expect(backends[0].setConfigOption).toHaveBeenCalledWith('agy-hot', 'thought_level', 'medium');
+            expect(backends[0].setConfigOption).toHaveBeenCalledWith('agy-hot', 'mode', 'plan');
+
+            // Turn 3: switch to always-proceed — MUST respawn backend with --dangerously-skip-permissions!
+            session.sendSessionEvent.mockClear();
+            queue.push('run yolo', { permissionMode: 'always-proceed', model: 'gemini-4-neon-medium', effort: 'medium' }, 'turn-3');
+            await vi.waitFor(() => expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' }));
+            expect(factory).toHaveBeenCalledTimes(2);
+            expect(backends[0].disconnect).toHaveBeenCalledTimes(1);
+            expect(backends[1].loadSession).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'agy-hot' }));
+
+            await driver.stop();
+            await running;
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
+    });
 });

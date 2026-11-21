@@ -12,7 +12,7 @@ import { createModeChangeHandler, createRunnerLifecycle } from '@/agent/runnerLi
 import { registerSessionConfigRpc } from '@/agent/sessionConfigRpc';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
 import { getInvokedCwd } from '@/utils/invokedCwd';
-import type { SessionEffort, SessionModel } from '@/api/types';
+import type { AttachmentMetadata, SessionEffort, SessionModel } from '@/api/types';
 import { splitAgyModelSelection } from '@hapi/protocol';
 import { listAgyModels } from '@/modules/common/agyModels';
 import { normalizeAgyModelSelection } from './utils/agyModelSelection';
@@ -69,6 +69,7 @@ export async function runAgy(opts: {
         model: mode.model,
         effort: mode.effort,
     }));
+    const attachmentsByLocalId = new Map<string, AttachmentMetadata[]>();
 
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'request-review';
     let sessionModel: SessionModel = initialModel;
@@ -114,6 +115,7 @@ export async function runAgy(opts: {
         };
 
         session.onCancelQueuedMessage((localId) => {
+            attachmentsByLocalId.delete(localId);
             // A batch held in the driver's retry backoff is outside MessageQueue2;
             // the driver-owned cancel handles it (returns true when removed).
             const retryRemoved = sessionWrapperRef.current?.cancelRetryDelivery?.(localId) ?? false;
@@ -162,6 +164,9 @@ export async function runAgy(opts: {
 
         session.onUserMessage((message, localId) => {
             const formattedText = formatMessageWithAttachments(message.content.text, message.content.attachments);
+            if (localId && message.content.attachments && message.content.attachments.length > 0) {
+                attachmentsByLocalId.set(localId, message.content.attachments);
+            }
             // Snapshot config when buffered/new messages enter the queue, so a
             // later model or effort switch cannot change an already queued turn.
             const mode: AgyMode = {
@@ -191,6 +196,7 @@ export async function runAgy(opts: {
             model: sessionModel ?? undefined,
             effort: sessionEffort,
             resumeSessionId: opts.resumeSessionId,
+            attachmentsByLocalId,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

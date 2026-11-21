@@ -56,18 +56,39 @@ describe('Antigravity ACP backend', () => {
         await prompt;
         expect(messages.filter(m => m.type === 'text')).toEqual([{ type: 'text', text: '73-880000' }]);
     });
-    it('applies model and effort separately and refuses unsupported effort', async () => {
+    it('applies model, effort, and native ACP mode separately and refuses unsupported effort/mode', async () => {
         const backend = {
-            setModel: vi.fn(async () => {}), setConfigOption: vi.fn(async () => {}),
-            getThoughtLevelConfigOption: () => ({ id: 'thought_level', options: [{ value: 'high' }] })
+            setModel: vi.fn(async () => {}),
+            setConfigOption: vi.fn(async () => {}),
+            getThoughtLevelConfigOption: () => ({ id: 'thought_level', options: [{ value: 'high' }] }),
+            getConfigOptionByCategory: (_id: string, category: string) => (
+                category === 'mode'
+                    ? {
+                        id: 'mode',
+                        currentValue: 'default',
+                        options: [{ value: 'default' }, { value: 'accept-edits' }, { value: 'auto' }, { value: 'plan' }]
+                    }
+                    : undefined
+            )
         };
         await configureAgyAcpSession(backend as unknown as AcpSdkBackend, 'id', {
-            permissionMode: 'request-review', model: 'gemini-4-argon-high', effort: 'high'
+            permissionMode: 'plan', model: 'gemini-4-argon-high', effort: 'high'
         });
         expect(backend.setModel).toHaveBeenCalledWith('id', 'gemini-4-argon', { flavor: 'agy' });
         expect(backend.setConfigOption).toHaveBeenCalledWith('id', 'thought_level', 'high');
+        expect(backend.setConfigOption).toHaveBeenCalledWith('id', 'mode', 'plan');
         await expect(configureAgyAcpSession(backend as unknown as AcpSdkBackend, 'id', {
             permissionMode: 'request-review', effort: 'max'
-        })).rejects.toThrow('does not advertise');
+        })).rejects.toThrow('does not advertise thinking level');
+
+        const legacyBackend = {
+            setModel: vi.fn(async () => {}),
+            setConfigOption: vi.fn(async () => {}),
+            getThoughtLevelConfigOption: () => ({ id: 'thought_level', options: [{ value: 'high' }] }),
+            getConfigOptionByCategory: () => undefined
+        };
+        await expect(configureAgyAcpSession(legacyBackend as unknown as AcpSdkBackend, 'id', {
+            permissionMode: 'plan'
+        })).rejects.toThrow('does not advertise mode plan');
     });
 });

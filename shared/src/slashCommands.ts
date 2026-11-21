@@ -1,6 +1,19 @@
 import type { SlashCommand } from './apiTypes'
 
 export const BUILTIN_SLASH_COMMANDS = {
+    agy: [
+        { name: 'compact', description: 'Compact or summarize conversation context to free up the context window', source: 'builtin' },
+        { name: 'clear', description: 'Clear conversation history and start fresh', source: 'builtin' },
+        { name: 'plan', description: 'Plan carefully step-by-step before executing a task', source: 'builtin' },
+        { name: 'goal', description: 'Run a long-running task persistently until fully verified', source: 'builtin' },
+        { name: 'grill-me', description: 'Align on a plan through an interactive design interview', source: 'builtin' },
+        { name: 'boost', description: 'Deep thinking, strategic planning, and rigorous verification', source: 'builtin' },
+        { name: 'teamwork', description: 'Coordinate a team of autonomous agents on a complex project', source: 'builtin' },
+        { name: 'swarm', description: 'Launch a parallel agent swarm on a shared board', source: 'builtin' },
+        { name: 'schedule', description: 'Run an instruction on a recurring schedule or one-shot timer', source: 'builtin' },
+        { name: 'browser', description: 'Browse, search, or interact with web applications', source: 'builtin' },
+        { name: 'learn', description: 'Persist a rule or correction for future tasks', source: 'builtin' },
+    ],
     claude: [
         { name: 'clear', description: 'Clear conversation history and free up context', source: 'builtin' },
         { name: 'compact', description: 'Clear conversation history but keep a summary in context', source: 'builtin' },

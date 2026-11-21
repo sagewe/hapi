@@ -46,7 +46,10 @@ enum class PermissionMode(
 
 object PermissionModes {
     /** `AGY_PERMISSION_MODES`. */
-    val AGY = listOf(PermissionMode.RequestReview, PermissionMode.AlwaysProceed)
+    val AGY = listOf(
+        PermissionMode.RequestReview, PermissionMode.AcceptEdits,
+        PermissionMode.Auto, PermissionMode.Plan, PermissionMode.AlwaysProceed,
+    )
 
     /** `CLAUDE_PERMISSION_MODES`. */
     val CLAUDE = listOf(

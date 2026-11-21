@@ -19,10 +19,9 @@ export type AgentSessionConfig = {
     _meta?: Record<string, unknown>;
 };
 
-export type PromptContent = {
-    type: 'text';
-    text: string;
-};
+export type PromptContent =
+    | { type: 'text'; text: string }
+    | { type: 'image'; mimeType: string; data: string };
 
 export type PlanItem = {
     content: string;
