@@ -46,13 +46,21 @@ extension APIClient {
         )
     }
 
-    /// `GET /api/sessions/:id/file?path=` — `content` is base64; decode
-    /// before display.
-    public func readSessionFile(sessionId: String, path: String) async throws -> FileReadResponse {
-        try await request(
+    /// `GET /api/sessions/:id/file?path=&maxBytes=` — `content` is base64;
+    /// decode before display.
+    public func readSessionFile(
+        sessionId: String,
+        path: String,
+        maxBytes: Int? = nil
+    ) async throws -> FileReadResponse {
+        var query = [URLQueryItem(name: "path", value: path)]
+        if let maxBytes {
+            query.append(URLQueryItem(name: "maxBytes", value: String(maxBytes)))
+        }
+        return try await request(
             .get,
             "/api/sessions/\(encodePathComponent(sessionId))/file",
-            query: [URLQueryItem(name: "path", value: path)]
+            query: query
         )
     }
 

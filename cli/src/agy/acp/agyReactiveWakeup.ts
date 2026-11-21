@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { isObject } from '@hapi/protocol';
 import type { AcpSdkBackend } from '@/agent/backends/acp';
-import type { AgentMessage } from '@/agent/types';
+import type { AgentMessage, McpServerStdio } from '@/agent/types';
 import { logger } from '@/ui/logger';
 import { deterministicStringify } from '@/utils/deterministicJson';
 import type { AgyMode } from '../types';
@@ -419,6 +419,9 @@ export class AgyReactiveWakeupTracker {
     private readonly backgroundTaskIdByStep = new Map<number, string>();
     private readonly pendingTasks = new Map<string, PendingBackgroundTask>();
     private readonly pendingReactiveToolResults = new Map<number, PendingReactiveToolResult>();
+    private resumeSessionParams: { mcpServers: McpServerStdio[]; _meta?: Record<string, unknown> } = {
+        mcpServers: []
+    };
 
     constructor(options: AgyReactiveWakeupOptions = {}) {
         this.brainDir = options.brainDir ?? join(homedir(), '.gemini', 'antigravity-cli', 'brain');
@@ -426,6 +429,14 @@ export class AgyReactiveWakeupTracker {
         this.quietPeriodMs = options.quietPeriodMs ?? DEFAULT_QUIET_PERIOD_MS;
         this.nextPlannerGraceMs = options.nextPlannerGraceMs ?? DEFAULT_NEXT_PLANNER_GRACE_MS;
         this.maxDrainMs = options.maxDrainMs ?? 5_000;
+    }
+
+    getBrainDir(): string {
+        return this.brainDir;
+    }
+
+    setResumeSessionParams(params: { mcpServers: McpServerStdio[]; _meta?: Record<string, unknown> }): void {
+        this.resumeSessionParams = params;
     }
 
     reset(): void {
@@ -1695,7 +1706,12 @@ export class AgyReactiveWakeupTracker {
         mode: AgyMode
     ): Promise<void> {
         const backendWithResume = backend as unknown as {
-            resumeSession?: (config: { cwd: string; mcpServers: never[]; sessionId: string }) => Promise<string>;
+            resumeSession?: (config: {
+                cwd: string;
+                mcpServers: McpServerStdio[];
+                sessionId: string;
+                _meta?: Record<string, unknown>;
+            }) => Promise<string>;
             suppressUpdatesDuring?: <T>(fn: () => Promise<T>) => Promise<T>;
             refreshSessionInfo?: (sessionId: string, cwd: string) => Promise<void>;
         };
@@ -1703,7 +1719,12 @@ export class AgyReactiveWakeupTracker {
             return;
         }
         const runResume = async () => {
-            await backendWithResume.resumeSession!({ cwd, mcpServers: [], sessionId });
+            await backendWithResume.resumeSession!({
+                cwd,
+                mcpServers: this.resumeSessionParams.mcpServers,
+                ...(this.resumeSessionParams._meta !== undefined ? { _meta: this.resumeSessionParams._meta } : {}),
+                sessionId
+            });
             await configureAgyAcpSession(backend, sessionId, mode);
         };
         if (typeof backendWithResume.suppressUpdatesDuring === 'function') {

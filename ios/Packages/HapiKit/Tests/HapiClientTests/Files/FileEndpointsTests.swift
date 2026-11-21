@@ -86,6 +86,20 @@ struct FileEndpointsTests {
         )
     }
 
+    @Test func readSessionFilePassesOptionalMaxBytes() async throws {
+        let harness = try makeHarness(jwt: freshJWT())
+        await harness.performer.enqueue(
+            json: #"{"success":true,"content":"aGk=","size":2,"modified":1700000000000}"#
+        )
+
+        _ = try await harness.client.readSessionFile(sessionId: "abc", path: "images/shot.png", maxBytes: 10_485_760)
+        let request = await harness.performer.requests.first
+        #expect(
+            request?.url?.absoluteString
+                == "\(testHubURLString)/api/sessions/abc/file?path=images%2Fshot.png&maxBytes=10485760"
+        )
+    }
+
     @Test func searchSessionFilesOmitsEmptyQueryAndNilLimit() async throws {
         let harness = try makeHarness(jwt: freshJWT())
         await harness.performer.enqueue(json: """

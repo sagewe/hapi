@@ -798,15 +798,52 @@ struct MarkdownImageRow: View {
     @Environment(\.hapiTheme) private var theme
     @Environment(\.hapiTypography) private var typography
     @Environment(\.hapiOpenURL) private var hapiOpenURL
+    @Environment(\.hapiMarkdownImageLoader) private var imageLoader
 
     var body: some View {
         let label = alt.isEmpty ? (destination ?? "image") : alt
+        #if canImport(UIKit)
+        if let imageLoader,
+           let destination,
+           let target = resolvedRenderableTarget(loader: imageLoader, destination: destination) {
+            MarkdownInlineImageView(
+                alt: label,
+                destination: destination,
+                target: target,
+                loader: imageLoader
+            ) {
+                fallbackRow(label: label)
+            }
+        } else {
+            fallbackRow(label: label)
+        }
+        #else
+        fallbackRow(label: label)
+        #endif
+    }
+
+    #if canImport(UIKit)
+    private func resolvedRenderableTarget(
+        loader: HapiMarkdownImageLoader,
+        destination: String
+    ) -> MarkdownImageTarget? {
+        let target = loader.resolveTarget(for: destination)
+        switch target {
+        case .local, .remote:
+            return target
+        case .inert:
+            return nil
+        }
+    }
+    #endif
+
+    private func fallbackRow(label: String) -> some View {
         let url: URL? = destination.flatMap { dest in
             guard HrefPolicy.hasScheme(dest), HrefPolicy.classify(dest) != .blocked else { return nil }
             return InlineBuilder.makeURL(from: dest)
         }
 
-        HStack(spacing: 6) {
+        return HStack(spacing: 6) {
             SwiftUI.Image(systemName: "photo")
                 .font(.system(size: typography.captionSize))
                 .foregroundStyle(theme.textHint)
@@ -833,3 +870,113 @@ struct MarkdownImageRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
+
+#if canImport(UIKit)
+private struct MarkdownInlineImageView<Fallback: View>: View {
+    let alt: String
+    let destination: String
+    let target: MarkdownImageTarget
+    let loader: HapiMarkdownImageLoader
+    let fallback: () -> Fallback
+
+    @Environment(\.hapiTheme) private var theme
+    @Environment(\.hapiTypography) private var typography
+    @State private var image: UIImage?
+    @State private var failed = false
+    @State private var viewerOpen = false
+
+    var body: some View {
+        let activeImage = image ?? loader.cachedThumbnail(for: target)
+        Group {
+            if let activeImage {
+                Button {
+                    viewerOpen = true
+                } label: {
+                    SwiftUI.Image(uiImage: activeImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 360)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(alt)
+                .fullScreenCover(isPresented: $viewerOpen) {
+                    MarkdownFullScreenImageViewer(
+                        preview: activeImage,
+                        title: alt,
+                        target: target,
+                        loader: loader
+                    )
+                }
+            } else if failed {
+                fallback()
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    SwiftUI.Text(alt)
+                        .font(typography.captionFont)
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .task(id: target) {
+            if let cached = loader.cachedThumbnail(for: target) {
+                image = cached
+                failed = false
+                return
+            }
+            failed = false
+            do {
+                let loaded = try await loader.loadThumbnail(for: target)
+                try Task.checkCancellation()
+                image = loaded
+            } catch {
+                if !Task.isCancelled {
+                    failed = true
+                }
+            }
+        }
+    }
+}
+
+private struct MarkdownFullScreenImageViewer: View {
+    let preview: UIImage
+    let title: String
+    let target: MarkdownImageTarget
+    let loader: HapiMarkdownImageLoader
+    @State private var original: UIImage?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            SwiftUI.Image(uiImage: original ?? preview)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(8)
+            Button {
+                dismiss()
+            } label: {
+                SwiftUI.Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(16)
+            }
+            .accessibilityLabel("Close")
+        }
+        .onTapGesture { dismiss() }
+        .task(id: target) {
+            if let loaded = try? await loader.loadOriginalImage(for: target), !Task.isCancelled {
+                original = loaded
+            }
+        }
+    }
+}
+#endif

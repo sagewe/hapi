@@ -354,6 +354,7 @@ final class ChatModel {
     #endif
     @ObservationIgnored private let pipeline = ChatPipeline()
     @ObservationIgnored let mediaLoader: GeneratedMediaLoader
+    @ObservationIgnored let markdownImageLoader: HapiMarkdownImageLoader
     @ObservationIgnored let presentationState = ChatPresentationState()
     @ObservationIgnored let geometryCache = TranscriptGeometryCache()
     @ObservationIgnored let markdownCache = MarkdownRenderCache()
@@ -404,6 +405,22 @@ final class ChatModel {
         )
         #endif
         self.mediaLoader = GeneratedMediaLoader(api: session.api, sessionId: sessionId)
+        let api = session.api
+        let store = session.sessionStore
+        self.markdownImageLoader = HapiMarkdownImageLoader(
+            workspacePathProvider: {
+                store.detail(for: sessionId)?.metadata?.path
+                    ?? store.sessions.first { $0.id == sessionId }?.metadata?.path
+            },
+            fetchLocal: { path, maxBytes in
+                let response = try await api.readSessionFile(sessionId: sessionId, path: path, maxBytes: maxBytes)
+                guard response.success, let encoded = response.content,
+                      let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                return data
+            }
+        )
         self.scratchlistAttachments = ScratchlistAttachmentLoader(api: session.api, sessionId: sessionId)
         let initialDetail = session.sessionStore.detail(for: sessionId)
         let initialSessions = session.sessionStore.sessions
@@ -634,6 +651,7 @@ final class ChatModel {
         #endif
         interactor.deactivate()
         mediaLoader.clearCachedImages()
+        markdownImageLoader.clearCache()
         hub.scratchlist.release(sessionId)
         chat.stop()
     }

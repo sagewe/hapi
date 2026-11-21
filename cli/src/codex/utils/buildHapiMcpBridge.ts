@@ -50,6 +50,11 @@ export interface HapiMcpBridgeOptions {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
     onChangeTitle?: (title: string) => void;
+    onDisplayMedia?: (info: {
+        path: string;
+        mimeType: string;
+        toolName: 'display_image' | 'display_video' | 'display_media';
+    }) => void;
     /** Session project cwd for relative spawn_peer directories (Codex --cd aware). */
     workingDirectory?: string;
     skillLookup?: {
@@ -87,6 +92,7 @@ export async function buildHapiMcpBridge(
         emitTitleSummary: options.emitTitleSummary,
         enableChangeTitle: options.enableChangeTitle,
         onChangeTitle: options.onChangeTitle,
+        onDisplayMedia: options.onDisplayMedia,
         workingDirectory: options.workingDirectory ?? options.skillLookup?.workingDirectory,
         skillLookup: options.skillLookup
     });

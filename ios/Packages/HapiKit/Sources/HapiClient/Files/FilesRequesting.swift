@@ -18,10 +18,13 @@ public protocol FilesRequesting: Sendable {
 }
 
 extension APIClient: FilesRequesting {
-    // `gitStatus`, `gitDiffNumstat`, `gitDiffFile`, `readSessionFile` and
-    // `listSessionDirectory` from Endpoints/FileEndpoints.swift already
-    // satisfy their requirements; the search endpoint's optional `limit`
-    // needs this exact-signature shim.
+    // `gitStatus`, `gitDiffNumstat`, `gitDiffFile` and `listSessionDirectory`
+    // from Endpoints/FileEndpoints.swift already satisfy their requirements;
+    // endpoints with optional trailing parameters need exact-signature shims.
+    public func readSessionFile(sessionId: String, path: String) async throws -> FileReadResponse {
+        try await readSessionFile(sessionId: sessionId, path: path, maxBytes: nil)
+    }
+
     public func searchSessionFiles(
         sessionId: String,
         query: String,

@@ -17,8 +17,27 @@ import UIKit
 /// chip instead of scrolling/highlighting (same trade-off as Android B-M4c).
 struct FileViewerView: View {
     @State private var model: FileViewerModel
+    private let markdownImageLoader: HapiMarkdownImageLoader
 
     init(session: HubSession, route: FileViewerRoute) {
+        let sessionId = route.sessionId
+        let api = session.api
+        let store = session.sessionStore
+        self.markdownImageLoader = HapiMarkdownImageLoader(
+            workspacePathProvider: {
+                store.detail(for: sessionId)?.metadata?.path
+                    ?? store.sessions.first { $0.id == sessionId }?.metadata?.path
+            },
+            currentFilePath: route.path,
+            fetchLocal: { path, maxBytes in
+                let response = try await api.readSessionFile(sessionId: sessionId, path: path, maxBytes: maxBytes)
+                guard response.success, let encoded = response.content,
+                      let data = Data(base64Encoded: encoded, options: .ignoreUnknownCharacters) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                return data
+            }
+        )
         _model = State(initialValue: FileViewerModel(
             sessionId: route.sessionId,
             path: route.path,
@@ -194,6 +213,7 @@ struct FileViewerView: View {
         case .text(let text, let language, let isMarkdown):
             if isMarkdown && model.markdownPreview {
                 MarkdownView(markdown: text)
+                    .environment(\.hapiMarkdownImageLoader, markdownImageLoader)
                     // The outer viewer already supplies 12pt on each side.
                     .hapiReadingColumn(horizontalInset: 4)
             } else {

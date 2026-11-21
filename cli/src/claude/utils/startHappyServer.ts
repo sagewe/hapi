@@ -52,6 +52,11 @@ type StartHappyServerOptions = {
     emitTitleSummary?: boolean;
     enableChangeTitle?: boolean;
     onChangeTitle?: (title: string) => void;
+    onDisplayMedia?: (info: {
+        path: string;
+        mimeType: string;
+        toolName: 'display_image' | 'display_video' | 'display_media';
+    }) => void;
     /**
      * Session project cwd for resolving relative `spawn_peer` directories.
      * Prefer the launcher's effective cwd (including Codex `--cd` overrides).
@@ -111,7 +116,8 @@ function createHapiMcpServer(
     skillLookup: StartHappyServerOptions['skillLookup'],
     workingDirectory: string | undefined,
     onChangeTitle?: StartHappyServerOptions['onChangeTitle'],
-    peerReplySignal?: AbortSignal
+    peerReplySignal?: AbortSignal,
+    onDisplayMedia?: StartHappyServerOptions['onDisplayMedia']
 ): McpServer {
     const handler = async (title: string): Promise<{ success: boolean; titleChanged: boolean; titleLocked: boolean | null; error?: string }> => {
         let titleChanged = false;
@@ -282,6 +288,12 @@ function createHapiMcpServer(
             mimeType: media.mimeType,
             id: randomUUID(),
             source,
+        });
+
+        onDisplayMedia?.({
+            path: args.path,
+            mimeType: media.mimeType,
+            toolName,
         });
 
         return media;
@@ -729,7 +741,8 @@ export async function startHappyServer(client: ApiSessionClient, options: StartH
             options.skillLookup,
             options.workingDirectory,
             options.onChangeTitle,
-            peerReplyController.signal
+            peerReplyController.signal,
+            options.onDisplayMedia
         );
         const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),

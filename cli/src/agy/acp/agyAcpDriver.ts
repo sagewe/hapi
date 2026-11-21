@@ -1,22 +1,45 @@
 import React from 'react';
 import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { RPC_METHODS } from '@hapi/protocol/rpcMethods';
 import { RemoteLauncherBase, type RemoteLauncherDisplayContext } from '@/modules/common/remote/RemoteLauncherBase';
 import { RemoteModeDisplay } from '@/ui/ink/RemoteModeDisplay';
 import { AcpSdkBackend } from '@/agent/backends/acp';
 import { isAcpIndeterminateError } from '@/agent/backends/acp/AcpStdioTransport';
 import { PermissionAdapter } from '@/agent/permissionAdapter';
-import { registerAcpSessionTitleSync } from '@/agent/acpSessionTitle';
+import { createAcpSessionTitleSync, registerAcpSessionTitleSync, type AcpSessionTitleController } from '@/agent/acpSessionTitle';
 import { convertAgentMessage } from '@/agent/messageConverter';
+import { buildHapiMcpBridge, type McpServersConfig } from '@/codex/utils/buildHapiMcpBridge';
 import { hashObject } from '@/utils/deterministicJson';
 import { logger } from '@/ui/logger';
-import type { AgentMessage } from '@/agent/types';
+import type { AgentMessage, McpServerStdio } from '@/agent/types';
 import type { AgySession } from '../session';
 import type { AgyMode } from '../types';
 import { mapAgyToolCall, mapAgyToolResult } from '../agyToolCards';
+import { AGY_HAPI_MCP_PROMPT, registerAgyMarkdownImages } from '../utils/agyMarkdownImages';
 import { createAgyAcpBackend, configureAgyAcpSession } from './agyAcpBackend';
 import { AgyElicitationAdapter } from './agyElicitationAdapter';
 import { AgyReactiveContinuationPendingError, AgyReactiveWakeupTracker, type AgyReactiveWakeupOptions } from './agyReactiveWakeup';
+
+function toAcpMcpServers(config: McpServersConfig): McpServerStdio[] {
+    return Object.entries(config).map(([name, server]) => ({
+        name,
+        command: server.command,
+        args: server.args,
+        env: []
+    }));
+}
+
+function buildAgySessionMeta(): Record<string, unknown> {
+    return {
+        antigravity: {
+            systemPrompt: {
+                append: AGY_HAPI_MCP_PROMPT
+            }
+        }
+    };
+}
 
 /** One handler owns all notifications, including concurrent prompts. A turn is
  * not ready until every steer settles; no automatic retry of ambiguous sends. */
@@ -24,8 +47,14 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     private backend: AcpSdkBackend | null = null;
     private permission: PermissionAdapter | null = null;
     private elicitation: AgyElicitationAdapter | null = null;
+    private happyServer: { stop: () => void } | null = null;
+    private acpMcpServers: McpServerStdio[] = [];
+    private mcpBridgeInitialized = false;
+    private titleSync: AcpSessionTitleController | null = null;
     private readonly loopAbort = new AbortController();
     private readonly pendingSteers = new Set<Promise<void>>();
+    private readonly pendingInlineImages = new Set<Promise<void>>();
+    private readonly emittedInlineImagePaths = new Set<string>();
     private readonly reactiveWakeup: AgyReactiveWakeupTracker;
     private lastMode: AgyMode = { permissionMode: 'request-review', model: null, effort: null };
     private activeModeHash: string | null = null;
@@ -40,7 +69,8 @@ export class AgyAcpDriver extends RemoteLauncherBase {
     constructor(
         private readonly session: AgySession,
         private readonly createBackend = createAgyAcpBackend,
-        reactiveOptions?: AgyReactiveWakeupOptions
+        reactiveOptions?: AgyReactiveWakeupOptions,
+        private readonly createMcpBridge = buildHapiMcpBridge
     ) {
         super(process.env.DEBUG ? session.logPath : undefined);
         this.reactiveWakeup = new AgyReactiveWakeupTracker(reactiveOptions);
@@ -56,6 +86,58 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         return this.start({ onExit: () => this.stop() });
     }
 
+    private async recordDisplayedImagePath(path: string): Promise<void> {
+        try {
+            this.emittedInlineImagePaths.add(await realpath(path));
+        } catch {
+            this.emittedInlineImagePaths.add(path);
+        }
+    }
+
+    private async ensureMcpBridge(): Promise<void> {
+        if (this.mcpBridgeInitialized) return;
+        this.mcpBridgeInitialized = true;
+        try {
+            if (!this.titleSync && typeof this.session.client.getMetadata === 'function') {
+                this.titleSync = createAcpSessionTitleSync(this.session.client);
+            }
+            const { server, mcpServers } = await this.createMcpBridge(this.session.client, {
+                onChangeTitle: () => this.titleSync?.markManualTitle(),
+                onDisplayMedia: ({ path }) => {
+                    void this.recordDisplayedImagePath(path);
+                },
+                workingDirectory: this.session.path,
+                skillLookup: { workingDirectory: this.session.path, flavor: 'agy' }
+            });
+            this.happyServer = server;
+            this.acpMcpServers = toAcpMcpServers(mcpServers);
+        } catch (error) {
+            logger.debug('[agy-acp] HAPI MCP bridge unavailable; continuing without MCP servers', error);
+            this.acpMcpServers = [];
+        }
+    }
+
+    private scheduleMarkdownInlineImages(text: string, model?: string | null): void {
+        const sessionBrainDir = this.session.sessionId
+            ? join(this.reactiveWakeup.getBrainDir(), this.session.sessionId)
+            : null;
+        const generation = this.generation;
+        const task = registerAgyMarkdownImages({
+            text,
+            workspaceDir: this.session.path,
+            sessionBrainDir,
+            alreadyDisplayedPaths: this.emittedInlineImagePaths,
+            onImage: (imageMessage) => {
+                if (this.stopping || this.generation !== generation) return;
+                this.forwardAgentMessage(imageMessage, model);
+            }
+        }).catch((error) => {
+            logger.debug('[agy-acp] Markdown inline image fallback failed', error);
+        });
+        this.pendingInlineImages.add(task);
+        void task.finally(() => this.pendingInlineImages.delete(task));
+    }
+
     /** One path for ACP-owned output and transcript-only continuations. */
     private forwardAgentMessage(message: AgentMessage, model?: string | null): void {
         let canonical = message;
@@ -68,6 +150,9 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         }
         const converted = convertAgentMessage(canonical, model);
         if (converted) this.session.client.sendAgentMessage(converted);
+        if (canonical.type === 'text' && canonical.live !== true && canonical.text.includes('![')) {
+            this.scheduleMarkdownInlineImages(canonical.text, model);
+        }
     }
 
     private steering(active: boolean): void {
@@ -92,6 +177,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         this.backendModeHash = null;
         this.reactiveWakeup.reset();
         this.nativeToolNames.clear();
+        this.emittedInlineImagePaths.clear();
         this.publishBackgroundTasks();
         const elicitation = this.elicitation;
         this.elicitation = null;
@@ -124,8 +210,19 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 () => mode.permissionMode,
                 (response) => elicitation.handlePermissionResponse(response)
             );
-            registerAcpSessionTitleSync(backend, this.session.client);
-            const config = { cwd: this.session.path, mcpServers: [] };
+            await this.ensureMcpBridge();
+            if (this.stopping) throw new Error('Antigravity session stopped');
+            registerAcpSessionTitleSync(backend, this.session.client, this.titleSync ?? undefined);
+            const sessionMeta = this.acpMcpServers.length > 0 ? buildAgySessionMeta() : undefined;
+            this.reactiveWakeup.setResumeSessionParams({
+                mcpServers: this.acpMcpServers,
+                ...(sessionMeta !== undefined ? { _meta: sessionMeta } : {})
+            });
+            const config = {
+                cwd: this.session.path,
+                mcpServers: this.acpMcpServers,
+                ...(sessionMeta !== undefined ? { _meta: sessionMeta } : {})
+            };
             const id = this.session.sessionId
                 ? await backend.loadSession({ ...config, sessionId: this.session.sessionId })
                 : await backend.newSession(config);
@@ -312,6 +409,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                         } catch (error) {
                             logger.debug('[agy-acp] idle reactive wakeup failed', error);
                         } finally {
+                            await Promise.allSettled([...this.pendingInlineImages]);
                             this.publishBackgroundTasks();
                             if (!this.stopping && !this.aborting && session.sessionId
                                 && this.reactiveWakeup.hasCompletedReactiveReply(session.sessionId)) session.sendSessionEvent({ type: 'ready' });
@@ -336,6 +434,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                 };
                 session.onThinkingChange(true);
                 this.generation++;
+                this.emittedInlineImagePaths.clear();
                 this.activeTurn = (async () => {
                     try {
                         const backend = await this.ensureBackend(msg.mode);
@@ -387,7 +486,7 @@ export class AgyAcpDriver extends RemoteLauncherBase {
                     } finally {
                         this.activeModeHash = null;
                         this.steering(false);
-                        await Promise.allSettled([...this.pendingSteers]);
+                        await Promise.allSettled([...this.pendingSteers, ...this.pendingInlineImages]);
                         session.onThinkingChange(false);
                         this.publishBackgroundTasks();
                         if (!this.stopping && !this.aborting) session.sendSessionEvent({ type: 'ready' });
@@ -408,6 +507,10 @@ export class AgyAcpDriver extends RemoteLauncherBase {
         this.session.client.rpcHandlerManager.registerHandler(RPC_METHODS.SteerQueuedMessage,
             () => ({ steered: false, error: 'Antigravity ACP is not running' }));
         await this.closeBackend();
+        this.happyServer?.stop();
+        this.happyServer = null;
+        this.acpMcpServers = [];
+        this.mcpBridgeInitialized = false;
         logger.debug('[agy-acp] stopped');
     }
 }

@@ -1,6 +1,7 @@
 import AVKit
 import AVFoundation
 import HapiClient
+import HapiUI
 import Observation
 import SwiftUI
 import UIKit
@@ -390,6 +391,45 @@ final class GeneratedMediaTests: XCTestCase {
         await writer.finishWriting()
         XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
         return try Data(contentsOf: url)
+    }
+
+    func testMarkdownImageLoaderDownsamplesCachesAndSingleFlights() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let pixels = UIGraphicsImageRenderer(size: CGSize(width: 2400, height: 1800), format: format).image { context in
+            UIColor.systemGreen.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2400, height: 1800))
+        }
+        let bytes = try XCTUnwrap(pixels.jpegData(compressionQuality: 0.85))
+        actor Counter {
+            var count = 0
+            var requestedPaths: [String] = []
+            func record(_ path: String) { count += 1; requestedPaths.append(path) }
+        }
+        let counter = Counter()
+        let loader = HapiMarkdownImageLoader(
+            workspacePath: "/Users/sage/myhome",
+            fetchLocal: { path, maxBytes in
+                XCTAssertEqual(maxBytes, MarkdownImagePolicy.maxImageBytes)
+                await counter.record(path)
+                try await Task.sleep(for: .milliseconds(25))
+                return bytes
+            }
+        )
+
+        let target = loader.resolveTarget(for: "/Users/sage/myhome/docs/shot.jpg")
+        XCTAssertEqual(target, .local(path: "/Users/sage/myhome/docs/shot.jpg", mimeType: "image/jpeg"))
+        XCTAssertEqual(loader.resolveTarget(for: "/Users/sage/.gemini/brain/x/shot.jpg"), .inert)
+
+        async let first = loader.loadThumbnail(for: target)
+        async let second = loader.loadThumbnail(for: target)
+        let (thumbA, thumbB) = try await (first, second)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(thumbA.cgImage).width, 1280)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(thumbB.cgImage).width, 1280)
+        let original = try await loader.loadOriginalImage(for: target)
+        XCTAssertEqual(try XCTUnwrap(original.cgImage).width, 2400)
+        let fetchCount = await counter.count
+        XCTAssertEqual(fetchCount, 1)
     }
 }
 

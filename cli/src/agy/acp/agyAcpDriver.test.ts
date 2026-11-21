@@ -20,7 +20,10 @@ import type { AgyMode } from '../types';
 import type { AgentMessage } from '@/agent/types';
 
 vi.mock('@/agent/permissionAdapter', () => ({ PermissionAdapter: class { async cancelAll() {} } }));
-vi.mock('@/agent/acpSessionTitle', () => ({ registerAcpSessionTitleSync: () => {} }));
+vi.mock('@/agent/acpSessionTitle', () => ({
+    createAcpSessionTitleSync: () => ({ syncNativeTitle: () => {}, markManualTitle: () => {} }),
+    registerAcpSessionTitleSync: () => {}
+}));
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -1952,5 +1955,148 @@ describe('Antigravity ACP delivery', () => {
             [4, 'USER_INPUT', 'DONE', 'retry'],
             [5, 'PLANNER_RESPONSE', 'DONE', 'new 5']
         ]);
+    });
+
+    it('wires HAPI MCP bridge + systemPrompt append and auto-emits brain markdown images without duplicating display_image', async () => {
+        const brainDir = mkdtempSync(join(tmpdir(), 'agy-mcp-images-'));
+        const sessionBrainDir = join(brainDir, 'agy-native');
+        mkdirSync(sessionBrainDir, { recursive: true });
+        const pngBytes = Buffer.from([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+        ]);
+        const fallbackImg = join(sessionBrainDir, 'welcome-mockups.png');
+        const alreadyDisplayedImg = join(sessionBrainDir, 'already-shown.png');
+        writeFileSync(fallbackImg, pngBytes);
+        writeFileSync(alreadyDisplayedImg, pngBytes);
+
+        const stopBridge = vi.fn();
+        let onDisplayMedia: ((info: { path: string; mimeType: string; toolName: 'display_image' | 'display_video' | 'display_media' }) => void) | undefined;
+        const createMcpBridge = vi.fn(async (_client: unknown, opts?: { onDisplayMedia?: typeof onDisplayMedia }) => {
+            onDisplayMedia = opts?.onDisplayMedia;
+            return {
+                server: { url: 'http://127.0.0.1:41234/', stop: stopBridge },
+                mcpServers: {
+                    hapi: {
+                        command: '/usr/local/bin/hapi',
+                        args: ['mcp', '--url', 'http://127.0.0.1:41234/', '--tools', 'display_image'],
+                    }
+                }
+            };
+        });
+
+        const turn = deferred<void>();
+        const queue = new MessageQueue2<AgyMode>((m) => hashObject(m));
+        let update: ((message: AgentMessage) => void) | undefined;
+        const client = {
+            getMetadata: vi.fn(() => ({})),
+            updateAgentState: vi.fn(),
+            updateMetadata: vi.fn(),
+            rpcHandlerManager: { registerHandler: vi.fn() },
+            emitMessagesConsumed: vi.fn(),
+            sendAgentMessage: vi.fn(),
+            sendClaudeSessionMessage: vi.fn(),
+            setSteerDeliveryState: vi.fn(async () => true),
+            emitSteerIndeterminate: vi.fn()
+        };
+        const session = {
+            path: brainDir,
+            sessionId: null as string | null,
+            client,
+            queue,
+            setKillHandler: vi.fn(),
+            onThinkingChange: vi.fn(),
+            sendSessionEvent: vi.fn(),
+            onSessionFound: vi.fn((id: string) => { session.sessionId = id; })
+        };
+        const backend = {
+            initialize: vi.fn(async () => {}),
+            newSession: vi.fn(async () => 'agy-native'),
+            loadSession: vi.fn(async ({ sessionId }) => sessionId),
+            resumeSession: vi.fn(async ({ sessionId }) => sessionId),
+            registerExtensionRequestHandler: vi.fn(),
+            suppressUpdatesDuring: vi.fn(async <T>(fn: () => Promise<T>) => await fn()),
+            isPromptRequestInFlight: () => false,
+            prompt: vi.fn(async (_id, _content, sink) => {
+                update = sink;
+                await turn.promise;
+            }),
+            beginSoftSteerPrompt: vi.fn(),
+            waitForResponseComplete: vi.fn(async () => {}),
+            refreshSessionInfo: vi.fn(async () => {}),
+            cancelPrompt: vi.fn(async () => {}),
+            disconnect: vi.fn(async () => {})
+        };
+
+        const driver = new TestDriver(
+            session as unknown as AgySession,
+            () => backend as unknown as AcpSdkBackend,
+            { brainDir },
+            createMcpBridge as unknown as typeof import('@/codex/utils/buildHapiMcpBridge').buildHapiMcpBridge
+        );
+
+        try {
+            queue.push('show mockup', mode, 'img-turn');
+            const running = driver.run();
+            await vi.waitFor(() => expect(backend.prompt).toHaveBeenCalled());
+
+            expect(createMcpBridge).toHaveBeenCalledTimes(1);
+            expect(backend.newSession).toHaveBeenCalledWith(expect.objectContaining({
+                cwd: brainDir,
+                mcpServers: [
+                    {
+                        name: 'hapi',
+                        command: '/usr/local/bin/hapi',
+                        args: ['mcp', '--url', 'http://127.0.0.1:41234/', '--tools', 'display_image'],
+                        env: []
+                    }
+                ],
+                _meta: {
+                    antigravity: {
+                        systemPrompt: {
+                            append: expect.stringContaining('display_image')
+                        }
+                    }
+                }
+            }));
+
+            // Live streaming snapshot must NOT trigger fallback image registration yet.
+            update!({ type: 'text', text: `![Streaming](${fallbackImg})`, live: true, streamSnapshot: true, id: 's1' });
+            await new Promise((r) => setTimeout(r, 30));
+            expect(client.sendAgentMessage.mock.calls.filter(([m]) => m.type === 'generated-image')).toHaveLength(0);
+
+            // Simulate MCP display_image already having emitted alreadyDisplayedImg in this turn.
+            onDisplayMedia?.({ path: alreadyDisplayedImg, mimeType: 'image/png', toolName: 'display_image' });
+            await new Promise((r) => setTimeout(r, 20));
+
+            // Settled reply references both images; only fallbackImg should be auto-emitted.
+            update!({
+                type: 'text',
+                text: `![MyDots 方案对比](${fallbackImg})\n\n![Already Shown](${alreadyDisplayedImg})`,
+                streamSnapshot: true,
+                id: 's1'
+            });
+            turn.resolve();
+
+            await vi.waitFor(() => {
+                expect(session.sendSessionEvent).toHaveBeenCalledWith({ type: 'ready' });
+            });
+
+            const generatedImages = client.sendAgentMessage.mock.calls
+                .map(([m]) => m)
+                .filter((m) => m.type === 'generated-image');
+            expect(generatedImages).toHaveLength(1);
+            expect(generatedImages[0]).toMatchObject({
+                type: 'generated-image',
+                fileName: 'MyDots 方案对比.png',
+                mimeType: 'image/png'
+            });
+
+            await driver.stop();
+            await running;
+            expect(stopBridge).toHaveBeenCalledTimes(1);
+        } finally {
+            rmSync(brainDir, { recursive: true, force: true });
+        }
     });
 });

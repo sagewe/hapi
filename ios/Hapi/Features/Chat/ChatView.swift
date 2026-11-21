@@ -329,6 +329,7 @@ struct ChatView: View {
             viewerRoute = FileViewerRoute(sessionId: sessionId, path: path, mode: .file)
         }
         .environment(\.chatMedia, model.mediaLoader)
+        .environment(\.hapiMarkdownImageLoader, model.markdownImageLoader)
         .environment(\.chatPresentationState, model.presentationState)
         .environment(\.hapiMarkdownCache, model.markdownCache)
         .environment(\.chatInteractions, model.interactor)

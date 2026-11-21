@@ -16,6 +16,7 @@ export type McpServerStdio = {
 export type AgentSessionConfig = {
     cwd: string;
     mcpServers: McpServerStdio[];
+    _meta?: Record<string, unknown>;
 };
 
 export type PromptContent = {
