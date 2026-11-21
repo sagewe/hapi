@@ -1,6 +1,7 @@
 import AVKit
 import Combine
 import HapiProtocol
+import HapiUI
 import QuickLook
 import SwiftUI
 import UIKit
@@ -185,7 +186,8 @@ private struct GeneratedMediaPreview: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
 }
 
-/// Minimal full-screen image viewer; keep the existing tap-to-dismiss behavior.
+/// Full-screen zoomable image viewer: pinch/double-tap to zoom and pan;
+/// single tap at 1× or close button dismisses.
 private struct ImageViewer: View {
     let image: UIImage?
     let title: String
@@ -200,18 +202,21 @@ private struct ImageViewer: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
             if let image = original ?? image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(8)
+                ZoomableImageView(image: image) {
+                    dismiss()
+                }
+                .ignoresSafeArea()
             } else {
-                Text(verbatim: title).foregroundStyle(.white)
+                Text(verbatim: title)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismiss() }
             }
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.white.opacity(0.85))
                     .padding(16)
             }
             .accessibilityLabel("Close")
@@ -222,7 +227,6 @@ private struct ImageViewer: View {
                     .padding()
             }
         }
-        .onTapGesture { dismiss() }
         .task(id: attempt) {
             guard let loader else { return }
             failed = false

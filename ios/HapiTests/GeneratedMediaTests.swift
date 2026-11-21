@@ -431,6 +431,57 @@ final class GeneratedMediaTests: XCTestCase {
         let fetchCount = await counter.count
         XCTAssertEqual(fetchCount, 1)
     }
+
+    func testZoomableImageViewZoomsAndPreservesZoomWhenOriginalReplacesPreview() {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let preview = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 320), format: format).image { ctx in
+            UIColor.systemBlue.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 640, height: 320))
+        }
+        let original = UIGraphicsImageRenderer(size: CGSize(width: 2560, height: 1280), format: format).image { ctx in
+            UIColor.systemOrange.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 2560, height: 1280))
+        }
+
+        let representableHost = UIHostingController(rootView: ZoomableImageView(image: preview))
+        let scene = try? XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = scene.map { UIWindow(windowScene: $0) }
+        window?.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window?.rootViewController = representableHost
+        window?.makeKeyAndVisible()
+        defer { window?.isHidden = true }
+        representableHost.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        representableHost.view.setNeedsLayout()
+        representableHost.view.layoutIfNeeded()
+
+        func findZoomContainer(in root: UIView) -> ZoomableImageContainerView? {
+            if let match = root as? ZoomableImageContainerView { return match }
+            for child in root.subviews {
+                if let match = findZoomContainer(in: child) { return match }
+            }
+            return nil
+        }
+
+        guard let zoomView = findZoomContainer(in: representableHost.view) else {
+            XCTFail("Expected ZoomableImageContainerView in hierarchy")
+            return
+        }
+        XCTAssertEqual(zoomView.scrollView.minimumZoomScale, 1.0, accuracy: 0.01)
+        XCTAssertGreaterThanOrEqual(zoomView.scrollView.maximumZoomScale, 6.0)
+
+        zoomView.toggleZoom(at: CGPoint(x: 100, y: 50), animated: false)
+        XCTAssertGreaterThan(zoomView.scrollView.zoomScale, 2.0)
+
+        // Upgrading to the higher-resolution original with the same aspect ratio must preserve zoom.
+        representableHost.rootView = ZoomableImageView(image: original)
+        representableHost.view.layoutIfNeeded()
+        XCTAssertGreaterThan(zoomView.scrollView.zoomScale, 2.0)
+
+        // Toggling again returns to 1×.
+        zoomView.toggleZoom(at: CGPoint(x: 100, y: 50), animated: false)
+        XCTAssertEqual(zoomView.scrollView.zoomScale, 1.0, accuracy: 0.01)
+    }
 }
 
 private actor MediaPlaybackHTTP: HTTPPerforming {

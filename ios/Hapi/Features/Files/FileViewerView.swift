@@ -17,6 +17,7 @@ import UIKit
 /// chip instead of scrolling/highlighting (same trade-off as Android B-M4c).
 struct FileViewerView: View {
     @State private var model: FileViewerModel
+    @State private var imageViewerOpen = false
     private let markdownImageLoader: HapiMarkdownImageLoader
 
     init(session: HubSession, route: FileViewerRoute) {
@@ -201,11 +202,34 @@ struct FileViewerView: View {
             HintBlock(text: String(localized: "Binary file — no preview available"))
         case .image(let data, _):
             if let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .accessibilityLabel(model.fileName)
+                Button {
+                    imageViewerOpen = true
+                } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel(model.fileName)
+                }
+                .buttonStyle(.plain)
+                .fullScreenCover(isPresented: $imageViewerOpen) {
+                    ZStack(alignment: .topTrailing) {
+                        Color.black.ignoresSafeArea()
+                        ZoomableImageView(image: image) {
+                            imageViewerOpen = false
+                        }
+                        .ignoresSafeArea()
+                        Button {
+                            imageViewerOpen = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white.opacity(0.85))
+                                .padding(16)
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                }
             } else {
                 // SVG and other formats UIImage can't decode.
                 HintBlock(text: String(localized: "Preview not available for this image format"))

@@ -577,27 +577,25 @@ struct ScratchlistAttachmentViewer: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(8)
+                ZoomableImageView(image: image) {
+                    dismiss()
+                }
+                .ignoresSafeArea()
             } else {
                 Text(attachment.filename)
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismiss() }
             }
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.white.opacity(0.85))
                     .padding(16)
             }
-        }
-        .onTapGesture {
-            dismiss()
         }
         .task {
             guard attachment.mimeType.hasPrefix("image/") else { return }

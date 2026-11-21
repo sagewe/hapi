@@ -956,22 +956,20 @@ private struct MarkdownFullScreenImageViewer: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            SwiftUI.Image(uiImage: original ?? preview)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(8)
+            ZoomableImageView(image: original ?? preview) {
+                dismiss()
+            }
+            .ignoresSafeArea()
             Button {
                 dismiss()
             } label: {
                 SwiftUI.Image(systemName: "xmark.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.white.opacity(0.85))
                     .padding(16)
             }
             .accessibilityLabel("Close")
         }
-        .onTapGesture { dismiss() }
         .task(id: target) {
             if let loaded = try? await loader.loadOriginalImage(for: target), !Task.isCancelled {
                 original = loaded
