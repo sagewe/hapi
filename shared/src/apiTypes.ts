@@ -84,11 +84,22 @@ export const ClientQuickActionSchema = z.object({
 })
 export type ClientQuickAction = z.infer<typeof ClientQuickActionSchema>
 
+export const ClientModelPresetSchema = z.object({
+    id: z.string().min(1).max(80),
+    label: z.string().min(1).max(80),
+    subtitle: z.string().max(200).optional(),
+    model: z.string().min(1).max(200),
+    effort: z.string().min(1).max(80).optional(),
+    isDefault: z.boolean().optional()
+})
+export type ClientModelPreset = z.infer<typeof ClientModelPresetSchema>
+
 export const ClientProfileSchema = z.object({
     mode: z.enum(['developer', 'assistant']).default('developer'),
     appTitle: z.string().min(1).max(160).optional(),
     defaultAgent: AgentFlavorSchema.optional(),
     defaultModel: z.string().max(200).optional(),
+    modelPresets: z.array(ClientModelPresetSchema).max(8).optional(),
     defaultPermissionMode: PermissionModeSchema.optional(),
     defaultDirectory: z.string().min(1).max(4096).optional(),
     hideExecutionDetails: z.boolean().optional(),

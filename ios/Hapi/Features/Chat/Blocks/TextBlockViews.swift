@@ -230,6 +230,7 @@ struct AgentTextBlockView: View {
 /// Extended thinking: streams open while active, collapses to a subdued
 /// single-line summary once superseded, and expands in place on tap.
 struct AgentReasoningBlockView: View {
+    @Environment(\.executionDetailsHidden) private var executionDetailsHidden
     let block: AgentReasoningBlock
     let isStreaming: Bool
     @ChatStoredState private var expandedOverride: Bool?
@@ -278,6 +279,15 @@ struct AgentReasoningBlockView: View {
     }
 
     var body: some View {
+        if executionDetailsHidden {
+            Text("正在检索与核验资料…")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+                .accessibilityIdentifier("assistant.progress")
+        } else { developerBody }
+    }
+
+    private var developerBody: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {

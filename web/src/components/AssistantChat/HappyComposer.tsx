@@ -2344,7 +2344,7 @@ export function HappyComposer(props: {
                 <ComposerPrimitive.Root className={rootClassName} onSubmit={handleSubmit}>
                     {overlays}
 
-                    <StatusBar
+                    {!assistant && <StatusBar
                         active={active}
                         thinking={thinking}
                         agentState={agentState}
@@ -2365,7 +2365,7 @@ export function HappyComposer(props: {
                         voiceStatus={effectiveVoiceStatus}
                         usageQueryApi={props.usageQueryApi}
                         usageQueryMachineId={props.usageQueryMachineId}
-                    />
+                    />}
 
                     {dictationActive && dictation.partialTranscript ? (
                         <div
@@ -2506,7 +2506,7 @@ export function HappyComposer(props: {
                                     />
                                 )}
                             </div>
-                            {richMentionsEnabled && richComposerFueStatus === 'engaging' ? (
+                            {!assistant && richMentionsEnabled && richComposerFueStatus === 'engaging' ? (
                                 <FueCallout
                                     title={t('richComposer.fueTitle')}
                                     body={t('richComposer.fueBody')}

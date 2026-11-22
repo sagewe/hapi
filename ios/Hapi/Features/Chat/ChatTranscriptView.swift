@@ -151,10 +151,12 @@ struct ChatTranscriptView: View {
             spacingBefore: { previous, row in row.spacing(after: previous) }
         ) { row in
             // The list bridges the current environment into its hosting roots.
-            AnyView(rowView(row, basePath: basePath))
+            AnyView(rowView(row, basePath: basePath).environment(\.executionDetailsHidden, model.hidesExecutionDetails))
         }
         .overlay(alignment: .trailing) {
-            TurnJumpRailOverlay(model: model, onOpenJumpSheet: onOpenJumpSheet)
+            if !model.isAssistantMode {
+                TurnJumpRailOverlay(model: model, onOpenJumpSheet: onOpenJumpSheet)
+            }
         }
         .overlay(alignment: .bottomTrailing) {
             JumpToLatestOverlay(model: model)
@@ -200,7 +202,9 @@ struct ChatTranscriptView: View {
                 InlineExecutionGroupView(presentation: presentation, model: model, basePath: basePath)
             } else { ToolGroupBlockView(presentation: presentation) }
         case .executionText(let groupID, let block):
-            if case .agentReasoning(let reasoning) = block {
+            if case .agentReasoning = block, model.hidesExecutionDetails {
+                Text("正在检索与核验资料…").font(.caption).foregroundStyle(.secondary)
+            } else if case .agentReasoning(let reasoning) = block {
                 CachedMarkdownView(markdown: reasoning.text)
                     .opacity(0.75)
                     .padding(.leading, 8)

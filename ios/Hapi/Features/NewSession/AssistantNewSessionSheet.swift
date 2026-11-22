@@ -2,7 +2,12 @@ import HapiProtocol
 import SwiftUI
 
 private struct AssistantModeKey: EnvironmentKey { static let defaultValue = false }
+private struct ExecutionDetailsHiddenKey: EnvironmentKey { static let defaultValue = false }
 extension EnvironmentValues {
+    var executionDetailsHidden: Bool {
+        get { self[ExecutionDetailsHiddenKey.self] }
+        set { self[ExecutionDetailsHiddenKey.self] = newValue }
+    }
     var isAssistantMode: Bool {
         get { self[AssistantModeKey.self] }
         set { self[AssistantModeKey.self] = newValue }
@@ -51,6 +56,12 @@ struct AssistantNewSessionSheet: View {
     @State private var error: String?
     @State private var advanced = false
     @State private var useCodex = false
+    @State private var selectedPresetId: String
+    init(session: HubSession, onCreated: @escaping (String) -> Void) {
+        self.session = session
+        self.onCreated = onCreated
+        _selectedPresetId = State(initialValue: session.clientProfile?.defaultModelPreset?.id ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -58,6 +69,9 @@ struct AssistantNewSessionSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("选择调查场景，进入后填写对象或上传资料。共用手机的语音、相机与文件入口。")
                         .foregroundStyle(.secondary)
+                    if !useCodex, let presets = session.clientProfile?.modelPresets, !presets.isEmpty {
+                        AssistantModelPresetPicker(presets: presets, selection: $selectedPresetId)
+                    }
                     AssistantQuickActions(actions: session.clientProfile?.quickActions ?? []) { create($0.prompt) }
                     Button("直接新建空白调查", systemImage: "plus.bubble") { create(nil) }
                         .buttonStyle(.borderedProminent).frame(maxWidth: .infinity, minHeight: 44)
@@ -77,7 +91,8 @@ struct AssistantNewSessionSheet: View {
     private func create(_ prompt: String?) {
         busy = true; error = nil
         Task {
-            do { onCreated(try await session.spawnAssistantSession(prompt: prompt, agent: useCodex ? .codex : nil)) }
+            do { onCreated(try await session.spawnAssistantSession(prompt: prompt, agent: useCodex ? .codex : nil,
+                preset: session.clientProfile?.modelPresets?.first { $0.id == selectedPresetId })) }
             catch { self.error = (error as? AssistantSessionError)?.localizedDescription ?? "暂时无法创建调查，请稍后重试" }
             busy = false
         }

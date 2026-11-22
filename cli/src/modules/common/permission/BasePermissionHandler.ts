@@ -78,7 +78,14 @@ export function resolveToolAutoApprovalDecision(
         writeToolNameHints: ruleOverrides?.writeToolNameHints ?? AUTO_APPROVE_WRITE_TOOL_HINTS
     };
 
-    const lowerTool = toolName.toLowerCase();
+    const lowerTool = toolName.trim().toLowerCase();
+    // ACP may report a display title ("Run mcp_hapi_list_tags") instead of
+    // the MCP wire name. Match only these exact, local presentation tools.
+    const presentationTool = /^(?:run\s+)?(?:mcp_hapi_|mcp__hapi__|hapi_|happy__)?(?:list_tags|change_title|add_tags|display_image|display_video|display_media)$/.test(lowerTool);
+    if (presentationTool) {
+        if (mode === 'request-review' || mode === 'plan' || mode === 'ask') return null;
+        return mode === 'always-proceed' || mode === 'yolo' ? 'approved_for_session' : 'approved';
+    }
     const lowerId = toolCallId.toLowerCase();
     const decisionForMode: AutoApprovalDecision = (mode === 'yolo' || mode === 'always-proceed') ? 'approved_for_session' : 'approved';
 

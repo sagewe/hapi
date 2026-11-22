@@ -1,4 +1,4 @@
-import { useClientProfile } from '@/lib/client-profile'
+import { useHideExecutionDetails, useClientProfile } from '@/lib/client-profile'
 import { Component, createRef, useEffect, useState, useMemo, useRef, useLayoutEffect, type ReactNode } from 'react'
 import { executionDetailSections, type ExecutionDetailSection } from '@/chat/executionDetails'
 import type { ChatBlock, GeneratedImageBlock } from '@/chat/types'
@@ -54,6 +54,7 @@ function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTimin
 /** All providers share this outer disclosure; inner views retain tool semantics. */
 export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupBlock; renderMedia: (block: GeneratedImageBlock) => ReactNode }) {
     const assistant = useClientProfile()?.mode === 'assistant'
+    const hideDetails = useHideExecutionDetails()
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const open = ctx.openExecutionProcesses?.has(block.id) ?? false
@@ -63,7 +64,7 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
     const previousSections = useRef<ExecutionDetailSection[]>([])
     const sections = useMemo(() => executionDetailSections(members, previousSections.current), [members])
     useLayoutEffect(() => { previousSections.current = sections }, [sections])
-    const renderStep = (member: ChatBlock) => <div key={member.id} data-execution-step={member.kind === 'tool-call' ? undefined : member.id}>
+    const renderStep = (member: ChatBlock) => member.kind === 'agent-reasoning' && hideDetails ? null : <div key={member.id} data-execution-step={member.kind === 'tool-call' ? undefined : member.id}>
         {member.kind === 'tool-call' ? <InlineExecutionTool block={member} />
             : member.kind === 'generated-image' ? renderMedia(member)
             : member.kind === 'agent-text' || member.kind === 'agent-reasoning'

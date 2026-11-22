@@ -1,5 +1,5 @@
 import HapiClient
-import HapiProtocol
+@testable import HapiProtocol
 import HapiUI
 import SwiftUI
 import UIKit
@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class AssistantProfileTests: XCTestCase {
     private actor HTTP: HTTPPerforming {
-        var profile = #"{"clientProfile":{"mode":"assistant","appTitle":"合规调查助手","defaultAgent":"agy","defaultPermissionMode":"auto","defaultDirectory":"/test","quickActions":[{"id":"company","title":"企业主体与股权穿透","prompt":"请核查："}]}}"#
+        var profile = #"{"clientProfile":{"mode":"assistant","appTitle":"合规调查助手","defaultAgent":"agy","defaultPermissionMode":"auto","defaultDirectory":"/test","modelPresets":[{"id":"quick","label":"快速","model":"gemini-4-hydrogen-medium","effort":"medium"},{"id":"deep","label":"深度","model":"gemini-4-neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"company","title":"企业主体与股权穿透","prompt":"请核查："}]}}"#
         func set(_ value: String) { profile = value }
         func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             let body = request.url!.path.hasSuffix("/api/hub-settings") ? profile : #"{"machines":[]}"#
@@ -56,6 +56,30 @@ final class AssistantProfileTests: XCTestCase {
         }
         session.shutdown()
     }
+    func testAssistantReasoningNeverExpandsRawEnglish() async throws {
+        let block = AgentReasoningBlock(id: "reasoning-fixture", localId: nil, createdAt: 1,
+            invokedAt: nil, durationMs: nil, usage: nil, model: nil,
+            text: String(repeating: "The request is to investigate this company. ", count: 80), meta: nil)
+        let view = VStack {
+            AgentReasoningBlockView(block: block, isStreaming: true)
+            AgentReasoningBlockView(block: block, isStreaming: false)
+        }.environment(\.executionDetailsHidden, true).hapiTypography().hapiTheme(.light).padding()
+        let host = UIHostingController(rootView: view)
+        let size = host.sizeThatFits(in: CGSize(width: 390, height: 2000))
+        XCTAssertLessThan(size.height, 160, "Streaming reasoning must remain a short Chinese progress row")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 500)
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(200))
+        host.view.layoutIfNeeded()
+        if let capture = ProcessInfo.processInfo.environment["HAPI_ASSISTANT_CAPTURE"] {
+            let renderer = UIGraphicsImageRenderer(bounds: host.view.bounds)
+            let image = renderer.image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+            try image.pngData()?.write(to: URL(fileURLWithPath: capture))
+        }
+    }
     func testAssistantSheetFitsPhoneAndLargeText() async throws {
         let url = "http://127.0.0.1:1/profile-sheet-\(UUID())"
         defer { UserDefaults.standard.removeObject(forKey: "clientProfile:\(url)") }
@@ -71,6 +95,12 @@ final class AssistantProfileTests: XCTestCase {
         host.view.layoutIfNeeded()
         XCTAssertEqual(host.view.bounds.width, 390, accuracy: 1)
         XCTAssertTrue(host.view.intrinsicContentSize.height.isFinite)
+        if let capture = ProcessInfo.processInfo.environment["HAPI_ASSISTANT_CAPTURE"] {
+            let renderer = UIGraphicsImageRenderer(bounds: host.view.bounds)
+            let image = renderer.image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+            let url = URL(fileURLWithPath: capture).deletingLastPathComponent().appendingPathComponent("ios-new-presets.png")
+            try image.pngData()?.write(to: url)
+        }
         window.isHidden = true; session.shutdown()
     }
 }

@@ -24,16 +24,18 @@ extension APIClient {
     }
 
     /// `POST /api/sessions/:id/model` (`nil` resets to the default model).
-    public func setModel(sessionId: String, model: ModelSelection?) async throws {
+    public func setModel(sessionId: String, model: ModelSelection?, effort: String? = nil) async throws {
         struct SetModelRequest: Encodable {
             let model: ModelSelection?
+            let effort: String?
 
             enum CodingKeys: String, CodingKey {
-                case model
+                case model, effort
             }
 
             func encode(to encoder: Encoder) throws {
                 var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encodeIfPresent(effort, forKey: .effort)
                 if let model {
                     try container.encode(model, forKey: .model)
                 } else {
@@ -44,7 +46,7 @@ extension APIClient {
         try await requestVoid(
             .post,
             "/api/sessions/\(encodePathComponent(sessionId))/model",
-            body: SetModelRequest(model: model)
+            body: SetModelRequest(model: model, effort: effort)
         )
     }
 

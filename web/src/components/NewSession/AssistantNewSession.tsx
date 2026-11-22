@@ -1,3 +1,5 @@
+import { assistantPermissionMode } from '@/lib/client-profile'
+import { AssistantModelPresetPicker, defaultPreset } from '@/components/AssistantModelPresetPicker'
 import { useState } from 'react'
 import type { ClientProfile } from '@hapi/protocol/apiTypes'
 import type { ApiClient } from '@/api/client'
@@ -12,6 +14,8 @@ export function AssistantNewSession(props: {
     const { spawnSession, isPending } = useSpawnSession(props.api)
     const [error, setError] = useState<string | null>(null)
     const [codex, setCodex] = useState(false)
+    const [presetId, setPresetId] = useState(() => defaultPreset(props.profile)?.id ?? '')
+    const preset = props.profile.modelPresets?.find(p => p.id === presetId)
     const create = async (prompt?: string) => {
         setError(null)
         const machines = props.machines.filter(m => m.active)
@@ -20,8 +24,9 @@ export function AssistantNewSession(props: {
         try {
             const result = await spawnSession({ machineId: machines[0]!.id,
                 directory: props.profile.defaultDirectory, agent: codex ? 'codex' : props.profile.defaultAgent ?? 'agy',
-                model: codex ? undefined : props.profile.defaultModel,
-                permissionMode: codex ? 'default' : props.profile.defaultPermissionMode })
+                model: codex ? undefined : preset?.model ?? props.profile.defaultModel,
+                effort: codex ? undefined : preset?.effort,
+                permissionMode: assistantPermissionMode(props.profile, codex ? 'codex' : props.profile.defaultAgent ?? 'agy') })
             if (result.type !== 'success') { setError('暂时无法创建调查，请稍后重试'); return }
             if (prompt) saveDraft(result.sessionId, prompt)
             props.onSuccess(result.sessionId)
@@ -29,6 +34,8 @@ export function AssistantNewSession(props: {
     }
     return <div className="mx-auto flex max-w-xl flex-col gap-4 p-4">
         <p className="text-sm text-[var(--app-hint)]">选择场景，进入后填写对象或上传图片、PDF。也可以直接开始。</p>
+        {!codex && props.profile.modelPresets?.length ? <AssistantModelPresetPicker presets={props.profile.modelPresets}
+            value={presetId} disabled={isPending} onSelect={p => setPresetId(p.id)} /> : null}
         {(props.profile.quickActions ?? []).map(action => <button type="button" key={action.id}
             disabled={isPending} onClick={() => void create(action.prompt)}
             className="min-h-20 rounded-2xl bg-[var(--app-secondary-bg)] p-4 text-left disabled:opacity-50">

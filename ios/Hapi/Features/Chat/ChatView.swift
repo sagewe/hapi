@@ -194,6 +194,11 @@ struct ChatView: View {
                     }
                 }
             }
+            if session.isAssistantMode, model.header.flavor == "agy", session.clientProfile?.modelPresets?.isEmpty == false {
+                ToolbarItem(placement: .topBarTrailing) {
+                    AssistantChatModelPicker(session: session, sessionId: sessionId)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 moreActionsMenu
             }

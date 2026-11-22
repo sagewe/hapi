@@ -34,3 +34,13 @@ export function ClientProfileProvider(props: { api: ApiClient; baseUrl: string; 
     if (query.isPending) return <div className="p-6 text-center" role="status">正在连接…</div>
     return <ClientProfileContext.Provider value={query.data ?? undefined}>{props.children}</ClientProfileContext.Provider>
 }
+
+export function useHideExecutionDetails(): boolean {
+    const profile = useClientProfile()
+    return profile?.mode === 'assistant' && profile.hideExecutionDetails !== false
+}
+
+export function assistantPermissionMode(profile: ClientProfile, agent: string) {
+    if (agent === 'codex') return ['always-proceed', 'yolo'].includes(profile.defaultPermissionMode ?? '') ? 'yolo' as const : 'default' as const
+    return profile.defaultPermissionMode
+}

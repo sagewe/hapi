@@ -12,3 +12,11 @@ describe('client profile contract', () => {
         expect(ClientProfileSchema.safeParse({ quickActions: [{ id: 'one', title: 'test', prompt: '' }] }).success).toBe(false)
     })
 })
+
+it('round-trips optional model presets without changing old profiles', () => {
+    const modelPresets = [{ id: 'quick', label: '快速', model: 'gemini-4-hydrogen-medium', effort: 'medium' },
+        { id: 'deep', label: '深度', model: 'gemini-4-neon-high', effort: 'high', isDefault: true }]
+    expect(ClientProfileSchema.parse({ mode: 'assistant', modelPresets }).modelPresets).toEqual(modelPresets)
+    expect(ClientProfileSchema.parse({}).modelPresets).toBeUndefined()
+    expect(ClientProfileSchema.safeParse({ modelPresets: [{ id: 'broken', label: '深度' }] }).success).toBe(false)
+})

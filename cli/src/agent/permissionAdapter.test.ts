@@ -124,7 +124,7 @@ function createHarnessWithInterceptor(
     };
 }
 
-function createHarnessWithMode(getPermissionMode: () => 'default' | 'read-only' | 'safe-yolo' | 'yolo') {
+function createHarnessWithMode(getPermissionMode: () => 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'auto' | 'always-proceed' | 'request-review') {
     let agentState: FakeAgentState = {
         requests: {},
         completedRequests: {}
@@ -458,5 +458,32 @@ describe('PermissionAdapter', () => {
 
         expect(intercept).toHaveBeenCalledOnce();
         expect(harness.respondCalls).toHaveLength(1);
+    });
+});
+
+describe('Antigravity HAPI MCP approval titles', () => {
+    it.each(['list_tags', 'change_title', 'add_tags', 'display_image', 'display_video', 'display_media'])(
+        'auto approves Run mcp_hapi_%s without a pending card', async name => {
+            const harness = createHarnessWithMode(() => 'auto');
+            harness.emitPermissionRequest(buildRequest({ title: `Run mcp_hapi_${name}`, rawInput: {} }));
+            await flushAsyncWork();
+            expect(harness.getAgentState().requests).toEqual({});
+            expect(harness.respondCalls[0]?.response).toEqual({ outcome: 'selected', optionId: 'allow-once' });
+        });
+    it('always-proceed approves browser and shell requests without pending cards', async () => {
+        for (const title of ['browser_navigate', 'Run render_pdf.py', 'Run mcp_hapi_list_tags']) {
+            const harness = createHarnessWithMode(() => 'always-proceed');
+            harness.emitPermissionRequest(buildRequest({ title, rawInput: {} }));
+            await flushAsyncWork();
+            expect(harness.getAgentState().requests).toEqual({});
+            expect(harness.respondCalls[0]?.response).toEqual({ outcome: 'selected', optionId: 'allow-always' });
+        }
+    });
+    it.each(['ping_peer', 'spawn_peer'])('keeps %s approval boundaries in auto mode', async name => {
+        const harness = createHarnessWithMode(() => 'auto');
+        harness.emitPermissionRequest(buildRequest({ title: `Run mcp_hapi_${name}`, rawInput: {} }));
+        await flushAsyncWork();
+        expect(Object.keys(harness.getAgentState().requests)).toHaveLength(1);
+        expect(harness.respondCalls).toHaveLength(0);
     });
 });

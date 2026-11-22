@@ -232,3 +232,21 @@ describe('BasePermissionHandler overlapping answers', () => {
         })
     })
 })
+
+describe('HAPI presentation tools through ACP titles', () => {
+    const tools = ['list_tags', 'change_title', 'add_tags', 'display_image', 'display_video', 'display_media'];
+    it.each(tools)('approves exact harmless %s aliases in auto mode', name => {
+        for (const prefix of ['mcp_hapi_', 'mcp__hapi__']) {
+            expect(resolveToolAutoApprovalDecision('auto', `Run ${prefix}${name}`, 'call-1')).toBe('approved');
+            expect(resolveToolAutoApprovalDecision('auto', `${prefix}${name}`, 'call-1')).toBe('approved');
+        }
+    });
+    it.each(['request-review', 'plan', 'ask'] as const)('preserves forced confirmation in %s', mode => {
+        for (const name of tools) expect(resolveToolAutoApprovalDecision(mode, `Run mcp_hapi_${name}`, 'call-1')).toBeNull();
+    });
+    it('does not broaden cross-session tools or accept suffixes/forged ids', () => {
+        for (const name of ['ping_peer', 'spawn_peer', 'inspect_peer', 'display_media_and_execute']) {
+            expect(resolveToolAutoApprovalDecision('auto', `Run mcp_hapi_${name}`, 'mcp_hapi_display_media')).toBeNull();
+        }
+    });
+});

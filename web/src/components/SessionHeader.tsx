@@ -1,3 +1,4 @@
+import { AssistantChatModelPicker } from '@/components/AssistantModelPresetPicker'
 import { useClientProfile } from '@/lib/client-profile'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useIsMutating, useQueryClient } from '@tanstack/react-query'
@@ -242,7 +243,8 @@ export function SessionHeader(props: {
     onSessionReopened?: (newSessionId: string) => void | Promise<void>
     onOpenParentSession?: (parentSessionId: string) => void
 }) {
-    const assistant = useClientProfile()?.mode === 'assistant'
+    const clientProfile = useClientProfile()
+    const assistant = clientProfile?.mode === 'assistant'
     const { t, locale } = useTranslation()
     const queryClient = useQueryClient()
     const { addToast } = useToast()
@@ -665,6 +667,8 @@ export function SessionHeader(props: {
                         </div> : null}
                     </div>
 
+                    {assistant && api && session.metadata?.flavor === 'agy' && clientProfile?.modelPresets?.length
+                        ? <AssistantChatModelPicker profile={clientProfile} api={api} session={session} /> : null}
                     {!assistant && props.onToggleFiles ? (
                         <button
                             type="button"

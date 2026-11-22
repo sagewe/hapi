@@ -24,6 +24,7 @@ final class HubSession {
     let api: APIClient
     private(set) var clientProfile: ClientProfile?
     var isAssistantMode: Bool { clientProfile?.isAssistant == true }
+    var hidesExecutionDetails: Bool { clientProfile?.hidesExecutionDetails == true }
     @ObservationIgnored private var profileTask: Task<Void, Never>?
 
     func refreshClientProfile() async {
@@ -38,7 +39,7 @@ final class HubSession {
         } catch { /* Keep this hub's last successful snapshot while offline. */ }
     }
 
-    func spawnAssistantSession(prompt: String? = nil, agent: AgentFlavor? = nil) async throws -> String {
+    func spawnAssistantSession(prompt: String? = nil, agent: AgentFlavor? = nil, preset: ClientModelPreset? = nil) async throws -> String {
         guard let profile = clientProfile, profile.isAssistant,
               let directory = profile.defaultDirectory else {
             throw AssistantSessionError.configuration
@@ -48,9 +49,11 @@ final class HubSession {
             throw AssistantSessionError.offline
         }
         let selectedAgent = agent ?? profile.defaultAgent ?? .agy
+        let selection = preset ?? profile.defaultModelPreset
         let request = SpawnRequest(directory: directory, agent: selectedAgent,
-            model: agent == nil ? profile.defaultModel : nil,
-            permissionMode: selectedAgent == .codex ? .default : profile.defaultPermissionMode.flatMap(PermissionMode.init(rawValue:)))
+            model: selectedAgent == .agy ? (selection?.model ?? profile.defaultModel) : (agent == nil ? profile.defaultModel : nil),
+            effort: selectedAgent == .agy ? selection?.effort : nil,
+            permissionMode: profile.assistantPermissionMode(for: selectedAgent))
         switch try await api.spawnSession(machineId: machine.id, request) {
         case .success(let id):
             if let prompt, !prompt.isEmpty {

@@ -1,3 +1,4 @@
+import { useHideExecutionDetails } from '@/lib/client-profile'
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, type FC, type KeyboardEvent, type PropsWithChildren, type UIEvent } from 'react'
 import {
     useAuiState,
@@ -47,7 +48,7 @@ function ShimmerDot() {
     )
 }
 
-export const Reasoning: ReasoningMessagePartComponent = ({ text, status }) => {
+const DeveloperReasoning: ReasoningMessagePartComponent = ({ text, status }) => {
     const previousTextRef = useRef(text)
     const runStartedWithRunningRef = useRef(status.type === 'running')
     const hasTextChangedDuringRunRef = useRef(false)
@@ -88,7 +89,7 @@ type HappyReasoningGroupProps = PropsWithChildren<
     Partial<Pick<ReasoningGroupProps, 'startIndex' | 'endIndex'>>
 >
 
-export const ReasoningGroup: FC<HappyReasoningGroupProps> = ({
+const DeveloperReasoningGroup: FC<HappyReasoningGroupProps> = ({
     children,
     startIndex = 0,
     endIndex,
@@ -249,4 +250,14 @@ export const ReasoningGroup: FC<HappyReasoningGroupProps> = ({
             </div>
         </div>
     )
+}
+
+// Keep the developer renderer unchanged; assistant mode never mounts raw reasoning.
+export const Reasoning: ReasoningMessagePartComponent = props => {
+    const hidden = useHideExecutionDetails()
+    return hidden ? null : <DeveloperReasoning {...props} />
+}
+export const ReasoningGroup: FC<HappyReasoningGroupProps> = props => {
+    const hidden = useHideExecutionDetails()
+    return hidden ? null : <DeveloperReasoningGroup {...props} />
 }
