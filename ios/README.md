@@ -555,7 +555,9 @@ reference from each supported file-mention agent.
 
 ## Scratchlist workflow
 
-The composer tray toggles a session-local `chat` / `scratchlist` destination.
+The composer supports session-local `chat` / `scratchlist` destinations.
+On Mac, the tray menu can save the current draft or open all saved drafts without
+changing that destination; writing a new held instruction is an explicit action.
 Scratchlist mode shows one recent draft, or just a header while the input is
 focused or when using accessibility text sizes, and an explicitly labelled
 **Save draft** action. Tap the header to open the full list, or × to return to
@@ -720,6 +722,14 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
 - Return sends from the composer and picks the first `/` or `@` suggestion;
   Shift/Option-Return insert a newline, IME composition is never intercepted,
   and ⌘↩ still sends. Scratchlist drafts keep Return as a newline.
+- The composer shares the phone's single configuration form for model, effort,
+  fast mode, permissions, collaboration mode and quota. Its anchored popover
+  preserves the draft and restores editor focus when closed. The summary falls
+  back to symbols in narrow windows; permission risk and quota colors remain.
+  The attachment menu also offers `@` and `/` insertion. Keyboard guidance is
+  available on hover instead of occupying toolbar space.
+- Sidebar rows use smaller icons, up to two title lines and one visible tag;
+  hover shows the complete title/project/tags and the context menu edits them.
 
 Shared with iPad: the menu bar / hardware-keyboard commands in
 `AppCommands.swift` — New Session ⌘N, Settings ⌘, Toggle Sidebar ⌃⌘S, and a
