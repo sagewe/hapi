@@ -25,6 +25,10 @@ final class TranscriptRefreshTests: XCTestCase {
     final class Driver {
         var rows = (0..<80).map { Row(id: String($0)) }
         var version = 0
+        var mountToken = 0
+        var jumpToken = 0
+        var scrollTarget: TranscriptScrollTarget?
+        let geometryCache = TranscriptGeometryCache()
         var basePath = "/before"
         var dark = false
         var locale = Locale(identifier: "en")
@@ -40,7 +44,7 @@ final class TranscriptRefreshTests: XCTestCase {
         let driver: Driver
         var body: some View {
             let token = driver.actionToken
-            ListView(driver: driver)
+            ListView(driver: driver).id(driver.mountToken)
                 .hapiTheme(driver.dark ? .dark : .light)
                 .environment(\.locale, driver.locale)
                 .environment(\.layoutDirection, driver.direction)
@@ -56,7 +60,9 @@ final class TranscriptRefreshTests: XCTestCase {
             // An ordinary value capture, not a live observable read in a row.
             let basePath = driver.basePath
             AnchoredTranscriptList(
-                items: driver.rows, historyVersion: driver.version, jumpToken: 0,
+                items: driver.rows, historyVersion: driver.version, jumpToken: driver.jumpToken,
+                scrollTarget: driver.scrollTarget,
+                geometryCache: driver.geometryCache,
                 contentRevision: "\(basePath):\(driver.actionToken)",
                 historyControlID: "history", onViewport: { _ in },
                 onLayout: { version, _ in driver.layouts.append(version) }
@@ -156,6 +162,47 @@ final class TranscriptRefreshTests: XCTestCase {
         await browse(view, index: 79)
         let tail = try XCTUnwrap(view.cellForItem(at: IndexPath(item: 79, section: 0)))
         XCTAssertEqual(tail.frame.height, 180, accuracy: 1, "Recycled cells must use the latest offscreen value")
+    }
+
+    func testRemountRestoresTheCachedReadingPositionInsteadOfJumpingToTheTail() async throws {
+        let driver = Driver()
+        let (window, _, first) = try host(driver)
+        defer { window.isHidden = true }
+        await settle { driver.layouts.contains(0) }
+        await browse(first, index: 25)
+        let offset = first.contentOffset.y
+        XCTAssertGreaterThan(offset, 1_000)
+        driver.mountToken += 1
+        func find(_ view: UIView) -> UICollectionView? {
+            if let result = view as? UICollectionView { return result }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        await settle { find(window)?.contentOffset.y == offset }
+        let restored = try XCTUnwrap(find(window))
+        XCTAssertFalse(restored === first, "Exercise a rebuilt transcript, as when switching back to a cached chat")
+        XCTAssertEqual(restored.contentOffset.y, offset, accuracy: 1)
+        XCTAssertNotNil(restored.cellForItem(at: IndexPath(item: 25, section: 0)))
+    }
+
+    func testRestorationDoesNotReplayAnOldJumpButAcceptsANewOne() async throws {
+        let driver = Driver()
+        driver.scrollTarget = TranscriptScrollTarget(token: 1, itemID: "40")
+        let (window, _, first) = try host(driver)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await settle { first.cellForItem(at: IndexPath(item: 40, section: 0)) != nil }
+        await browse(first, index: 25)
+        let offset = first.contentOffset.y
+        driver.mountToken += 1
+        func find(_ view: UIView) -> UICollectionView? {
+            if let result = view as? UICollectionView { return result }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        await settle { find(window)?.contentOffset.y == offset }
+        let restored = try XCTUnwrap(find(window))
+        XCTAssertEqual(restored.contentOffset.y, offset, accuracy: 1)
+        driver.jumpToken += 1
+        await settle { abs(restored.contentOffset.y - max(0, restored.contentSize.height - restored.bounds.height)) < 1 }
+        XCTAssertEqual(restored.contentOffset.y, max(0, restored.contentSize.height - restored.bounds.height), accuracy: 1)
     }
 
     func testEnvironmentOnlyChangesReachVisibleRows() async throws {

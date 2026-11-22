@@ -1,5 +1,6 @@
 import HapiUI
 import SwiftUI
+import UIKit
 
 /// One expandable home affordance: the unread lens, machine selection (two
 /// or more machines) and Mark All as Read. Future filter dimensions belong in
@@ -12,6 +13,29 @@ struct SessionFilterMenu: View {
     @State private var datesOpen = false
 
     var body: some View {
+        Group {
+            #if targetEnvironment(macCatalyst)
+            MacSessionFilterMenu(model: model, assistant: isAssistantMode,
+                tint: model.hasActiveFilters ? UIColor(theme.accent) : .label,
+                onDates: { datesOpen = true }, onMarkAllRead: { confirmMarkAllRead = true })
+                .frame(width: 32, height: 32)
+            #else
+            touchMenu
+            #endif
+        }
+        .sheet(isPresented: $datesOpen) { SessionDateRangeSheet(model: model) }
+        .alert("Mark All as Read?", isPresented: $confirmMarkAllRead) {
+            Button("Mark as Read") { model.markAllRead() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(String(
+                format: String(localized: "Marks %lld unread sessions as read across your devices."),
+                Int64(model.unreadCount)
+            ))
+        }
+    }
+
+    private var touchMenu: some View {
         Menu {
             Section {
                 Toggle(isOn: Binding(get: { model.activeOnly }, set: { model.setActiveOnly($0) })) {
@@ -63,16 +87,6 @@ struct SessionFilterMenu: View {
         .tint(model.hasActiveFilters ? theme.accent : .primary)
         .accessibilityValue(model.filterSummary ?? String(localized: "No filters"))
         .accessibilityIdentifier("home.filters")
-        .sheet(isPresented: $datesOpen) { SessionDateRangeSheet(model: model) }
-        .alert("Mark All as Read?", isPresented: $confirmMarkAllRead) {
-            Button("Mark as Read") { model.markAllRead() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(String(
-                format: String(localized: "Marks %lld unread sessions as read across your devices."),
-                Int64(model.unreadCount)
-            ))
-        }
     }
 
     private var tagSection: some View {

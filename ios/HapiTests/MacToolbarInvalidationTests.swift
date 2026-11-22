@@ -2,6 +2,7 @@
 import HapiClient
 import HapiProtocol
 import HapiUI
+import Observation
 import ObjectiveC.runtime
 import SwiftUI
 import UIKit
@@ -25,6 +26,68 @@ extension UIBarButtonItem {
 /// Changing a toast must not rebuild an unchanged native toolbar menu.
 @MainActor
 final class MacToolbarInvalidationTests: XCTestCase {
+    @Observable fileprivate final class Selection { var value = 0 }
+    private struct FilterHost: View {
+        let model: SessionListModel
+        let selection: Selection
+        var body: some View {
+            NavigationStack {
+                Text("Session \(selection.value)")
+                    .toolbar { ToolbarItem(placement: .topBarLeading) { SessionFilterMenu(model: model) } }
+            }
+        }
+    }
+
+    func testSessionSelectionDoesNotRebuildTheFilterMenu() async throws {
+        let sessions = HomeFilterTestSessions([
+            HomeFilterTestData.summary("a", machine: "mac"), HomeFilterTestData.summary("b", machine: "linux"),
+        ])
+        let model = HomeFilterTestData.model(sessions: sessions)
+        let selection = Selection()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: FilterHost(model: model, selection: selection))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await Task.sleep(for: .milliseconds(500))
+        let original = try XCTUnwrap(class_getInstanceMethod(UIBarButtonItem.self, #selector(setter: UIBarButtonItem.menu)))
+        let replacement = try XCTUnwrap(class_getInstanceMethod(UIBarButtonItem.self, #selector(UIBarButtonItem.hapiPerformance_setMenu(_:))))
+        method_exchangeImplementations(original, replacement)
+        defer { method_exchangeImplementations(original, replacement) }
+        MenuAssignments.count = 0
+        for value in 1...12 {
+            selection.value = value
+            model.selectedSessionId = value.isMultiple(of: 2) ? "a" : "b"
+            sessions.sessions[0].updatedAt += 1
+            try await Task.sleep(for: .milliseconds(60))
+        }
+        print("HAPI_FILTER_MENU_PROFILE selections=12 menuAssignments=\(MenuAssignments.count)")
+        XCTAssertLessThanOrEqual(MenuAssignments.count, 1)
+    }
+
+    func testDeferredFilterContentsUseTheCurrentSelectionAndCounts() {
+        let sessions = HomeFilterTestSessions([
+            HomeFilterTestData.summary("a", machine: "mac"), HomeFilterTestData.summary("b", machine: "linux"),
+        ])
+        let model = HomeFilterTestData.model(sessions: sessions)
+        let owner = MacSessionFilterMenu(model: model, assistant: false, tint: .label, onDates: {}, onMarkAllRead: {})
+        let coordinator = MacSessionFilterMenu.Coordinator(owner)
+        func actions(_ elements: [UIMenuElement]) -> [UIAction] {
+            elements.flatMap { element in
+                if let menu = element as? UIMenu { return actions(menu.children) }
+                return (element as? UIAction).map { [$0] } ?? []
+            }
+        }
+        let first = actions(coordinator.elements())
+        XCTAssertEqual(first.first { $0.title == String(localized: "Unread Only") }?.state, .off)
+        model.setUnreadOnly(true)
+        model.selectMachine("linux")
+        let updated = actions(coordinator.elements())
+        XCTAssertEqual(updated.first { $0.title == String(localized: "Unread Only") }?.state, .on)
+        XCTAssertTrue(updated.contains { $0.title == String(localized: "Clear Filters") })
+        XCTAssertTrue(updated.contains { $0.state == .on && $0.subtitle != nil }, "The machine catalogue retains selection and counts")
+    }
+
     func testTransientNoticesDoNotRebuildUnchangedToolbarMenus() async throws {
         let credentials = InMemoryCredentialStore()
         let hub = try XCTUnwrap(HubSession(

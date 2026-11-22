@@ -11,17 +11,22 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
 
     var body: some View {
         @Bindable var navigation = navigation
+        // Observe selection here, not only inside the lazy stack root. That
+        // root may be hidden behind a Boolean/item-based file destination.
+        let selectedSessionId = navigation.selectedSessionId
         NavigationSplitView(
             columnVisibility: $navigation.columnVisibility,
             preferredCompactColumn: $navigation.preferredCompactColumn
         ) {
-            let _ = navigation.selectedSessionId
             sidebar()
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 360)
         } detail: {
             NavigationStack(path: $navigation.detailPath) {
-                if let sessionId = navigation.selectedSessionId {
+                if let sessionId = selectedSessionId {
                     detail(sessionId)
+                        #if targetEnvironment(macCatalyst)
+                        .id(sessionId)
+                        #endif
                 } else {
                     ContentUnavailableView {
                         Label("Select a session", systemImage: "bubble.left.and.bubble.right")
@@ -34,10 +39,11 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
                     .accessibilityIdentifier("home.no-selection")
                 }
             }
-            // Switching sessions clears *all* destinations, including the
-            // existing Boolean/item-based file and tool presentations.
-            // No width, size class or column visibility participates in ID.
-            .id(navigation.selectedSessionId)
+            // Mac keeps its native navigation container while replacing the
+            // selected chat. Touch layouts retain the existing stack reset.
+            #if !targetEnvironment(macCatalyst)
+            .id(selectedSessionId)
+            #endif
         }
         .navigationSplitViewStyle(.balanced)
     }

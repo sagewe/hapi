@@ -522,8 +522,11 @@ final class SessionSplitPresentationTests: XCTestCase {
     }
 }
 
-private actor SplitTestHTTP: HTTPPerforming {
+actor SplitTestHTTP: HTTPPerforming {
     private(set) var messageRequests = 0
+    private let sessionSwitchProfile: Bool
+
+    init(sessionSwitchProfile: Bool = false) { self.sessionSwitchProfile = sessionSwitchProfile }
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try XCTUnwrap(request.url)
@@ -532,14 +535,17 @@ private actor SplitTestHTTP: HTTPPerforming {
         switch url.lastPathComponent {
         case "messages":
             messageRequests += 1
+            let sessionID = url.deletingLastPathComponent().lastPathComponent
+            let after = sessionSwitchProfile && URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.contains(where: { $0.name == "afterAt" }) == true
             let rows = (1...80).map { index in
                 DecryptedMessage(id: "message-\(index)", seq: index,
                     content: ["role": "agent", "content": ["type": "codex", "data": [
-                        "type": "message", "message": .string("布局检查 \(index) · iPad workspace\n\n" + String(repeating: "Keep the conversation readable while resizing the window. ", count: 3))
+                        "type": "message", "message": .string((sessionSwitchProfile ? "switch:\(sessionID): \(index)" : "布局检查 \(index) · iPad workspace") + "\n\n" + String(repeating: "Keep the conversation readable while resizing the window. ", count: 3))
                     ]]], createdAt: index * 1000, invokedAt: index * 1000)
             }
-            data = try JSONEncoder().encode(MessagesResponse(messages: rows, page: MessagesPage(
-                direction: .latest, limit: 200, epoch: 1, reset: false,
+            data = try JSONEncoder().encode(MessagesResponse(messages: after ? [] : rows, page: MessagesPage(
+                direction: after ? .after : .latest, limit: 200, epoch: 1, reset: false,
                 nextBeforeSeq: 1, nextBeforeAt: 1000, snapshotHeadSeq: 80, snapshotHeadAt: 80000, hasMore: false
             )))
         case "a", "b":

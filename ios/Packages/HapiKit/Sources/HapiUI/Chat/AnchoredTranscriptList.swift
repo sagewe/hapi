@@ -16,6 +16,9 @@ public struct TranscriptViewport: Equatable {
 public final class TranscriptGeometryCache {
     public var width: CGFloat = 0
     public var heights: [String: CGFloat] = [:]
+    fileprivate var metrics: TranscriptEnvironmentSignature?
+    fileprivate var position: TranscriptReadingPosition?
+    fileprivate weak var owner: AnyObject?
     public init() {}
 }
 
@@ -81,7 +84,13 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
     }
 
     public func makeUIViewController(context: Context) -> TranscriptCollectionController<Item> {
-        TranscriptCollectionController()
+        let controller = TranscriptCollectionController<Item>()
+        controller.claimGeometry(geometryCache)
+        return controller
+    }
+
+    public static func dismantleUIViewController(_ controller: TranscriptCollectionController<Item>, coordinator: ()) {
+        controller.endPresentation()
     }
 
     public func updateUIViewController(_ controller: TranscriptCollectionController<Item>, context: Context) {
@@ -107,6 +116,13 @@ public struct AnchoredTranscriptList<Item: Identifiable & Equatable>: UIViewCont
 struct ReadingAnchor {
     let id: String
     let offset: CGFloat
+}
+
+fileprivate struct TranscriptReadingPosition {
+    let anchor: ReadingAnchor?
+    let followsTail: Bool
+    let jumpToken: Int
+    let scrollTargetToken: Int
 }
 
 /// Stable-ID height estimates survive prepends and cell recycling. Unlike a
@@ -459,7 +475,7 @@ private struct TranscriptHostedRow<Item>: View {
     }
 }
 
-private struct TranscriptEnvironmentSignature: Equatable {
+fileprivate struct TranscriptEnvironmentSignature: Equatable {
     let dynamicTypeSize: DynamicTypeSize
     let legibilityWeight: LegibilityWeight?
     let typography: HapiTypography
@@ -506,6 +522,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var lastJumpToken = 0
     private var lastScrollTargetToken = 0
     private var lastTopVisibleItemID: String?
+    private var initializedGeometry = false
+    private var isDetached = false
     private var reportScheduled = false
     private var lastViewport: TranscriptViewport?
     private var bottomProximity = TranscriptBottomProximity()
@@ -565,6 +583,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
 
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        guard !isDetached else { return }
         guard collection.bounds.width > 24 else { return }
         let previousHeight = lastLayoutHeight
         lastLayoutHeight = collection.bounds.height
@@ -592,11 +611,34 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     }
 
     func update(_ configuration: AnchoredTranscriptList<Item>) {
+        guard !isDetached else { return }
         loadViewIfNeeded()
         pending = configuration
         // The first SwiftUI update may arrive before UIKit supplies bounds.
         guard collection.bounds.width > 24 else { return }
         drain()
+    }
+
+    fileprivate func claimGeometry(_ cache: TranscriptGeometryCache?) {
+        guard let cache else { return }
+        if let previous = cache.owner as? TranscriptCollectionController<Item>, previous !== self {
+            previous.layout.geometryCache = nil
+        }
+        cache.owner = self
+    }
+
+    fileprivate func endPresentation() {
+        if let cache = configuration?.geometryCache, cache.owner === self {
+            cache.position = TranscriptReadingPosition(anchor: captureAnchor(), followsTail: layout.followsTail,
+                jumpToken: lastJumpToken, scrollTargetToken: lastScrollTargetToken)
+        }
+        #if targetEnvironment(macCatalyst)
+        if let selection = MacTextSelectionTracker.shared.activeView, selection.isDescendant(of: view) {
+            MacTextSelectionTracker.shared.clear()
+        }
+        #endif
+        isDetached = true
+        pending = nil
     }
 
     private func captureAnchor() -> ReadingAnchor? {
@@ -628,16 +670,34 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         }
         let oldIDs = itemIDSet
         let oldHeight = layout.collectionViewContentSize.height
+        var restoration: TranscriptReadingPosition?
+        if !initializedGeometry {
+            initializedGeometry = true
+            if let cache = next.geometryCache {
+                if let previous = cache.owner as? TranscriptCollectionController<Item>, previous !== self {
+                    previous.layout.geometryCache = nil
+                }
+                cache.owner = self
+                restoration = cache.position
+                if let restoration {
+                    layout.followsTail = restoration.followsTail
+                    lastJumpToken = restoration.jumpToken
+                    lastScrollTargetToken = restoration.scrollTargetToken
+                }
+            }
+        }
         let widthChanged = abs(configuredWidth - collection.bounds.width) > 0.5
         let contentWidthChanged = abs(HapiReadingLayout.contentWidth(in: configuredWidth)
             - HapiReadingLayout.contentWidth(in: collection.bounds.width)) > 0.5
         // EnvironmentValues may contain live trait-backed storage. Compare
         // captured values, not two reads of that mutable environment storage.
         let nextSignature = TranscriptEnvironmentSignature(next.environment)
-        let metricsChanged = environmentSignature.map { !$0.hasSameMetrics(as: nextSignature) } ?? true
+        let previousMetrics = environmentSignature ?? next.geometryCache?.metrics
+        let metricsChanged = previousMetrics.map { !$0.hasSameMetrics(as: nextSignature) } ?? true
         let environmentChanged = environmentSignature != nextSignature
             || configuration?.contentRevision != next.contentRevision
         environmentSignature = nextSignature
+        if next.geometryCache?.owner === self { next.geometryCache?.metrics = nextSignature }
         var spacing: [CGFloat] = []
         spacing.reserveCapacity(next.items.count)
         var changed: [String] = []
@@ -671,6 +731,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         // Capture at COMMIT, after any reader motion during the request.
         if let scrollTarget {
             layout.anchorForUpdate = ReadingAnchor(id: scrollTarget.itemID, offset: scrollTarget.topPadding)
+        } else if !jump, let restoration, !restoration.followsTail {
+            layout.anchorForUpdate = restoration.anchor
         } else {
             layout.anchorForUpdate = layout.followsTail ? nil : captureAnchor()
         }
@@ -733,7 +795,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         #if DEBUG
         snapshotApplyCount += 1
         #endif
-        source.apply(snapshot, animatingDifferences: false) { [weak self] in
+        let completion: () -> Void = { [weak self] in
             guard let self else { return }
             self.collection.layoutIfNeeded()
             self.layout.isTransitioningSnapshot = false
@@ -751,6 +813,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             self.reportViewport()
             self.drain()
         }
+        source.apply(snapshot, animatingDifferences: false, completion: completion)
     }
 
     private func scrollToTarget(_ target: TranscriptScrollTarget) {
@@ -771,6 +834,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     }
 
     private func acknowledgeLayout(version: Int, madeProgress: Bool) {
+        guard !isDetached else { return }
+        if let cache = configuration?.geometryCache, cache.owner !== self { return }
         guard version != renderedHistoryVersion else { return }
         renderedHistoryVersion = version
         let callback = configuration?.onLayout
@@ -790,7 +855,8 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             }
             return
         }
-        guard !applying, collection.bounds.height > 0, configuration != nil else { return }
+        guard !isDetached, !applying, collection.bounds.height > 0, configuration != nil else { return }
+        if let cache = configuration?.geometryCache, cache.owner !== self { return }
         let height = collection.bounds.height - collection.adjustedContentInset.top - collection.adjustedContentInset.bottom
         let top = max(0, collection.contentOffset.y + collection.adjustedContentInset.top)
         let bottomDistance = layout.bottomOffset(collection) - collection.contentOffset.y
@@ -806,7 +872,12 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             && !collection.isDragging && !collection.isDecelerating {
             configuration?.onTailDisplayed()
         }
-        let topID = captureAnchor()?.id
+        let anchor = captureAnchor()
+        if let cache = configuration?.geometryCache, anchor != nil || layout.followsTail {
+            cache.position = TranscriptReadingPosition(anchor: anchor, followsTail: layout.followsTail,
+                jumpToken: lastJumpToken, scrollTargetToken: lastScrollTargetToken)
+        }
+        let topID = anchor?.id
         if topID != lastTopVisibleItemID {
             lastTopVisibleItemID = topID
             configuration?.onTopVisibleItemChanged?(topID)
