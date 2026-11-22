@@ -9,6 +9,10 @@ import HapiProtocol
 /// request models (or private single-field structs), calls through
 /// `request`/`requestVoid`/`requestBytes`.
 extension APIClient {
+    public func hubSettings() async throws -> HubSettingsResponse {
+        try await request(.get, "/api/hub-settings")
+    }
+
     /// `GET /health` (unauthenticated). Capability flags are additive.
     public func health() async throws -> HubHealthResponse {
         try await request(.get, "/health", authenticated: false)

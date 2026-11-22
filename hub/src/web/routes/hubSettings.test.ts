@@ -44,6 +44,25 @@ describe('GET/PUT /api/hub-settings', () => {
         })
     })
 
+    it('persists assistant profile and restores developer mode without leaking private settings', async () => {
+        const { app } = await createApp()
+        const profile = { mode: 'assistant', defaultAgent: 'agy', defaultPermissionMode: 'auto',
+            defaultDirectory: '/workspace', quickActions: [{ id: 'company', title: '企业核查', prompt: '核查企业' }] }
+        const update = (clientProfile: unknown) => app.request('/api/hub-settings', {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ clientProfile })
+        })
+        expect((await update(profile)).status).toBe(200)
+        const response = await (await app.request('/api/hub-settings')).json() as Record<string, unknown>
+        expect(response.clientProfile).toEqual(profile)
+        expect(response.cliApiToken).toBeUndefined()
+        expect((await update({ mode: 'unexpected' })).status).toBe(400)
+        expect((await update({ mode: 'assistant', defaultAgent: 'bad' })).status).toBe(400)
+        expect((await update({ mode: 'developer' })).status).toBe(200)
+        expect((await (await app.request('/api/hub-settings')).json() as Record<string, unknown>).clientProfile)
+            .toEqual({ mode: 'developer' })
+    })
+
     it('persists emit toggle for owner without changing display', async () => {
         const { app } = await createApp()
         const put = await app.request('/api/hub-settings', {

@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { useNavigate } from '@tanstack/react-router'
 import { useTranslation } from '@/lib/use-translation'
 import { useAppearance } from '@/hooks/useTheme'
@@ -22,6 +23,7 @@ export function getNamespaceFromToken(token: string): string | null {
 }
 
 export function SettingsNav(props: { activeId?: string; mobile?: boolean }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const navigate = useNavigate()
     const { token } = useAppContext()
     const { t, locale } = useTranslation()
@@ -40,7 +42,7 @@ export function SettingsNav(props: { activeId?: string; mobile?: boolean }) {
         'usage-query': t('settings.usageQuery.summary'),
         about: `v${__APP_VERSION__}`,
     }
-    const visibleCategories = settingsCategories.filter((category) => !OWNER_ONLY_CATEGORIES.has(category.id) || getNamespaceFromToken(token) === 'default')
+    const visibleCategories = settingsCategories.filter((category) => (!assistant || ['general', 'display', 'voice', 'about'].includes(category.id)) && (!OWNER_ONLY_CATEGORIES.has(category.id) || getNamespaceFromToken(token) === 'default'))
 
     return (
         <nav aria-label={t('settings.title')} className={props.mobile ? 'divide-y divide-[var(--app-divider)]' : 'space-y-1 p-3'}>

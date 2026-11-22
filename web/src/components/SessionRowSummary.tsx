@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { useMemo, useSyncExternalStore } from 'react'
 import type { SessionSummary } from '@/types/api'
 import { AgentFlavorIcon } from '@/components/AgentFlavorIcon'
@@ -128,6 +129,7 @@ export function SessionRowSummary(props: {
         contentSearchTruncated = false,
         trailingClassName,
     } = props
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { t } = useTranslation()
     const sessionName = getSessionTitle(s)
     const worktreeLabel = getWorktreeSessionLabel(s)
@@ -266,7 +268,7 @@ export function SessionRowSummary(props: {
         ? t('session.item.parentSession', { title: parentHintLabel })
         : undefined
 
-    const secondaryText = projectLabel || machineLabel
+    const secondaryText = assistant ? null : projectLabel || machineLabel
         ? [projectLabel, machineLabel].filter(Boolean).join('\u2002')
         : (showPath || worktreeLabel)
             ? (worktreeLabel ?? s.metadata?.path ?? s.id)
@@ -279,7 +281,7 @@ export function SessionRowSummary(props: {
 
     return (
         <div className={`flex w-full min-w-0 items-center gap-2.5 ${className ?? ''}`}>
-            {agentIcon}
+            {!assistant && agentIcon}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="grid grid-cols-[minmax(8rem,1fr)_minmax(0,max-content)] items-center gap-2">
                     <div className="flex min-w-0 items-center gap-2">

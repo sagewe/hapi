@@ -18,6 +18,7 @@ struct ChatComposerView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.hapiTypography) private var typography
+    @Environment(\.isAssistantMode) private var isAssistantMode
     let interactor: ChatInteractor
     /// nil ⇒ dictation unavailable (no controller wired) — mic button hidden.
     var dictation: DictationController?
@@ -88,6 +89,7 @@ struct ChatComposerView: View {
 
     private var scratchlistMode: Bool { interactor.composerDestination == .scratchlist }
     private var composerPrompt: LocalizedStringKey {
+        if isAssistantMode { return "输入公司/人名，或上传图片/PDF…" }
         if scratchlistMode {
             return "Keep an instruction for later…"
         }
@@ -150,9 +152,9 @@ struct ChatComposerView: View {
     var body: some View {
         let composer = interactor.composer
         let attachments = interactor.attachments.items
-        let rawSlashSuggestions = interactor.slashSuggestions
+        let rawSlashSuggestions = isAssistantMode ? [] : interactor.slashSuggestions
         let rawMentionSuggestions = mentionRequest == nil ? [] : interactor.mentionSuggestions(selection: textSelection)
-        let rawSkillQuery = scratchlistMode ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing)
+        let rawSkillQuery = (scratchlistMode || isAssistantMode) ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing)
         let rawSkillMatches = rawSkillQuery.map { SkillSuggestions.matches(interactor.skills, query: $0.text, recent: interactor.recentSkills) } ?? []
         let suggestionKey: String? = {
             if !rawMentionSuggestions.isEmpty {
@@ -1109,6 +1111,7 @@ struct ChatComposerView: View {
 
     @ViewBuilder
     private func composerLeadingTools(hasAttachments: Bool) -> some View {
+        if isAssistantMode { addAttachmentButton } else {
         #if targetEnvironment(macCatalyst)
         addAttachmentButton
         if !scratchlistMode {
@@ -1214,6 +1217,7 @@ struct ChatComposerView: View {
             }
         }
         #endif
+        }
     }
 
     @ViewBuilder
@@ -1494,7 +1498,7 @@ struct ChatComposerView: View {
             .padding(.trailing, 6)
             .allowsHitTesting(false)
         #else
-        if !collapsed && !scratchlistMode && showsComposerSessionControls {
+        if !isAssistantMode && !collapsed && !scratchlistMode && showsComposerSessionControls {
             composerSessionControlsButton
         }
         #endif

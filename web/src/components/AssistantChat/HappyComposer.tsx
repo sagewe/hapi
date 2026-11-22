@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import {
     getCodexCollaborationModeOptions,
     getCopilotAgentModeOptions,
@@ -896,7 +897,8 @@ export function HappyComposer(props: {
     const { isStandalone, isIOS } = usePWAInstall()
     const isIOSPWA = isIOS && isStandalone
     const bottomPaddingClass = isIOSPWA ? 'pb-0' : 'pb-3'
-    const activeWord = useActiveWord(inputState.text, inputState.selection, autocompletePrefixes)
+    const assistant = useClientProfile()?.mode === 'assistant'
+    const activeWord = useActiveWord(inputState.text, inputState.selection, assistant ? [] : autocompletePrefixes)
     const [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions] = useActiveSuggestions(
         activeWord,
         autocompleteSuggestions,
@@ -2442,7 +2444,7 @@ export function HappyComposer(props: {
                                             ref={richInputRef}
                                             value={composerText}
                                             autoFocus={!controlsDisabled && !isTouch}
-                                            placeholder={t(resolveComposerPlaceholderKey({
+                                            placeholder={assistant ? '输入公司/人名，或上传图片/PDF…' : t(resolveComposerPlaceholderKey({
                                                 richMentionsEnabled: true,
                                                 showContinueHint,
                                             }))}
@@ -2476,7 +2478,7 @@ export function HappyComposer(props: {
                                         onPaste={handlePaste}
                                     >
                                         <textarea
-                                            placeholder={t(resolveComposerPlaceholderKey({
+                                            placeholder={assistant ? '输入公司/人名，或上传图片/PDF…' : t(resolveComposerPlaceholderKey({
                                                 richMentionsEnabled: false,
                                                 showContinueHint,
                                             }))}
@@ -2488,7 +2490,7 @@ export function HappyComposer(props: {
                                     <ComposerPrimitive.Input
                                         ref={textareaRef}
                                         autoFocus={!controlsDisabled && !isTouch}
-                                        placeholder={t(resolveComposerPlaceholderKey({
+                                        placeholder={assistant ? '输入公司/人名，或上传图片/PDF…' : t(resolveComposerPlaceholderKey({
                                             richMentionsEnabled: false,
                                             showContinueHint,
                                         }))}

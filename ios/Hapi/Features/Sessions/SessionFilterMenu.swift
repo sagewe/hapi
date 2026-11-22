@@ -6,6 +6,7 @@ import SwiftUI
 /// this menu, not in a row of always-visible machine / status / agent chips.
 struct SessionFilterMenu: View {
     @Environment(\.hapiTheme) private var theme
+    @Environment(\.isAssistantMode) private var isAssistantMode
     let model: SessionListModel
     @State private var confirmMarkAllRead = false
     @State private var datesOpen = false
@@ -37,7 +38,7 @@ struct SessionFilterMenu: View {
             if model.showsTagFilter {
                 tagSection
             }
-            if model.showsMachineFilter {
+            if model.showsMachineFilter && !isAssistantMode {
                 machineSection
             }
             Section {

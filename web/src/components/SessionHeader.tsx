@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useIsMutating, useQueryClient } from '@tanstack/react-query'
 import type { Session } from '@/types/api'
@@ -241,6 +242,7 @@ export function SessionHeader(props: {
     onSessionReopened?: (newSessionId: string) => void | Promise<void>
     onOpenParentSession?: (parentSessionId: string) => void
 }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { t, locale } = useTranslation()
     const queryClient = useQueryClient()
     const { addToast } = useToast()
@@ -540,7 +542,7 @@ export function SessionHeader(props: {
                                 className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]"
                                 title={title}
                             >
-                                <AgentFlavorIcon flavor={session.metadata?.flavor} className="h-[18px] w-[18px] shrink-0" />
+                                {!assistant && <AgentFlavorIcon flavor={session.metadata?.flavor} className="h-[18px] w-[18px] shrink-0" />}
                                 <span className="min-w-0 truncate text-[15px] font-semibold">{title}</span>
                             </button>
                             <SessionHeaderStatusBadge
@@ -548,7 +550,7 @@ export function SessionHeader(props: {
                                 onJumpToPendingRequest={props.onJumpToPendingRequest}
                             />
                         </div>
-                        {detailsOpen ? <div data-testid="session-header-details" className="absolute left-0 right-0 top-full z-30 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 shadow-lg">
+                        {detailsOpen && !assistant ? <div data-testid="session-header-details" className="absolute left-0 right-0 top-full z-30 rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-3 shadow-lg">
                         {showMobileMetadata ? (
                             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden text-xs text-[var(--app-hint)] sm:hidden">
                                 {showParentBadge && parentSessionId && parentTitle ? (
@@ -663,7 +665,7 @@ export function SessionHeader(props: {
                         </div> : null}
                     </div>
 
-                    {props.onToggleFiles ? (
+                    {!assistant && props.onToggleFiles ? (
                         <button
                             type="button"
                             onClick={props.onToggleFiles}
@@ -676,7 +678,7 @@ export function SessionHeader(props: {
                         </button>
                     ) : null}
 
-                    {props.onToggleConciseView ? (
+                    {!assistant && props.onToggleConciseView ? (
                         <button
                             type="button"
                             onClick={props.onToggleConciseView}
@@ -702,7 +704,7 @@ export function SessionHeader(props: {
                         </button>
                     ) : null}
 
-                    {props.onToggleTerminal ? (
+                    {!assistant && props.onToggleTerminal ? (
                         <button
                             type="button"
                             onClick={props.onToggleTerminal}

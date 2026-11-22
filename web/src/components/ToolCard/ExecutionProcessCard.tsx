@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { Component, createRef, useEffect, useState, useMemo, useRef, useLayoutEffect, type ReactNode } from 'react'
 import { executionDetailSections, type ExecutionDetailSection } from '@/chat/executionDetails'
 import type { ChatBlock, GeneratedImageBlock } from '@/chat/types'
@@ -52,6 +53,7 @@ function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTimin
 
 /** All providers share this outer disclosure; inner views retain tool semantics. */
 export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupBlock; renderMedia: (block: GeneratedImageBlock) => ReactNode }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const open = ctx.openExecutionProcesses?.has(block.id) ?? false
@@ -69,6 +71,7 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
                     <MarkdownRenderer content={ctx.showSessionSummaryInChat ? member.text : stripNotifySummaryFooter(member.text)} />
                 </div> : null}
     </div>
+    if (assistant && block.processRole === 'header') return null
     if (block.processRole === 'header') return <div data-testid="execution-timing" className="flex min-h-11 items-center text-xs text-[var(--app-hint)]">
         <ExecutionTimingLabel timing={block.processTiming} />
     </div>
@@ -78,7 +81,7 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
                 ctx.setExecutionProcessOpen?.(block.id, !open)
                 if (!open) { ctx.onNestedScrollFollowChange?.(false); ctx.onExecutionInspect?.(block.id) }
             }}>
-            <span>{block.processRole === 'tools'
+            <span>{assistant ? (block.processTiming?.running || block.summary.runningCount > 0 ? '正在检索与核验资料…' : `已完成 ${block.tools.length} 步查证`) : block.processRole === 'tools'
                 ? (block.tools.length === 0 ? t('chat.execution.media') : formatGroupedHeaderSubtitle(block, t) ?? t('chat.execution.tools', { n: block.tools.length }))
                 : <ExecutionTimingLabel timing={block.processTiming} />}</span>
             <span aria-hidden="true">{open ? '⌄' : '›'}</span>

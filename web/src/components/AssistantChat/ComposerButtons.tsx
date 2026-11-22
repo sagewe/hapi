@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { ComposerPrimitive, useAui } from '@assistant-ui/react'
 import type { ConversationStatus } from '@/realtime/types'
 import { useTranslation } from '@/lib/use-translation'
@@ -17,11 +18,13 @@ function ToolbarItemSlot(props: { item: ComposerToolbarItemId; children: ReactNo
 }
 
 function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: ReactNode }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const slots = Children.toArray(props.children).filter(
         (child): child is ReactElement<{ item: ComposerToolbarItemId; children: ReactNode }> => isValidElement(child),
     )
     const slotsByItem = new Map(slots.map((slot) => [slot.props.item, slot]))
     const renderItems = (items: ComposerToolbarItemId[]) => items.map((item) => {
+        if (assistant && !['attachment', 'voiceMic', 'abort'].includes(item)) return null
         const slot = slotsByItem.get(item)
         if (!slot || slot.props.children == null) return null
         return <div key={item} className="shrink-0">{slot}</div>

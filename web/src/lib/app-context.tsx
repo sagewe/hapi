@@ -1,3 +1,4 @@
+import { ClientProfileProvider } from './client-profile'
 import { createContext, useContext, type ReactNode } from 'react'
 import type { ApiClient } from '@/api/client'
 
@@ -16,7 +17,7 @@ export function AppContextProvider(props: {
 }) {
     return (
         <AppContext.Provider value={props.value}>
-            {props.children}
+            <ClientProfileProvider api={props.value.api} baseUrl={props.value.baseUrl}>{props.children}</ClientProfileProvider>
         </AppContext.Provider>
     )
 }

@@ -433,12 +433,15 @@ struct ChatView: View {
             }
             .disabled(model.userTurnItems.isEmpty && model.allMessageNavItems.isEmpty)
             Divider()
+            if !session.isAssistantMode {
             Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
             if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
                 Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
                     .disabled(!model.header.active)
             }
+            }
             Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
+            if !session.isAssistantMode {
             Button {
                 filesOpen = true
             } label: {
@@ -472,6 +475,7 @@ struct ChatView: View {
                 } label: {
                     Label("Rewind or Fork…", systemImage: "clock.arrow.circlepath")
                 }
+            }
             }
             Button {
                 exportFormatOpen = true
@@ -561,7 +565,7 @@ struct ChatView: View {
     private var headerTitle: some View {
         ChatHeaderTitle(
             title: model.header.title,
-            flavor: model.header.flavor,
+            flavor: session.isAssistantMode ? nil : model.header.flavor,
             status: model.header.status,
             onTapAttention: { model.jumpToPendingRequestOrLatest() }
         )
@@ -631,10 +635,18 @@ struct ChatView: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No messages yet", systemImage: "bubble.left.and.bubble.right")
-        } description: {
-            Text("Messages will appear here as the agent works.")
+        Group {
+            if session.isAssistantMode {
+                ScrollView {
+                    AssistantQuickActions(actions: session.clientProfile?.quickActions ?? []) {
+                        model.interactor.setComposerText($0.prompt)
+                    }.padding()
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No messages yet", systemImage: "bubble.left.and.bubble.right")
+                } description: { Text("Messages will appear here as the agent works.") }
+            }
         }
     }
 }
@@ -668,6 +680,7 @@ struct ChatHeaderTitle: View {
 }
 
 struct ChatHeaderStatusBadge: View {
+    @Environment(\.isAssistantMode) private var isAssistantMode
     @Environment(\.hapiTheme) private var theme
     let status: ChatHeaderStatus
     var onTapAttention: (() -> Void)?
@@ -691,7 +704,7 @@ struct ChatHeaderStatusBadge: View {
 
     private var label: some View {
         HStack(spacing: 4) {
-            Text(LocalizedStringKey(status.titleKey))
+            Text(isAssistantMode ? (status.isAttention ? "待确认" : "调查中") : LocalizedStringKey(status.titleKey))
             if let count = status.count, count > 1 {
                 Text(verbatim: "\(count)").monospacedDigit()
             }

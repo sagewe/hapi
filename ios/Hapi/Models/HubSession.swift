@@ -22,6 +22,46 @@ final class HubSession {
     let baseURL: URL
     let authManager: AuthManager
     let api: APIClient
+    private(set) var clientProfile: ClientProfile?
+    var isAssistantMode: Bool { clientProfile?.isAssistant == true }
+    @ObservationIgnored private var profileTask: Task<Void, Never>?
+
+    func refreshClientProfile() async {
+        do {
+            let response = try await api.hubSettings()
+            guard !isShutDown, !Task.isCancelled else { return }
+            clientProfile = response.clientProfile
+            let key = "clientProfile:\(hubUrl)"
+            if let profile = response.clientProfile, let data = try? JSONEncoder().encode(profile) {
+                UserDefaults.standard.set(data, forKey: key)
+            } else { UserDefaults.standard.removeObject(forKey: key) }
+        } catch { /* Keep this hub's last successful snapshot while offline. */ }
+    }
+
+    func spawnAssistantSession(prompt: String? = nil, agent: AgentFlavor? = nil) async throws -> String {
+        guard let profile = clientProfile, profile.isAssistant,
+              let directory = profile.defaultDirectory else {
+            throw AssistantSessionError.configuration
+        }
+        let machines = try await api.listMachines().filter { $0.active }
+        guard machines.count == 1, let machine = machines.first else {
+            throw AssistantSessionError.offline
+        }
+        let selectedAgent = agent ?? profile.defaultAgent ?? .agy
+        let request = SpawnRequest(directory: directory, agent: selectedAgent,
+            model: agent == nil ? profile.defaultModel : nil,
+            permissionMode: selectedAgent == .codex ? .default : profile.defaultPermissionMode.flatMap(PermissionMode.init(rawValue:)))
+        switch try await api.spawnSession(machineId: machine.id, request) {
+        case .success(let id):
+            if let prompt, !prompt.isEmpty {
+                UserDefaultsChatDrafts(scope: hubUrl).save(sessionId: id, text: prompt)
+            }
+            try? await sessionStore.refresh()
+            return id
+        case .error: throw AssistantSessionError.offline
+        }
+    }
+
 
     /// Session list + detail cache, snapshot-backed per hub.
     let sessionStore: SessionListStore
@@ -100,6 +140,9 @@ final class HubSession {
     ) {
         guard let baseURL = URL(string: hubUrl) else { return nil }
         self.hubUrl = hubUrl
+        if let data = UserDefaults.standard.data(forKey: "clientProfile:\(hubUrl)") {
+            self.clientProfile = try? JSONDecoder().decode(ClientProfile.self, from: data)
+        }
         self.baseURL = baseURL
         let connection = performer is URLSessionHTTPPerformer ? HubConnectionRouter(canonicalURL: baseURL, performer: performer) : nil
         let routed: any HTTPPerforming
@@ -295,6 +338,8 @@ final class HubSession {
         } else {
             startGlobalSSE()
         }
+        profileTask?.cancel()
+        profileTask = Task { [weak self] in await self?.refreshClientProfile() }
         activeChat?.enterForeground()
         visibility.setForeground(true)
         lastSeenStore.setForeground(true)
@@ -345,6 +390,7 @@ final class HubSession {
     /// Tears everything down. The session is unusable afterwards.
     func shutdown() {
         isShutDown = true
+        profileTask?.cancel()
         composerHandoff = nil
         readStateTask?.cancel()
         lastSeenStore.shutdown()

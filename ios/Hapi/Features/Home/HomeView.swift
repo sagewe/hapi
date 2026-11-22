@@ -77,6 +77,7 @@ struct HomeView: View {
                 }
             }
         }
+        .environment(\.isAssistantMode, session.isAssistantMode)
         .background(HingeProbe())
         // The hinge is reported after the first render; carry a chat that was
         // already pushed (e.g. a cold-start notification) into the split.
@@ -114,12 +115,19 @@ struct HomeView: View {
                 .macSheetSizing()
         }
         .sheet(isPresented: $showNewSession) {
-            NewSessionView(session: session) { sessionId in
-                // Navigate-replace: drop the sheet, push the fresh chat.
-                showNewSession = false
-                openSession(sessionId)
-            }
-            .macSheetSizing()
+            Group {
+                if session.isAssistantMode {
+                    AssistantNewSessionSheet(session: session) { id in
+                        showNewSession = false
+                        openSession(id)
+                    }
+                } else {
+                    NewSessionView(session: session) { id in
+                        showNewSession = false
+                        openSession(id)
+                    }
+                }
+            }.macSheetSizing()
         }
         .sheet(isPresented: $showSettings) {
             SettingsView(session: session)
@@ -190,7 +198,7 @@ struct HomeView: View {
                 authFailureBanner(failedHub: failedHub)
             }
             connectionNotice
-            if let router = session.api.connection {
+            if !session.isAssistantMode, let router = session.api.connection {
                 HStack { ConnectionCapsule(router: router); Spacer(minLength: 0) }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 6)
@@ -215,11 +223,11 @@ struct HomeView: View {
         }
         .modifier(ConnectionSubtitle(message: subtitleCarriesConnectionStatus
             ? connectionNotice.transientMessage(revealed: connectionStatusRevealed) : nil))
-        .searchable(text: $listModel.searchQuery, isPresented: $searchFocused, prompt: Text("Search sessions"))
+        .searchable(text: $listModel.searchQuery, isPresented: $searchFocused, prompt: Text(session.isAssistantMode ? "搜索调查记录" : "Search sessions"))
         .onChange(of: tabletNavigation.selectedSessionId, initial: true) { _, sessionId in
             listModel.selectedSessionId = sessionId
         }
-        .navigationTitle("Sessions")
+        .navigationTitle(session.isAssistantMode ? (session.clientProfile?.appTitle ?? "合规调查助手") : "Sessions")
         // Inline: it shares the toolbar row, so the list starts right below
         // and Pinned/Recent headers carry the structure.
         .navigationBarTitleDisplayMode(.inline)

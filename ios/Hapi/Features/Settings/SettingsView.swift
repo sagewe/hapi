@@ -86,14 +86,14 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 hubsSection
-                if session.api.connection != nil { connectionSection }
+                if session.api.connection != nil && !session.isAssistantMode { connectionSection }
                 appearanceSection
                 #if targetEnvironment(macCatalyst)
                 shortcutsSection
                 #endif
                 languageSection
                 notificationsSection
-                if model.isOwner {
+                if model.isOwner && !session.isAssistantMode {
                     insightsSection
                 }
                 aboutSection
@@ -325,8 +325,10 @@ struct SettingsView: View {
                 LabeledContent("Source revision", value: revision)
                     .textSelection(.enabled)
             }
-            LabeledContent("Protocol version", value: String(ProtocolVersion.supported))
-            hubRow
+            if !session.isAssistantMode {
+                LabeledContent("Protocol version", value: String(ProtocolVersion.supported))
+                hubRow
+            }
             PrivacyPolicyLink()
         }
     }

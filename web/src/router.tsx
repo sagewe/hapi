@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -1072,6 +1073,7 @@ function SessionDetailRoute() {
 }
 
 function NewSessionPage() {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { api } = useAppContext()
     const navigate = useNavigate()
     const goBack = useAppGoBack()
@@ -1135,7 +1137,7 @@ function NewSessionPage() {
                         <BackIcon />
                     </button>
                 )}
-                <div className="flex-1 font-semibold">{t('newSession.title')}</div>
+                <div className="flex-1 font-semibold">{assistant ? '新建调查' : t('newSession.title')}</div>
             </div>
 
             <div

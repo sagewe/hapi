@@ -1,3 +1,5 @@
+import { useClientProfile } from '@/lib/client-profile'
+import { AssistantNewSession } from './AssistantNewSession'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ApiClient } from '@/api/client'
@@ -96,7 +98,7 @@ import { useToast } from '@/lib/toast-context'
 
 
 
-export function NewSession(props: {
+function DeveloperNewSession(props: {
     api: ApiClient
     machines: Machine[]
     isLoading?: boolean
@@ -2598,4 +2600,10 @@ export function NewSession(props: {
             />
         </div>
     )
+}
+
+export function NewSession(props: Parameters<typeof DeveloperNewSession>[0]) {
+    const profile = useClientProfile()
+    if (profile?.mode === 'assistant') return <AssistantNewSession {...props} profile={profile} />
+    return <DeveloperNewSession {...props} />
 }

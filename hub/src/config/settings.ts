@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { withSettingsFileLock } from '@hapi/protocol/settingsFileLock'
 
 export interface Settings {
+    clientProfile?: import('@hapi/protocol/apiTypes').ClientProfile
     machineId?: string
     machineIdConfirmedByServer?: boolean
     runnerAutoStartWhenRunningHappy?: boolean

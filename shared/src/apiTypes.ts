@@ -74,11 +74,34 @@ export const CreateSessionResponseSchema = z.object({
 
 export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
 
+/** Hub-owned presentation defaults shared by web and native clients. */
+export const ClientQuickActionSchema = z.object({
+    id: z.string().min(1).max(80),
+    title: z.string().min(1).max(160),
+    subtitle: z.string().max(500).optional(),
+    icon: z.string().max(100).optional(),
+    prompt: z.string().min(1).max(10000)
+})
+export type ClientQuickAction = z.infer<typeof ClientQuickActionSchema>
+
+export const ClientProfileSchema = z.object({
+    mode: z.enum(['developer', 'assistant']).default('developer'),
+    appTitle: z.string().min(1).max(160).optional(),
+    defaultAgent: AgentFlavorSchema.optional(),
+    defaultModel: z.string().max(200).optional(),
+    defaultPermissionMode: PermissionModeSchema.optional(),
+    defaultDirectory: z.string().min(1).max(4096).optional(),
+    hideExecutionDetails: z.boolean().optional(),
+    quickActions: z.array(ClientQuickActionSchema).max(12).optional()
+})
+export type ClientProfile = z.infer<typeof ClientProfileSchema>
+
 export const HubSettingsResponseSchema = z.object({
     sessionSummaryContract: z.boolean(),
     /** Show compact AGENT_NOTIFY_SUMMARY in chat (default off / hide). */
     sessionSummaryInChat: z.boolean(),
-    peerSpawnDefaults: ResolvedPeerSpawnDefaultsSchema
+    peerSpawnDefaults: ResolvedPeerSpawnDefaultsSchema,
+    clientProfile: ClientProfileSchema.optional()
 })
 
 export type HubSettingsResponse = z.infer<typeof HubSettingsResponseSchema>
@@ -87,13 +110,15 @@ export const UpdateHubSettingsRequestSchema = z
     .object({
         sessionSummaryContract: z.boolean().optional(),
         sessionSummaryInChat: z.boolean().optional(),
+        clientProfile: ClientProfileSchema.optional(),
         peerSpawnDefaults: PeerSpawnDefaultsSchema.optional()
     })
     .refine(
         (data) =>
             data.sessionSummaryContract !== undefined
             || data.sessionSummaryInChat !== undefined
-            || data.peerSpawnDefaults !== undefined,
+            || data.peerSpawnDefaults !== undefined
+            || data.clientProfile !== undefined,
         { message: 'At least one hub setting field is required' }
     )
 

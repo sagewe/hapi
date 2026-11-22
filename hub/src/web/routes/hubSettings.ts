@@ -14,6 +14,7 @@ const OWNER_ONLY_ERROR = 'Hub settings are only available to the hub owner'
 
 function toHubSettings(settings: Settings): HubSettingsResponse {
     return {
+        ...(settings.clientProfile ? { clientProfile: settings.clientProfile } : {}),
         sessionSummaryContract: settings.sessionSummaryContract === true,
         sessionSummaryInChat: settings.sessionSummaryInChat === true,
         peerSpawnDefaults: mergePeerSpawnDefaults(settings.peerSpawnDefaults)
@@ -42,6 +43,9 @@ export function createHubSettingsRoutes(dataDir: string): Hono<WebAppEnv> {
         }
         const response = await updateSettings(getSettingsFile(dataDir), (current) => {
             const settings: Settings = { ...current }
+            if (parsed.data.clientProfile !== undefined) {
+                settings.clientProfile = parsed.data.clientProfile
+            }
             if (parsed.data.sessionSummaryContract !== undefined) {
                 settings.sessionSummaryContract = parsed.data.sessionSummaryContract
             }

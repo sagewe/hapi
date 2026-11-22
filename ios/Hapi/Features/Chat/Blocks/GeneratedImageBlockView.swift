@@ -73,6 +73,9 @@ private struct GeneratedMediaCard: View {
         .task(id: loadAttempt) {
             guard let loader, content.kind == .image || loadAttempt > 0 else { return }
             await content.load(using: loader)
+            if content.kind == .file, let file = content.file, loadAttempt > 0 {
+                if Self.canPreview(file.url) { previewOpen = true } else { shareOpen = true }
+            }
         }
         .fullScreenCover(isPresented: $imageOpen) {
             ImageViewer(image: content.image, title: content.block.fileName,
@@ -105,7 +108,7 @@ private struct GeneratedMediaCard: View {
         case .audio:
             Button("Load audio", systemImage: "play.circle") { loadAttempt += 1 }
         case .file:
-            Button("Prepare download", systemImage: "arrow.down.circle") { loadAttempt += 1 }
+            Button("预览", systemImage: "doc.text.magnifyingglass") { loadAttempt += 1 }
         case .image:
             EmptyView()
         }

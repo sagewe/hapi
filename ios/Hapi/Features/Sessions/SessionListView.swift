@@ -694,6 +694,7 @@ struct SessionStatusSummaryBar: View {
 }
 
 struct SessionRowView: View {
+    @Environment(\.isAssistantMode) private var isAssistantMode
     @Environment(\.hapiTheme) private var theme
     @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 30
     @ScaledMetric(relativeTo: .footnote) private var statusSlotSize: CGFloat = 16
@@ -710,7 +711,7 @@ struct SessionRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: iconSpacing) {
-            agentIcon
+            if !isAssistantMode { agentIcon }
             VStack(alignment: .leading, spacing: 3) {
                 titleLine
                 detailLine
@@ -777,6 +778,7 @@ struct SessionRowView: View {
     /// height so row geometry never jumps across states).
     private var detailLine: some View {
         HStack(alignment: .center, spacing: 6) {
+            if !isAssistantMode {
             if let parentHint = row.parentHint {
                 HStack(spacing: 10) {
                     Text(verbatim: "↳ \(parentHint)")
@@ -795,6 +797,7 @@ struct SessionRowView: View {
                 Text(verbatim: row.project ?? " ")
                     .lineLimit(1)
                     .accessibilityHidden(row.project == nil)
+            }
             }
             if !row.tags.isEmpty {
                 HStack(spacing: 4) {
@@ -816,7 +819,8 @@ struct SessionRowView: View {
             }
             Spacer(minLength: 6)
             if let status = row.status {
-                statusText(for: status)
+                if isAssistantMode { Text(row.summary.thinking ? "调查中" : "待确认") }
+                else { statusText(for: status) }
             } else if row.isArchived {
                 archivedPill
             }

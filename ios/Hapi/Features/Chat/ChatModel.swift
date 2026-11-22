@@ -335,6 +335,7 @@ final class ChatModel {
     // MARK: Wiring
 
     private let hub: HubSession
+    var isAssistantMode: Bool { hub.isAssistantMode }
     /// Rebuilt on every `start()` after a `stop()` — a `ChatSession` is
     /// single-use (its SSE client cannot restart), and the saved resume
     /// cursor makes the rebuild cheap. This absorbs SwiftUI's

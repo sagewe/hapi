@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { SessionListScrollAnchor } from './SessionListScrollAnchor'
@@ -788,6 +789,7 @@ export function SessionListSearch(props: {
      */
     maxWidthPx?: number
 }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { t } = useTranslation()
     const inputRef = useRef<HTMLInputElement>(null)
     const collapsedButtonRef = useRef<HTMLButtonElement>(null)
@@ -947,7 +949,7 @@ export function SessionListSearch(props: {
                     type="search"
                     value={props.value}
                     onChange={(event) => props.onChange(event.target.value)}
-                    placeholder={searchMode === 'content'
+                    placeholder={assistant ? '搜索调查记录' : searchMode === 'content'
                         ? t('sessions.search.content.placeholder')
                         : t('sessions.search.placeholder')}
                     aria-label={searchLabel}
@@ -1455,6 +1457,8 @@ export function SessionList(props: {
         machinesById = {},
         onNewSessionInDirectory
     } = props
+    const clientProfile = useClientProfile()
+    const assistant = clientProfile?.mode === 'assistant'
     const { sessionPreviewLimit } = useSessionPreviewLimit()
     const { sessionListStatusMode } = useSessionListStatusMode()
     const { view: listView, setView: setListView } = useSessionListView()
@@ -1668,7 +1672,7 @@ export function SessionList(props: {
         }),
         [machineFilters, machinesById]
     )
-    const showMachineFilterBar = machineFilters.length >= 2
+    const showMachineFilterBar = !assistant && machineFilters.length >= 2
     // With a single machine there is nothing to filter, but health and the
     // session count still belong in the sidebar: render a compact summary
     // row instead of the filter bar. The row is derived from session groups,
@@ -2146,6 +2150,9 @@ export function SessionList(props: {
     }
 
     const renderDirectoryGroup = (group: SessionGroup) => {
+        if (assistant) return <div key={group.key}>{group.sessions.map(s =>
+            <div key={s.id}>{renderGroupSessionItem(s, group, true)}</div>)}</div>
+
         const isCollapsed = isGroupCollapsed(group)
         // A collapsed group still shows its unread rows, so new output in a
         // quiet project is never folded out of sight.
@@ -2486,6 +2493,7 @@ export function SessionList(props: {
     return (
         <div className="flex min-h-0 w-full flex-1 flex-col">
             <div className="session-list-scrollbar-offset mx-auto w-full max-w-content shrink-0">
+            {assistant && <h1 className="px-4 pt-4 pb-2 text-lg font-semibold">{clientProfile?.appTitle ?? '合规调查助手'}</h1>}
             {showHeaderRow ? (
                 // One toolbar row always. Never flex-wrap: wrapping burned a whole
                 // line on Quest when the icon slab did not fit beside search
@@ -2581,6 +2589,7 @@ export function SessionList(props: {
                                     })
                                 }
                                 for (const extra of props.toolbarExtras ?? []) {
+                                    if (assistant && extra.id === 'browse') continue
                                     definedSlots.push({
                                         id: extra.id,
                                         keep: extra.keep,
@@ -2681,7 +2690,7 @@ export function SessionList(props: {
                     value={activeMachineFilter}
                     onChange={setMachineFilter}
                 />
-            ) : singleMachineItem ? (
+            ) : !assistant && singleMachineItem ? (
                 <MachineSummaryRow machine={singleMachineItem} />
             ) : null}
 
@@ -2903,7 +2912,7 @@ export function SessionList(props: {
                     bucketKeys: ['active', 'idle'],
                 })}
                 {groups.map(renderDirectoryGroup)}
-                {actionOnlyGroups.map(renderActionOnlyGroupHeader)}
+                {!assistant && actionOnlyGroups.map(renderActionOnlyGroupHeader)}
             </SessionListScrollAnchor>
             </div>
             </div>
