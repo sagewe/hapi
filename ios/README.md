@@ -990,7 +990,14 @@ input, with the personal `$` Skills selector on the same caret/IME path. The
 queued-message Steer action covers Claude, Codex, Cursor ACP, OpenCode, Pi and
 Antigravity ACP while advertised live. Direct send-and-steer is offered only
 for Pi and Antigravity ACP, whose Hub deliveryMode path supports it; other
-agents use the queued row action. Stop remains independent of steering support.
+agents use the queued row action. During a supported Pi/Antigravity turn,
+ordinary composer sends (tap, hardware Return, or hold-to-dictate send) default
+to steering; long-press
+or the send menu offers Send to queue. The send icon changes to a turn arrow.
+Pending steering rows show Waiting to insert until the existing consumption
+receipt removes them; this is not a claim that the model has acted on the input.
+Scheduled sends and Scratchlist keep their explicit delivery paths. Stop remains
+independent of steering support.
 
 Personal Mermaid, remote terminal, authenticated localhost preview, title lock,
 manual unread, date filtering, archive hiding and Markdown export are retained.

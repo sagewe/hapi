@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 /// The chat input card (A-M3a, extended in A-M3f): attachments and the
 /// multiline text field grow above a fixed bottom action row. The trailing
 /// primary action is stateful: Stop while a turn runs with an empty draft,
-/// otherwise Send (long-press offers "Send & steer" during a turn). The card
+/// otherwise Send (during a supported turn, tap steers and long-press queues). The card
 /// also hosts dictation and attachment controls, and a `/` command list
 /// above the card while the input is a lone slash token, plus selection-aware
 /// `@` session/file suggestions.
@@ -723,7 +723,7 @@ struct ChatComposerView: View {
         textFocused = true
     }
 
-    private func submitMessage(steer: Bool = false) {
+    private func submitMessage(steer: Bool? = nil) {
         let trimmed = interactor.composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty, sentHistory.last != interactor.composerText {
             sentHistory.append(interactor.composerText)
@@ -1771,7 +1771,8 @@ struct ChatComposerView: View {
             voicePrimaryButton
         #endif
         case .send(let enabled):
-            let label = sendLabel(enabled: enabled)
+            let steering = composer.canSendAndSteer && !scheduled
+            let label = sendLabel(enabled: enabled, steering: steering)
             if scheduled {
                 Button {
                     submitMessage()
@@ -1793,10 +1794,10 @@ struct ChatComposerView: View {
             } else {
                 #if targetEnvironment(macCatalyst)
                 if composer.canSendAndSteer && enabled {
-                    // Tap sends (queue); long-press or ⇧⌘↩ steers into the active turn.
+                    // Tap steers; the secondary action keeps an explicit queue option.
                     Menu {
-                        Button("Send & steer into current turn (⇧⌘↩)") {
-                            submitMessage(steer: true)
+                        Button("Send to queue") {
+                            submitMessage(steer: false)
                         }
                     } label: {
                         label
@@ -1805,9 +1806,9 @@ struct ChatComposerView: View {
                     }
                     .menuStyle(.button)
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Send — long-press to steer")
+                    .accessibilityLabel("Insert into current turn — long-press to queue")
                     .accessibilityIdentifier("chat.composer-send")
-                    .help("Send to queue (↩) · Steer into current turn (⇧⌘↩)")
+                    .help("Insert into current turn (↩) · Long-press to queue")
                 } else {
                     Button {
                         submitMessage()
@@ -1831,13 +1832,13 @@ struct ChatComposerView: View {
                 .contextMenu {
                     if composer.canSendAndSteer && enabled {
                         Button {
-                            submitMessage(steer: true)
+                            submitMessage(steer: false)
                         } label: {
-                            Label("Send & steer into current turn (⇧⌘↩)", systemImage: "arrow.triangle.turn.up.right.diamond")
+                            Label("Send to queue", systemImage: "text.line.last.and.arrowtriangle.forward")
                         }
                     }
                 }
-                .accessibilityLabel(composer.canSendAndSteer && enabled ? "Send — long-press to steer" : "Send")
+                .accessibilityLabel(composer.canSendAndSteer && enabled ? "Insert into current turn — long-press to queue" : "Send")
                 .accessibilityIdentifier("chat.composer-send")
                 .help("Send (↩)")
                 .background {
@@ -1994,13 +1995,13 @@ struct ChatComposerView: View {
     }
     #endif
 
-    private func sendLabel(enabled: Bool) -> some View {
+    private func sendLabel(enabled: Bool, steering: Bool) -> some View {
         #if targetEnvironment(macCatalyst)
         actionCircle(
             background: enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.fill.tertiary),
             foreground: enabled ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary)
         ) {
-            Image(systemName: "arrow.up")
+            Image(systemName: steering ? "arrow.turn.up.right" : "arrow.up")
                 .font(.system(size: primaryDiameter * 0.47, weight: .semibold))
         }
         #else
@@ -2008,7 +2009,7 @@ struct ChatComposerView: View {
             background: enabled ? AnyShapeStyle(primaryCircleFill) : AnyShapeStyle(primaryCircleDisabledFill),
             foreground: enabled ? AnyShapeStyle(primaryCircleForeground) : AnyShapeStyle(primaryCircleDisabledForeground)
         ) {
-            Image(systemName: "arrow.up")
+            Image(systemName: steering ? "arrow.turn.up.right" : "arrow.up")
                 .font(.system(size: primaryDiameter * 0.44, weight: .semibold))
         }
         #endif

@@ -126,6 +126,9 @@ public final class ChatInteractor {
     /// ``directSendGrace`` after the POST settles; a row still uninvoked by
     /// then is genuinely waiting and moves to the bar.
     public private(set) var directSendLocalIds: Set<String> = []
+    // Stored deliveryMode is provenance: retries/reconnects can deliver that
+    // row as queue. Only this client's live submissions may say waiting to insert.
+    private var pendingSteerLocalIds: Set<String> = []
     private let directSendGrace: Duration
     /// Raw override map; the published view prunes settled requests.
     private var overridesStore: [String: PermissionRowOverride] = [:]
@@ -188,14 +191,15 @@ public final class ChatInteractor {
         guard !text.isEmpty || take.attachments != nil else { cancelVoiceSend(); return }
         voiceSend = nil // Claim once, before any asynchronous send or duplicate callback.
         recognizingVoiceLocalId = nil
+        let deliveryMode: MessageDeliveryMode = composer.canSendAndSteer ? .steer : .queue
         voicePreview = buildOptimisticMessage(localId: take.localId, text: text,
-            createdAt: take.createdAt, attachments: take.attachments)
+            createdAt: take.createdAt, attachments: take.attachments, deliveryMode: deliveryMode.rawValue)
         isSending = true
         onDirectSendsChanged?()
         Task { [weak self] in
             guard let self else { return }
             _ = await self.performSend(text: text, localId: take.localId, createdAt: take.createdAt,
-                deliveryMode: .queue, attachments: take.attachments, scheduledAt: nil, isRetry: false)
+                deliveryMode: deliveryMode, attachments: take.attachments, scheduledAt: nil, isRetry: false)
             self.pruneVoicePreview()
         }
     }
@@ -341,6 +345,11 @@ public final class ChatInteractor {
             for await state in states {
                 guard !Task.isCancelled else { return }
                 self.windowState = state
+                if !self.pendingSteerLocalIds.isEmpty {
+                    for row in state.messages where !row.isQueuedForInvocation {
+                        if let localId = row.localId { self.pendingSteerLocalIds.remove(localId) }
+                    }
+                }
                 self.pruneVoicePreview()
             }
         }
@@ -353,6 +362,7 @@ public final class ChatInteractor {
         cancelVoiceSend()
         guard isActive else { return }
         isActive = false
+        pendingSteerLocalIds.removeAll()
         statesTask?.cancel()
         statesTask = nil
         flushPendingDraft()
@@ -521,15 +531,14 @@ public final class ChatInteractor {
         }
     }
 
-    /// Submit the composer. Delivery defaults to durable queue; `steer` is
-    /// the explicit long-press intent that delivers into the active turn
-    /// (`deliveryMode: "steer"` — attachments may ride a steer, only
-    /// `scheduledAt` excludes them).
+    /// Submit the composer. During a supported active turn, ordinary sends
+    /// prefer steering. Explicit `false` queues; explicit `true` requests steering.
+    /// Scheduled sends and Scratchlist keep their own delivery paths.
     ///
     /// Ready attachments are consumed into `SendMessageRequest.attachments`;
     /// an unsettled chip (uploading/failed) blocks the send with a notice.
     /// Text may be empty when attachments exist (wire: text OR attachments).
-    public func sendMessage(steer: Bool = false) {
+    public func sendMessage(steer requestedSteer: Bool? = nil) {
         cancelVoiceSend()
         guard !isSending, !scratchlistBusy else { return }
         if composerDestination == .scratchlist {
@@ -544,6 +553,7 @@ public final class ChatInteractor {
             emit(.notice("Attachments are still uploading — wait, or retry/remove the failed ones"))
             return
         }
+        let steer = requestedSteer ?? composer.canSendAndSteer
         if attachments.hasScratchlistAttachments {
             sendComposerWithScratchlistAttachments(steer: steer)
             return
@@ -739,6 +749,11 @@ public final class ChatInteractor {
         if direct { setDirectSend(localId, true) }
         defer { if direct { expireDirectSend(localId) } }
         let store = target == sessionId ? await windowController() : await windows.open(sessionId: target)
+        if deliveryMode == .steer && !isRetry {
+            pendingSteerLocalIds.insert(localId)
+        } else {
+            pendingSteerLocalIds.remove(localId)
+        }
         if isRetry {
             await store.updateStatus(localId: localId, status: .sending)
         } else {
@@ -876,7 +891,8 @@ public final class ChatInteractor {
                 scheduledAt: row.scheduledAt,
                 canAct: canAct,
                 canSteer: canAct && canSteer && row.scheduledAt == nil && row.status != .indeterminate,
-                indeterminate: row.status == .indeterminate
+                indeterminate: row.status == .indeterminate,
+                awaitingSteer: canSteer && row.scheduledAt == nil && row.localId.map(pendingSteerLocalIds.contains) == true
             )
         }
     }

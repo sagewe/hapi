@@ -9617,6 +9617,39 @@
         }
       }
     },
+    "Insert into current turn — long-press to queue" : {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插入当前回合 — 长按可排队"
+          }
+        }
+      }
+    },
+    "Send to queue" : {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排队发送"
+          }
+        }
+      }
+    },
+    "Waiting to insert" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待插入"
+          }
+        }
+      }
+    },
     "Send — long-press to steer" : {
       "extractionState" : "manual",
       "localizations" : {

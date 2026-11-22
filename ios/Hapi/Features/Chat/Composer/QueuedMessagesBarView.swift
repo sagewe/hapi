@@ -88,7 +88,7 @@ struct QueuedRowView: View {
 
     private var preview: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "arrow.turn.down.right")
+            Image(systemName: row.awaitingSteer ? "arrow.turn.up.right" : "arrow.turn.down.right")
                 .font(typography.captionFont)
                 .foregroundStyle(theme.textSecondary)
                 .accessibilityHidden(true)
@@ -101,6 +101,11 @@ struct QueuedRowView: View {
                     Text("Delivery outcome unknown")
                         .font(typography.captionFont)
                         .foregroundStyle(theme.danger)
+                }
+                if row.awaitingSteer && !row.indeterminate {
+                    Text("Waiting to insert")
+                        .font(typography.captionFont)
+                        .foregroundStyle(theme.textSecondary)
                 }
                 if let scheduledAt = row.scheduledAt {
                     Text("Scheduled · \(Self.timeLabel(scheduledAt))")

@@ -476,7 +476,10 @@ struct ChatInteractorTests {
     }
 
     @Test func sendWhileThinkingSettlesToQueuedAndSteerIntentRidesTheWire() async throws {
-        let harness = try await ChatInteractionHarness(detail: chatDetail(thinking: true))
+        var detail = chatDetail(flavor: "agy", thinking: true,
+            agentState: AgentState(steeringActive: true))
+        detail.metadata?.agySessionProtocol = "acp"
+        let harness = try await ChatInteractionHarness(detail: detail)
 
         harness.interactor.setComposerText("steer this")
         harness.interactor.sendMessage(steer: true)
@@ -486,6 +489,82 @@ struct ChatInteractorTests {
         })
         let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
         #expect(sends == [#"{"deliveryMode":"steer","localId":"local-1","text":"steer this"}"#])
+        #expect(await eventually { harness.interactor.queuedRows.first?.awaitingSteer == true })
+    }
+
+    @Test func ordinarySendPrefersSteeringOnlyForSupportedActiveAgents() async throws {
+        for (flavor, proto, steering, active, controlled, expected) in [
+            ("agy", "acp", true, true, false, "steer"),
+            ("agy", "stream-json", true, true, false, "queue"),
+            ("agy", "", true, true, false, "queue"),
+            ("agy", "acp", false, true, false, "queue"),
+            ("agy", "acp", true, true, true, "queue"),
+            ("pi", "", true, true, false, "steer"),
+            ("codex", "", true, true, false, "queue"),
+            ("agy", "acp", true, false, false, "queue")
+        ] {
+            var detail = chatDetail(flavor: flavor, active: active, thinking: true,
+                agentState: AgentState(controlledByUser: controlled, steeringActive: steering))
+            detail.metadata?.agySessionProtocol = proto.isEmpty ? nil : proto
+            let harness = try await ChatInteractionHarness(detail: detail)
+            harness.interactor.setComposerText("补充限制")
+            harness.interactor.sendMessage()
+            #expect(await eventually {
+                await harness.performer.count("POST", pathSuffix: "/sess-1/messages") == 1
+            })
+            let sends = await harness.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+            let data = try #require(sends.first?.data(using: .utf8))
+            let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(body["deliveryMode"] as? String == expected)
+            harness.interactor.deactivate()
+        }
+    }
+
+    @Test func voiceSendPrefersSteeringWhenAntigravityCanAcceptIt() async throws {
+        var detail = chatDetail(flavor: "agy", thinking: true,
+            agentState: AgentState(steeringActive: true))
+        detail.metadata?.agySessionProtocol = "acp"
+        let harness = try await ChatInteractionHarness(detail: detail)
+        #expect(harness.interactor.beginVoiceSend(id: "voice-steer", partialText: "补充"))
+        harness.interactor.finishVoiceSend(id: "voice-steer", finalText: "补充限制")
+        harness.interactor.finishVoiceSend(id: "voice-steer", finalText: "重复回调")
+        #expect(await eventually { await harness.row(localId: "local-1")?.status == .queued })
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends == [#"{"deliveryMode":"steer","localId":"local-1","text":"补充限制"}"#])
+    }
+
+    @Test func explicitQueueOverridesSteeringDefault() async throws {
+        var detail = chatDetail(flavor: "agy", thinking: true,
+            agentState: AgentState(steeringActive: true))
+        detail.metadata?.agySessionProtocol = "acp"
+        let harness = try await ChatInteractionHarness(detail: detail)
+        #expect(harness.interactor.composer.canSendAndSteer)
+        harness.interactor.setComposerText("下一项任务")
+        harness.interactor.sendMessage(steer: false)
+        #expect(await eventually { await harness.row(localId: "local-1")?.status == .queued })
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends == [#"{"deliveryMode":"queue","localId":"local-1","text":"下一项任务"}"#])
+        #expect(harness.interactor.queuedRows.first?.awaitingSteer == false)
+    }
+
+    @Test func retryOfFailedSteerQueuesAndClearsWaitingToInsert() async throws {
+        var detail = chatDetail(flavor: "agy", thinking: true,
+            agentState: AgentState(steeringActive: true))
+        detail.metadata?.agySessionProtocol = "acp"
+        let harness = try await ChatInteractionHarness(detail: detail)
+        await harness.performer.script("POST", "/api/sessions/sess-1/messages", status: 500,
+            json: #"{"error":"boom"}"#)
+        harness.interactor.setComposerText("retry")
+        harness.interactor.sendMessage()
+        #expect(await eventually { await harness.row(localId: "local-1")?.status == .failed })
+        harness.interactor.retryFailedMessage(localId: "local-1")
+        #expect(await eventually { await harness.row(localId: "local-1")?.status == .queued })
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/sess-1/messages")
+        #expect(sends == [
+            #"{"deliveryMode":"steer","localId":"local-1","text":"retry"}"#,
+            #"{"deliveryMode":"queue","localId":"local-1","text":"retry"}"#
+        ])
+        #expect(await eventually { harness.interactor.queuedRows.first?.awaitingSteer == false })
     }
 
     @Test func failedSendMarksTheRowFailedAndRetryRefiresWithTheSameLocalId() async throws {

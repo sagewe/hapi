@@ -42,6 +42,8 @@ public struct QueuedMessageRow: Equatable, Sendable, Identifiable {
     /// Steer offered: turn active, not future-scheduled, actionable.
     public let canSteer: Bool
     public let indeterminate: Bool
+    /// A steering submission is still awaiting the Runner's consumption receipt.
+    public let awaitingSteer: Bool
 
     public init(
         id: String,
@@ -51,7 +53,8 @@ public struct QueuedMessageRow: Equatable, Sendable, Identifiable {
         scheduledAt: Int?,
         canAct: Bool,
         canSteer: Bool,
-        indeterminate: Bool = false
+        indeterminate: Bool = false,
+        awaitingSteer: Bool = false
     ) {
         self.id = id
         self.localId = localId
@@ -61,6 +64,7 @@ public struct QueuedMessageRow: Equatable, Sendable, Identifiable {
         self.canAct = canAct
         self.canSteer = canSteer
         self.indeterminate = indeterminate
+        self.awaitingSteer = awaitingSteer
     }
 }
 
