@@ -443,13 +443,19 @@ private final class TranscriptContent<Item> {
     var revision: Int = 0
 }
 
+@MainActor @Observable
+private final class TranscriptItem<Item> {
+    var value: Item
+    init(_ value: Item) { self.value = value }
+}
+
 private struct TranscriptHostedRow<Item>: View {
-    let item: Item
+    let item: TranscriptItem<Item>
     let content: TranscriptContent<Item>
 
     var body: some View {
         let _ = content.revision
-        content.render(item).environment(\.self, content.environment)
+        content.render(item.value).environment(\.self, content.environment)
     }
 }
 
@@ -490,6 +496,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private var itemIDs: [String] = []
     private var itemIDSet: Set<String> = []
     private var values: [String: Item] = [:]
+    private var rowItems: [String: TranscriptItem<Item>] = [:]
     private var applying = false
     private var environmentSignature: TranscriptEnvironmentSignature?
     private var configuredWidth: CGFloat = 0
@@ -505,6 +512,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
     private let content = TranscriptContent<Item>()
     #if DEBUG
     private(set) var cellConfigurationCount = 0
+    private(set) var snapshotApplyCount = 0
     #endif
     private let logger = Logger(subsystem: "run.hapi", category: "Transcript")
     #if !targetEnvironment(macCatalyst)
@@ -539,7 +547,7 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         }
         source = UICollectionViewDiffableDataSource<Int, String>(collectionView: collection) { [weak self] view, index, id in
             let cell = view.dequeueReusableCell(withReuseIdentifier: "message", for: index)
-            guard let self, let item = self.values[id] else { return cell }
+            guard let self, let item = self.rowItems[id] else { return cell }
             #if DEBUG
             self.cellConfigurationCount += 1
             #endif
@@ -682,9 +690,27 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
             itemIDSet = Set(order)
         }
         values = nextValues
+        if structureChanged {
+            rowItems = rowItems.filter { nextValues[$0.key] != nil }
+            for id in order where rowItems[id] == nil {
+                rowItems[id] = TranscriptItem(nextValues[id]!)
+            }
+        }
+        for id in changed {
+            if let item = nextValues[id], rowItems[id]?.value != item {
+                rowItems[id]?.value = item
+            }
+        }
         configuredWidth = collection.bounds.width
         configuredSpacing = spacing
-        guard structureChanged || widthChanged || metricsChanged || spacingChanged || !changed.isEmpty else {
+        // A snapshot application makes UIKit fit visible hosting configurations,
+        // even when only an offscreen row was reconfigured. While reading older
+        // content, keep those rich rows out of the streaming update path.
+        // Per-row observable items also update any already-prefetched hosting
+        // root, so skipping the snapshot cannot expose a stale prepared cell.
+        let visibleIDs = Set(collection.indexPathsForVisibleItems.compactMap { source.itemIdentifier(for: $0) })
+        let visibleContentChanged = changed.contains { visibleIDs.contains($0) }
+        guard structureChanged || widthChanged || metricsChanged || spacingChanged || visibleContentChanged else {
             if jump {
                 layout.correctOffset(to: layout.bottomOffset(collection))
             } else if let scrollTarget {
@@ -704,6 +730,9 @@ public final class TranscriptCollectionController<Item: Identifiable & Equatable
         snapshot.appendSections([0])
         snapshot.appendItems(order)
         snapshot.reconfigureItems(changed.filter { oldIDs.contains($0) })
+        #if DEBUG
+        snapshotApplyCount += 1
+        #endif
         source.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
             self.collection.layoutIfNeeded()

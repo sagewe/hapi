@@ -417,110 +417,14 @@ struct ChatView: View {
     // MARK: - Chrome
 
     private var moreActionsMenu: some View {
-        Menu {
-            if model.header.isParentNavigable,
-               let parentId = model.header.parentSessionId,
-               let parentTitle = model.header.parentTitle,
-               let onOpenParentSession {
-                Button {
-                    onOpenParentSession(parentId)
-                } label: {
-                    Label(
-                        String(format: String(localized: "Parent: %@"), parentTitle),
-                        systemImage: "arrow.turn.up.left"
-                    )
-                }
-                Divider()
-            }
-            Button {
-                jumpOpen = true
-            } label: {
-                Label("Jump to Message…", systemImage: "list.bullet.indent")
-            }
-            .disabled(model.userTurnItems.isEmpty && model.allMessageNavItems.isEmpty)
-            Divider()
-            if !session.isAssistantMode {
-            Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
-            if session.sessionStore.detail(for: sessionId)?.metadata?.capabilities?.terminal != false {
-                Button { terminalOpen = true } label: { Label("Terminal", systemImage: "terminal") }
-                    .disabled(!model.header.active)
-            }
-            }
-            Button { model.markUnread() } label: { Label("Mark as Unread", systemImage: "circle.badge") }
-            if !session.isAssistantMode {
-            Button {
-                filesOpen = true
-            } label: {
-                Label("Session files", systemImage: "folder")
-            }
-            Button {
-                model.interactor.setComposerDestination(.scratchlist)
-            } label: {
-                let count = model.interactor.scratchlistCount
-                if count > 0 {
-                    Label(
-                        String(format: String(localized: "Scratchlist (%lld)"), Int64(count)),
-                        systemImage: "note.text"
-                    )
-                } else {
-                    Label("Scratchlist", systemImage: "note.text")
-                }
-            }
-            Divider()
-            if model.interactor.canForkCurrentConversation {
-                Button {
-                    forkConfirmOpen = true
-                } label: {
-                    Label("Fork Conversation", systemImage: "arrow.triangle.branch")
-                }
-                .disabled(model.interactor.historyActionPending)
-            }
-            if !model.historyPointMessages.isEmpty {
-                Button {
-                    historyOpen = true
-                } label: {
-                    Label("Rewind or Fork…", systemImage: "clock.arrow.circlepath")
-                }
-            }
-            }
-            Button {
-                exportFormatOpen = true
-            } label: {
-                Label("Export Conversation…", systemImage: "square.and.arrow.up")
-            }
-            .disabled(model.isExporting)
-            Divider()
-            Button {
-                renameOpen = true
-            } label: {
-                Label("Rename & Tags…", systemImage: "tag")
-            }
-            if model.sessionIsActive == true {
-                Button {
-                    model.interactor.archiveSession()
-                } label: {
-                    Label("Archive", systemImage: "archivebox")
-                }
-                .disabled(model.interactor.sessionOpPending)
-            } else if model.sessionIsActive == false {
-                Button {
-                    model.interactor.reopenSession()
-                } label: {
-                    Label("Reopen", systemImage: "arrow.clockwise")
-                }
-                .disabled(model.interactor.sessionOpPending)
-                Button(role: .destructive) {
-                    deleteOpen = true
-                } label: {
-                    Label("Delete…", systemImage: "trash")
-                }
-                .disabled(model.interactor.sessionOpPending)
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-        }
-        .accessibilityLabel("More actions")
-        .help("More actions")
+        ChatActionsMenu(
+            state: .init(model: model, session: session),
+            model: model, session: session, onOpenParentSession: onOpenParentSession,
+            jumpOpen: $jumpOpen, previewPortOpen: $previewPortOpen,
+            terminalOpen: $terminalOpen, filesOpen: $filesOpen,
+            forkConfirmOpen: $forkConfirmOpen, historyOpen: $historyOpen,
+            exportFormatOpen: $exportFormatOpen, renameOpen: $renameOpen, deleteOpen: $deleteOpen
+        )
     }
 
     private var chatCommandActions: ChatCommandActions {

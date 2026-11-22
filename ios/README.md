@@ -730,6 +730,14 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
   available on hover instead of occupying toolbar space.
 - Sidebar rows use smaller icons, up to two title lines and one visible tag;
   hover shows the complete title/project/tags and the context menu edits them.
+- The Mac chat action menu uses a stable native button/menu and updates its
+  capability snapshot only when the available actions change. Streaming/toast
+  changes do not rebuild the toolbar's native menu.
+- Offscreen-only transcript updates publish per-row values, including already
+  prefetched cells, without applying a collection snapshot. Read-only native
+  text views are recycled after detachment (at most 64, with a 16,384 UTF-16-unit
+  per-view admission limit); selection, link handlers and measurements reset
+  before reuse.
 
 Shared with iPad: the menu bar / hardware-keyboard commands in
 `AppCommands.swift` — New Session ⌘N, Settings ⌘, Toggle Sidebar ⌃⌘S, and a

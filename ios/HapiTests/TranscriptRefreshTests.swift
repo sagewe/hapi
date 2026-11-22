@@ -136,6 +136,7 @@ final class TranscriptRefreshTests: XCTestCase {
         let offset = cell.frame.minY - view.contentOffset.y
         #if DEBUG
         let configurations = controller.cellConfigurationCount
+        let snapshots = controller.snapshotApplyCount
         #endif
         for version in 1...3 {
             driver.rows[79].height += 20
@@ -145,6 +146,8 @@ final class TranscriptRefreshTests: XCTestCase {
         #if DEBUG
         XCTAssertEqual(controller.cellConfigurationCount, configurations,
                        "Offscreen streaming must not reinstall unchanged visible hosting roots")
+        XCTAssertEqual(controller.snapshotApplyCount, snapshots,
+                       "Offscreen streaming must not apply a collection snapshot and remeasure visible rich rows")
         #endif
         XCTAssertEqual(cell.frame.minY - view.contentOffset.y, offset, accuracy: 1)
         driver.rows[25].height += 70

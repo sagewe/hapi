@@ -126,10 +126,14 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public func makeUIView(context: Context) -> SelectableUITextView {
+        #if targetEnvironment(macCatalyst)
+        let view = Self.recycledViews.popLast() ?? SelectableUITextView()
+        #else
         let view = SelectableUITextView()
-        view.isEditable = false
-        view.isSelectable = true
-        view.isScrollEnabled = false
+        #endif
+        if view.isEditable { view.isEditable = false }
+        if !view.isSelectable { view.isSelectable = true }
+        if view.isScrollEnabled { view.isScrollEnabled = false }
         view.backgroundColor = .clear
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -145,9 +149,34 @@ public struct MacSelectableText: UIViewRepresentable {
         applyConfiguration(to: view, coordinator: context.coordinator)
     }
 
+    #if targetEnvironment(macCatalyst)
+    @MainActor private static var recycledViews: [SelectableUITextView] = []
+
+    public static func dismantleUIView(_ view: SelectableUITextView, coordinator: Coordinator) {
+        if MacTextSelectionTracker.shared.activeView === view { MacTextSelectionTracker.shared.clear() }
+        view.resignFirstResponder()
+        view.selectedRange = NSRange(location: 0, length: 0)
+        view.delegate = nil
+        coordinator.onOpenURL = nil
+        view.lastContent = nil
+        view.lastLinkColor = nil
+        view.linkTextAttributes = [:]
+        view.clearSizeCache()
+        // SwiftUI removes the representable after dismantle returns. Never
+        // lend a view that still belongs to an old hosting hierarchy.
+        DispatchQueue.main.async {
+            guard view.superview == nil, recycledViews.count < 64,
+                  view.attributedText.length <= 16_384 else { return }
+            recycledViews.append(view)
+        }
+    }
+    #endif
+
     private func applyConfiguration(to view: SelectableUITextView, coordinator: Coordinator) {
         coordinator.onOpenURL = onOpenURL
-        view.textContainer.widthTracksTextView = wraps
+        if view.textContainer.widthTracksTextView != wraps {
+            view.textContainer.widthTracksTextView = wraps
+        }
         if let linkColor, view.lastLinkColor != linkColor {
             view.lastLinkColor = linkColor
             view.linkTextAttributes = [
@@ -197,6 +226,9 @@ public struct MacSelectableText: UIViewRepresentable {
     }
 
     public final class SelectableUITextView: UITextView {
+        #if DEBUG
+        private(set) static var allocationCount = 0
+        #endif
         private struct WrappedMeasurement {
             var widthKey: Int = -1
             var size: CGSize = .zero
@@ -210,6 +242,9 @@ public struct MacSelectableText: UIViewRepresentable {
         private var secondaryWrappedCache = WrappedMeasurement()
 
         public init() {
+            #if DEBUG
+            Self.allocationCount += 1
+            #endif
             let storage = NSTextStorage()
             let manager = NSLayoutManager()
             storage.addLayoutManager(manager)
