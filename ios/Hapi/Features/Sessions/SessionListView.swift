@@ -696,7 +696,15 @@ struct SessionStatusSummaryBar: View {
 struct SessionRowView: View {
     @Environment(\.isAssistantMode) private var isAssistantMode
     @Environment(\.hapiTheme) private var theme
+    #if targetEnvironment(macCatalyst)
+    @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 22
+    private let titleLineLimit = 2
+    private let visibleTagLimit = 1
+    #else
     @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 30
+    private let titleLineLimit = 1
+    private let visibleTagLimit = 3
+    #endif
     @ScaledMetric(relativeTo: .footnote) private var statusSlotSize: CGFloat = 16
 
     let row: SessionRowUI
@@ -718,9 +726,9 @@ struct SessionRowView: View {
             }
         }
         #if targetEnvironment(macCatalyst)
-        .padding(.leading, 11)
-        .padding(.trailing, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .help(([row.title, row.project].compactMap { $0 } + row.tags.map { "#" + $0 }).joined(separator: " · "))
         #endif
         // Separators start under the text column, as in Mail and Messages.
         .alignmentGuide(.listRowSeparatorLeading) { _ in displayIconSize + iconSpacing }
@@ -761,7 +769,7 @@ struct SessionRowView: View {
                         ? theme.textPrimary.opacity(0.76)
                         : theme.textPrimary
                 )
-                .lineLimit(1)
+                .lineLimit(titleLineLimit)
             Spacer(minLength: 4)
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 Text(verbatim: formatRelativeAge(now: context.date, thenEpochMs: row.summary.updatedAt))
@@ -801,7 +809,7 @@ struct SessionRowView: View {
             }
             if !row.tags.isEmpty {
                 HStack(spacing: 4) {
-                    ForEach(Array(row.tags.prefix(3)), id: \.self) { tag in
+                    ForEach(Array(row.tags.prefix(visibleTagLimit)), id: \.self) { tag in
                         Text(verbatim: "#\(tag)")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(theme.accent)
@@ -810,12 +818,15 @@ struct SessionRowView: View {
                             .background(theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                             .lineLimit(1)
                     }
+                    #if !targetEnvironment(macCatalyst)
                     if row.tags.count > 3 {
                         Text(verbatim: "+\(row.tags.count - 3)")
                             .font(.caption2)
                             .foregroundStyle(theme.textSecondary)
                     }
+                    #endif
                 }
+                .accessibilityLabel(Text(verbatim: row.tags.map { "#" + $0 }.joined(separator: ", ")))
             }
             Spacer(minLength: 6)
             if let status = row.status {

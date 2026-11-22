@@ -144,6 +144,7 @@ struct ChatView: View {
                     dictation: model.dictation,
                     api: session.api,
                     machineId: currentMachineId,
+                    notice: model.notice,
                     hugsBottomEdge: isFoldedOuterScreen
                 ) { entry, editing in
                     scratchlistEntry = entry

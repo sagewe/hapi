@@ -110,7 +110,9 @@ final class ComposerMentionPresentationTests: XCTestCase {
         XCTAssertGreaterThan(layout.height, hiddenHeight + 50)
         interactor.setComposerDestination(.scratchlist)
         try await settle()
-        XCTAssertEqual(layout.height, hiddenHeight, accuracy: 2)
+        // Saving a draft has a taller action than Send, especially on Mac.
+        // Assert the suggestions disappear without coupling to that toolbar.
+        XCTAssertLessThan(layout.height, shortlistHeight - 50)
         XCTAssertEqual(interactor.composerText, "@会话")
     }
 
@@ -181,7 +183,7 @@ final class ComposerMentionPresentationTests: XCTestCase {
         XCTAssertTrue(input.text.hasSuffix(", thanks"))
     }
 
-    func testEditorGrowsToSixLinesAndScrollsWithoutLosingTheSelection() async throws {
+    func testEditorGrowsToItsPlatformLimitAndScrollsWithoutLosingTheSelection() async throws {
         let driver = TextDriver()
         let window = try host(VStack { EditorHarness(driver: driver); Spacer() })
         defer { window.isHidden = true }
@@ -191,11 +193,16 @@ final class ComposerMentionPresentationTests: XCTestCase {
         XCTAssertGreaterThan(oneLine, 15)
         driver.text = "one\ntwo\nthree"
         try await settle()
-        XCTAssertGreaterThan(input.bounds.height, oneLine * 2)
+        XCTAssertGreaterThan(input.bounds.height, oneLine + (input.font?.lineHeight ?? 0))
         XCTAssertFalse(input.isScrollEnabled)
-        driver.text = (1...12).map { "Line \($0)" }.joined(separator: "\n")
+        driver.text = (1...20).map { "Line \($0)" }.joined(separator: "\n")
         try await settle()
-        XCTAssertLessThanOrEqual(input.bounds.height, ceil(try XCTUnwrap(input.font).lineHeight * 6) + 1)
+        #if targetEnvironment(macCatalyst)
+        let maximumLines: CGFloat = 12
+        #else
+        let maximumLines: CGFloat = 8
+        #endif
+        XCTAssertLessThanOrEqual(input.bounds.height, ceil(try XCTUnwrap(input.font).lineHeight * maximumLines) + 1)
         XCTAssertTrue(input.isScrollEnabled)
         driver.selection = NSRange(location: 5, length: 0)
         try await settle()

@@ -27,6 +27,7 @@ struct ChatComposerView: View {
     #endif
     var api: APIClient?
     var machineId: String?
+    var notice: String?
     /// Folded iPhone Duo: the short outer screen keeps more transcript by
     /// letting the composer sit closer to the home indicator.
     var hugsBottomEdge = false
@@ -36,8 +37,8 @@ struct ChatComposerView: View {
     // HapiKit — `AttachmentPreparer` / `ComposerAttachments`).
     @State private var configModel: SessionConfigModel
     #if targetEnvironment(macCatalyst)
-    @State private var quotaPopoverOpen = false
-    @State private var attachDialogOpen = false
+    @State private var macSessionControlsOpen = false
+    @State private var restoreFocusAfterControls = false
     #else
     @State private var activePopup: ComposerPopupKind?
     @State private var sessionSettingsOpen = false
@@ -72,6 +73,7 @@ struct ChatComposerView: View {
         holdDictation: HoldToDictateController? = nil,
         api: APIClient? = nil,
         machineId: String? = nil,
+        notice: String? = nil,
         hugsBottomEdge: Bool = false,
         onOpenScratchlist: @escaping (ScratchlistEntry?, Bool) -> Void = { _, _ in }
     ) {
@@ -82,6 +84,7 @@ struct ChatComposerView: View {
         #endif
         self.api = api
         self.machineId = machineId
+        self.notice = notice
         self.hugsBottomEdge = hugsBottomEdge
         self.onOpenScratchlist = onOpenScratchlist
         _configModel = State(initialValue: SessionConfigModel(interactor: interactor, api: api, machineId: machineId))
@@ -298,6 +301,9 @@ struct ChatComposerView: View {
                     activeSuggestionCount: activeSuggestionCount,
                     suggestionKey: suggestionKey
                 )
+                #if targetEnvironment(macCatalyst)
+                .help(macShortcutHint(composer: composer, hasActiveSuggestions: activeSuggestionCount > 0 || skillQuery != nil))
+                #endif
                 if !collapsed {
                     HStack(spacing: 0) {
                         composerLeadingTools(hasAttachments: !attachments.isEmpty)
@@ -376,11 +382,9 @@ struct ChatComposerView: View {
             if api != nil, configModel.showsComposerModelMenu {
                 configModel.loadModels()
             }
-            #if !targetEnvironment(macCatalyst)
             if api != nil, configModel.showsQuota {
                 configModel.loadQuota()
             }
-            #endif
         }
         .onChange(of: machineId) { _, newValue in
             if configModel.machineId != newValue {
@@ -669,17 +673,20 @@ struct ChatComposerView: View {
             } label: {
                 Label("Photo Library…", systemImage: "photo.on.rectangle")
             }
+            if !scratchlistMode && !isAssistantMode {
+                Divider()
+                Button("Mention", systemImage: "at") { insertTrigger("@") }
+                Button("Commands", systemImage: "slash.circle") { insertTrigger("/", atStartOnly: true) }
+            }
         } label: {
             toolGlyph("plus")
-        } primaryAction: {
-            filePickerOpen = true
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .disabled(preparingAttachment || interactor.scratchlistBusy)
         .accessibilityLabel("Add attachment")
         .accessibilityIdentifier("chat.add-attachment")
-        .help("Attach files (click) · Hold for Photo Library")
+        .help("Add attachment")
         #else
         Button {
             togglePopup(.attachment)
@@ -758,18 +765,51 @@ struct ChatComposerView: View {
     }
 
     private var scratchlistButton: some View {
-        Button {
+        Group {
             #if targetEnvironment(macCatalyst)
-            interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
+            Menu {
+                Button("Save draft", systemImage: "tray.and.arrow.down") {
+                    interactor.parkComposerDraft()
+                }
+                .disabled(!canParkDraft)
+                Button("View all", systemImage: "tray") { onOpenScratchlist(nil, false) }
+                Divider()
+                Button(scratchlistMode ? "Back to chat" : "Keep an instruction for later…") {
+                    interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
+                }
+            } label: {
+                scratchlistButtonLabel
+            }
+            .menuStyle(.button)
             #else
-            if scratchlistMode {
-                interactor.setComposerDestination(.chat)
-            } else {
-                togglePopup(.scratchlist)
+            Button {
+                if scratchlistMode {
+                    interactor.setComposerDestination(.chat)
+                } else {
+                    togglePopup(.scratchlist)
+                }
+            } label: {
+                scratchlistButtonLabel
             }
             #endif
-        } label: {
-            toolGlyph("tray", active: scratchlistIconStyle)
+        }
+        .buttonStyle(.plain)
+        .disabled(interactor.scratchlistBusy || interactor.isSending || preparingAttachment)
+        .accessibilityLabel(String(format: String(localized: "Scratchlist (%lld)"), Int64(interactor.scratchlistCount)))
+        .accessibilityValue(scratchlistMode ? String(localized: "Held — not sent") : String(localized: "Chat"))
+        .accessibilityIdentifier("scratchlist.toggle")
+        .help("Scratchlist")
+        #if !targetEnvironment(macCatalyst)
+        .background {
+            ComposerAccessibilityProbe(identifier: "scratchlist.toggle")
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+        }
+        #endif
+    }
+
+    private var scratchlistButtonLabel: some View {
+        toolGlyph("tray", active: scratchlistIconStyle)
             .overlay(alignment: .topTrailing) {
                 if interactor.scratchlistCount > 0 {
                     Text(verbatim: interactor.scratchlistCount > 99 ? "99+" : "\(interactor.scratchlistCount)")
@@ -781,20 +821,6 @@ struct ChatComposerView: View {
                         .offset(x: -2, y: 4)
                 }
             }
-        }
-        .buttonStyle(.plain)
-        .disabled(interactor.scratchlistBusy || interactor.isSending || preparingAttachment)
-        .accessibilityLabel(String(format: String(localized: "Scratchlist (%lld)"), Int64(interactor.scratchlistCount)))
-        .accessibilityValue(scratchlistMode ? String(localized: "Held — not sent") : String(localized: "Chat"))
-        .accessibilityIdentifier("scratchlist.toggle")
-        .help("Toggle Scratchlist (⇧⌘D)")
-        #if !targetEnvironment(macCatalyst)
-        .background {
-            ComposerAccessibilityProbe(identifier: "scratchlist.toggle")
-                .frame(width: 1, height: 1)
-                .allowsHitTesting(false)
-        }
-        #endif
     }
 
     private var canParkDraft: Bool {
@@ -1116,24 +1142,6 @@ struct ChatComposerView: View {
         addAttachmentButton
         if !scratchlistMode {
             Button {
-                insertTrigger("@")
-            } label: {
-                toolGlyph("at")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Mention")
-            .help("Mention file or session (@)")
-
-            Button {
-                insertTrigger("/", atStartOnly: true)
-            } label: {
-                toolGlyph("slash.circle")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Commands")
-            .help("Slash commands (/)")
-
-            Button {
                 insertTrigger("$")
             } label: {
                 toolGlyph("sparkles")
@@ -1146,14 +1154,22 @@ struct ChatComposerView: View {
         if interactor.scratchlist != nil { scratchlistButton }
         if !scratchlistMode {
             scheduleButton(hasAttachments: hasAttachments)
-            if configModel.showsComposerModelMenu {
-                composerModelMenu
-            }
-            if configModel.showsComposerPermissionMenu {
-                composerPermissionMenu
-            }
-            if configModel.showsQuota {
-                composerQuotaButton
+            if configModel.showsComposerModelMenu || configModel.showsComposerPermissionMenu || configModel.showsQuota {
+                MacComposerSessionControls(
+                    model: configModel,
+                    isPresented: $macSessionControlsOpen,
+                    isBusy: interactor.scratchlistBusy,
+                    notice: notice
+                )
+                .onChange(of: macSessionControlsOpen) { _, open in
+                    if open {
+                        restoreFocusAfterControls = textFocused
+                        textFocused = false
+                    } else if restoreFocusAfterControls {
+                        textFocused = true
+                        restoreFocusAfterControls = false
+                    }
+                }
             }
         }
         #else
@@ -1220,228 +1236,6 @@ struct ChatComposerView: View {
         }
     }
 
-    @ViewBuilder
-    private var composerModelMenuSections: some View {
-        if configModel.showsModel {
-            Section("Model") {
-                if configModel.config.modelOptionsLoading {
-                    Text("Loading models…")
-                } else if configModel.modelLoadFailed {
-                    Text("Failed to load models")
-                    Button("Retry", systemImage: "arrow.clockwise") {
-                        configModel.loadModels()
-                    }
-                } else if let options = configModel.config.modelOptions, !options.isEmpty {
-                    Picker("Model", selection: Binding(
-                        get: { configModel.currentModel },
-                        set: { configModel.selectModel($0) }
-                    )) {
-                        if let current = configModel.unlistedModelOption {
-                            Text(verbatim: current.label).tag(current.value).disabled(true)
-                        }
-                        ForEach(options, id: \.value) { option in
-                            Text(verbatim: option.label)
-                                .tag(option.value)
-                                .accessibilityIdentifier("session-config-model-\(option.value ?? "default")")
-                        }
-                    }
-                    .pickerStyle(.inline)
-                } else if configModel.canDiscoverModels {
-                    Button("Load Models", systemImage: "arrow.clockwise") {
-                        configModel.loadModels()
-                    }
-                } else {
-                    Text("Model list unavailable")
-                }
-            }
-        } else if configModel.canDiscoverModels {
-            Section("Model") {
-                Button("Load Models", systemImage: "arrow.clockwise") {
-                    configModel.loadModels()
-                }
-            }
-        }
-        if configModel.showsEffort {
-            Section("Effort") {
-                Picker("Effort", selection: Binding(
-                    get: { configModel.currentEffort },
-                    set: { configModel.selectEffort($0) }
-                )) {
-                    ForEach(configModel.effortOptions, id: \.value) { option in
-                        Text(verbatim: option.label)
-                            .tag(option.value)
-                            .disabled(!configModel.canSelectEffort(option.value))
-                    }
-                }
-                .pickerStyle(.inline)
-            }
-        }
-        if configModel.showsFastMode {
-            Section("Fast Mode") {
-                Picker("Fast Mode", selection: Binding(
-                    get: { configModel.serviceTier },
-                    set: { configModel.selectServiceTier($0) }
-                )) {
-                    ForEach(ServiceTier.allCases, id: \.self) { tier in
-                        Text(LocalizedStringKey(tier.label)).tag(tier)
-                    }
-                }
-                .pickerStyle(.inline)
-                .disabled(!configModel.config.canChangeServiceTier)
-            }
-        }
-    }
-
-    #if targetEnvironment(macCatalyst)
-    private var composerModelMenu: some View {
-        let hasCustomEffort = (configModel.showsEffort && configModel.currentEffort != nil)
-            || (configModel.showsFastMode && configModel.serviceTier == .fast)
-        return Menu {
-            if !configModel.config.active {
-                Text("Session is offline")
-            } else if configModel.config.controlledByUser {
-                Text("Controlled from terminal")
-            }
-            composerModelMenuSections
-        } label: {
-            HStack(spacing: 4) {
-                toolGlyph("cpu", active: hasCustomEffort ? AnyShapeStyle(.tint) : nil)
-                Text(verbatim: configModel.modelSummaryValue)
-                    .font(.caption).lineLimit(1).truncationMode(.middle)
-                    .frame(maxWidth: 180)
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .disabled(configModel.isApplying || interactor.scratchlistBusy)
-        .accessibilityLabel("Model")
-        .accessibilityValue(Text(verbatim: configModel.modelSummaryValue))
-        .accessibilityIdentifier("chat.composer-model")
-        .help(configModel.modelSummaryHelp)
-    }
-    #endif
-
-    private var permissionIconName: String {
-        switch configModel.permission.tone {
-        case .danger:
-            return "exclamationmark.shield"
-        default:
-            return "checkmark.shield"
-        }
-    }
-
-    private var permissionIconStyle: AnyShapeStyle? {
-        switch configModel.permission.tone {
-        case .danger:
-            return AnyShapeStyle(.red)
-        case .warning:
-            return AnyShapeStyle(.orange)
-        case .neutral, .info:
-            if configModel.permission != .default || (configModel.showsCollaborationMode && configModel.collaborationMode != .default) {
-                return AnyShapeStyle(.tint)
-            }
-            return nil
-        }
-    }
-
-    @ViewBuilder
-    private var composerPermissionMenuSections: some View {
-        if !configModel.config.permissionModes.isEmpty {
-            Section("Permission mode") {
-                Picker("Permission mode", selection: Binding(
-                    get: { configModel.permission },
-                    set: { configModel.selectPermission($0) }
-                )) {
-                    if !configModel.config.permissionModes.contains(where: { $0.mode == configModel.permission }) {
-                        composerPermissionOption(PermissionModeOption(mode: configModel.permission)).disabled(true)
-                    }
-                    ForEach(configModel.config.permissionModes, id: \.mode) { option in
-                        composerPermissionOption(option)
-                    }
-                }
-                .pickerStyle(.inline)
-            }
-        }
-        if configModel.showsCollaborationMode {
-            Section("Collaboration Mode") {
-                Picker("Collaboration Mode", selection: Binding(
-                    get: { configModel.collaborationMode },
-                    set: { configModel.selectCollaborationMode($0) }
-                )) {
-                    ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
-                        Text(LocalizedStringKey(mode.label)).tag(mode)
-                    }
-                }
-                .pickerStyle(.inline)
-                .disabled(!configModel.config.canChangeCollaborationMode)
-            }
-        }
-    }
-
-    #if targetEnvironment(macCatalyst)
-    private var composerPermissionMenu: some View {
-        Menu {
-            composerPermissionMenuSections
-        } label: {
-            HStack(spacing: 4) {
-                toolGlyph(permissionIconName, active: permissionIconStyle)
-                Text(verbatim: configModel.permissionSummaryValue)
-                    .font(.caption).lineLimit(1)
-                    .frame(maxWidth: 140)
-            }
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .disabled(configModel.isApplying || interactor.scratchlistBusy)
-        .accessibilityLabel("Permission mode")
-        .accessibilityValue(Text(verbatim: configModel.permissionSummaryValue))
-        .accessibilityIdentifier("chat.composer-permission")
-        .help(configModel.permissionSummaryHelp)
-    }
-    #endif
-
-    private func composerPermissionOption(_ option: PermissionModeOption) -> some View {
-        Group {
-            if option.tone == .danger {
-                Label {
-                    Text(verbatim: option.label) + Text(verbatim: " · ") + Text("High risk")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle")
-                }
-            } else {
-                Text(verbatim: option.label)
-            }
-        }
-        .tag(option.mode)
-        .accessibilityIdentifier("session-config-permission-\(option.mode.rawValue)")
-    }
-
-    #if targetEnvironment(macCatalyst)
-    private var quotaIconStyle: AnyShapeStyle? {
-        guard let peak = configModel.quotaPeakUsedPercent else { return nil }
-        if peak >= 90 { return AnyShapeStyle(.red) }
-        if peak >= 75 { return AnyShapeStyle(.orange) }
-        return nil
-    }
-
-    private var composerQuotaButton: some View {
-        Button {
-            quotaPopoverOpen = true
-        } label: {
-            toolGlyph("gauge.with.dots.needle.33percent", active: quotaIconStyle)
-        }
-        .buttonStyle(.plain)
-        .disabled(interactor.scratchlistBusy)
-        .accessibilityLabel("Subscription Quota")
-        .accessibilityIdentifier("chat.composer-quota")
-        .help(String(localized: "Subscription Quota"))
-        .popover(isPresented: $quotaPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            ComposerQuotaPopoverView(model: configModel)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-    #endif
-
     #if !targetEnvironment(macCatalyst)
     private var showsComposerSessionControls: Bool {
         configModel.showsComposerModelMenu || configModel.showsComposerPermissionMenu || configModel.showsQuota
@@ -1490,14 +1284,7 @@ struct ChatComposerView: View {
         collapsed: Bool = false,
         hasActiveSuggestions: Bool = false
     ) -> some View {
-        #if targetEnvironment(macCatalyst)
-        Text(macShortcutHint(composer: composer, hasActiveSuggestions: hasActiveSuggestions))
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            .padding(.trailing, 6)
-            .allowsHitTesting(false)
-        #else
+        #if !targetEnvironment(macCatalyst)
         if !isAssistantMode && !collapsed && !scratchlistMode && showsComposerSessionControls {
             composerSessionControlsButton
         }
@@ -2070,140 +1857,6 @@ struct ChatComposerView: View {
             .background(background, in: Circle())
             .frame(minWidth: slotWidth, minHeight: slotHeight)
             .contentShape(Rectangle())
-    }
-}
-
-private struct ComposerQuotaPopoverView: View {
-    let model: SessionConfigModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Label("Subscription Quota", systemImage: "gauge.with.dots.needle.33percent")
-                    .font(.subheadline.weight(.semibold))
-                if case .loaded(let result) = model.quotaState, let plan = result.planType, !plan.isEmpty {
-                    Text(verbatim: plan.uppercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                }
-                Spacer(minLength: 8)
-                if case .loaded(let result) = model.quotaState, result.stale {
-                    Text("Cached")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
-                Button {
-                    model.loadQuota(force: true)
-                } label: {
-                    if model.quotaState == .loading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 24, height: 24)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24, height: 24)
-                            .contentShape(Rectangle())
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(model.quotaState == .loading)
-                .accessibilityLabel("Refresh Quota")
-                .help("Refresh Quota")
-            }
-
-            switch model.quotaState {
-            case .idle, .loading:
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Loading quota…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 8)
-            case .disabled:
-                Button {
-                    model.loadQuota(force: true)
-                } label: {
-                    Label("Query Subscription Quota", systemImage: "gauge.with.dots.needle.33percent")
-                        .font(.footnote.weight(.medium))
-                }
-                .buttonStyle(.bordered)
-            case .failed(let error):
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(verbatim: error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    Button("Retry") {
-                        model.loadQuota(force: true)
-                    }
-                    .font(.caption.weight(.semibold))
-                }
-            case .loaded(let result):
-                if result.status != "success", let err = result.error {
-                    Text(verbatim: err)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                if let groups = result.groups, !groups.isEmpty {
-                    ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                        if index > 0 {
-                            Divider()
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(verbatim: group.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            quotaWindowRow(label: "5H", window: group.fiveHour)
-                            if group.sevenDay != nil {
-                                quotaWindowRow(label: "7D", window: group.sevenDay)
-                            }
-                        }
-                    }
-                } else {
-                    quotaWindowRow(label: "5H", window: result.fiveHour)
-                    quotaWindowRow(label: "7D", window: result.sevenDay)
-                }
-            }
-        }
-        .padding(14)
-        .frame(minWidth: 280, idealWidth: 320, maxWidth: 340, alignment: .leading)
-        .onAppear {
-            model.loadQuota()
-        }
-    }
-
-    private func quotaWindowRow(label: String, window: UsageQueryWindow?) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text(verbatim: label)
-                    .font(.caption.monospaced().weight(.semibold))
-                Spacer(minLength: 4)
-                if let window {
-                    Text(String(format: String(localized: "%@%% used · %@%% left"), max(0, min(100, window.usedPercent)).formatted(.number.precision(.fractionLength(0...1))), max(0, min(100, 100 - window.usedPercent)).formatted(.number.precision(.fractionLength(0...1)))))
-                        .font(.caption.monospacedDigit())
-                    if window.resetsAt != nil {
-                        Text(verbatim: "· ↻ \(window.formatResetCountdown())")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text("—")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if let window {
-                let used = max(0, min(100, window.usedPercent))
-                ProgressView(value: Double(used), total: 100)
-                    .tint(used >= 90 ? .red : (used >= 75 ? .orange : .accentColor))
-            }
-        }
     }
 }
 
@@ -2879,84 +2532,6 @@ private struct ComposerAccessibilityProbe: UIViewRepresentable {
     }
 }
 
-/// Open-bottom 240° dual-tone progress arc gauge with a central pivot needle,
-/// distinguishing quota/session controls from the leading `clock` schedule glyph.
-struct ComposerQuotaGaugeIcon: View {
-    let usedPercent: Double?
-    let accentColor: Color
-
-    #if targetEnvironment(macCatalyst)
-    @ScaledMetric(relativeTo: .body) private var gaugeDiameter: CGFloat = 16
-    private let lineWidth: CGFloat = 1.6
-    #else
-    @ScaledMetric(relativeTo: .body) private var gaugeDiameter: CGFloat = 22
-    private let lineWidth: CGFloat = 1.95
-    #endif
-
-    var remainingFraction: Double? {
-        guard let usedPercent, usedPercent.isFinite else { return nil }
-        return 1 - min(1, max(0, usedPercent / 100))
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .trim(from: 0, to: 240.0 / 360.0)
-                .stroke(
-                    Color.primary.opacity(0.22),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
-                .rotationEffect(.degrees(150))
-
-            if let fraction = remainingFraction {
-                Circle()
-                    .trim(from: 0, to: (240.0 / 360.0) * fraction)
-                    .stroke(
-                        accentColor,
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                    )
-                    .rotationEffect(.degrees(150))
-
-                Canvas { context, size in
-                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                    let scale = size.width / 19.0
-                    let rad = (150.0 + fraction * 240.0) * .pi / 180.0
-                    let pivotRadius = 2.1 * scale
-                    let needleLength = 5.8 * scale
-                    let start = CGPoint(
-                        x: center.x + pivotRadius * cos(rad),
-                        y: center.y + pivotRadius * sin(rad)
-                    )
-                    let end = CGPoint(
-                        x: center.x + needleLength * cos(rad),
-                        y: center.y + needleLength * sin(rad)
-                    )
-                    var needle = Path()
-                    needle.move(to: start)
-                    needle.addLine(to: end)
-                    context.stroke(
-                        needle,
-                        with: .color(accentColor),
-                        style: StrokeStyle(lineWidth: lineWidth * 0.92, lineCap: .round)
-                    )
-                    let pivotRect = CGRect(
-                        x: center.x - pivotRadius,
-                        y: center.y - pivotRadius,
-                        width: pivotRadius * 2,
-                        height: pivotRadius * 2
-                    )
-                    context.stroke(
-                        Path(ellipseIn: pivotRect),
-                        with: .color(accentColor),
-                        lineWidth: lineWidth * 0.88
-                    )
-                }
-            }
-        }
-        .frame(width: gaugeDiameter, height: gaugeDiameter)
-        .offset(y: gaugeDiameter * 0.10)
-    }
-}
 
 /// Anchors instant-response floating glass popup cards in the key window over the
 /// composer's leading or trailing edge while leaving the software keyboard focused.
