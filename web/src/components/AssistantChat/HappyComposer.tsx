@@ -1,5 +1,4 @@
 import { AssistantChatModelPicker } from '@/components/AssistantModelPresetPicker'
-import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { useClientProfile } from '@/lib/client-profile'
 import {
     getCodexCollaborationModeOptions,
@@ -295,6 +294,7 @@ export function ModelEffortSettingsSection(props: {
 
 export function HappyComposer(props: {
     sessionId?: string
+    assistantApi?: ApiClient
     focusInputRef?: MutableRefObject<(() => void) | null>
     onUploadDraftSnapshot?: (text: string, attachments: AttachmentDraftInput[]) => void
     canRestoreAttachments?: boolean
@@ -901,7 +901,6 @@ export function HappyComposer(props: {
     const bottomPaddingClass = isIOSPWA ? 'pb-0' : 'pb-3'
     const clientProfile = useClientProfile()
     const assistant = clientProfile?.mode === 'assistant'
-    const assistantChat = useOptionalHappyChatContext()
     const activeWord = useActiveWord(inputState.text, inputState.selection, assistant ? [] : autocompletePrefixes)
     const [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions] = useActiveSuggestions(
         activeWord,
@@ -2523,8 +2522,8 @@ export function HappyComposer(props: {
                             ) : null}
 
                             <ComposerButtons
-                                assistantControl={assistant && clientProfile && assistantChat ? (agentFlavor === 'codex' ? <span className="assistant-quiet">交叉核验</span> : <AssistantChatModelPicker profile={clientProfile} api={assistantChat.api}
-                                    session={{ id: assistantChat.sessionId, active, model: typeof model === 'string' ? model : null, effort }} />) : undefined}
+                                assistantControl={assistant && clientProfile && props.assistantApi && sessionId ? (agentFlavor === 'codex' ? <span className="assistant-quiet">交叉核验</span> : <AssistantChatModelPicker profile={clientProfile} api={props.assistantApi}
+                                    session={{ id: sessionId, active, model: typeof model === 'string' ? model : null, effort }} />) : undefined}
                                 canSend={canSend}
                                 controlsDisabled={controlsDisabled}
                                 showSettingsButton={showSettingsButton}
