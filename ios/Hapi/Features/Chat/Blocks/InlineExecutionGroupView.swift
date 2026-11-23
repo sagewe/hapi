@@ -10,14 +10,9 @@ struct InlineExecutionGroupView: View {
     let basePath: String?
     var body: some View {
         if model.isAssistantMode {
-            Button { model.toggleInlineExecutionGroup(presentation.id) } label: {
-                HStack(spacing: 8) {
-                    if presentation.runningCount > 0 { ProgressView().controlSize(.small) }
-                    Text(presentation.runningCount > 0 ? "正在检索与核验资料…" : "已完成 \(presentation.totalTools) 步查证")
-                    Spacer()
-                    Image(systemName: model.isInlineExecutionGroupExpanded(presentation.id) ? "chevron.down" : "chevron.right")
-                }.font(.footnote).foregroundStyle(.secondary).frame(minHeight: 44)
-            }.buttonStyle(.plain)
+            AssistantPhaseCard(phase: presentation.assistantPhase, steps: presentation.totalTools,
+                running: presentation.runningCount > 0 || presentation.processTiming?.running == true,
+                expanded: model.isInlineExecutionGroupExpanded(presentation.id)) { model.toggleInlineExecutionGroup(presentation.id) }
         } else {
             ToolGroupBlockView(presentation: presentation,
                 isExpanded: model.isInlineExecutionGroupExpanded(presentation.id),

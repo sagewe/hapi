@@ -1,3 +1,4 @@
+import { investigationPhase } from '@/components/AssistantWorkspace/transaction'
 import { useClientProfile } from '@/lib/client-profile'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ToolGroupBlock } from '@/chat/toolGroups'
@@ -445,8 +446,8 @@ function DeveloperToolGroupCard(props: {
 export function ToolGroupCard(props: Parameters<typeof DeveloperToolGroupCard>[0]) {
     const assistant = useClientProfile()?.mode === 'assistant'
     if (!assistant) return <DeveloperToolGroupCard {...props} />
-    return <details className="rounded-xl bg-[var(--app-secondary-bg)] p-3 text-sm">
-        <summary className="min-h-8 cursor-pointer text-[var(--app-hint)]">{props.block.summary.runningCount > 0 ? '正在检索与核验资料…' : `已完成 ${props.block.tools.length} 步查证`}</summary>
+    return <details className="assistant-phase">
+        <summary className="min-h-8 cursor-pointer text-[var(--app-hint)]">{props.block.summary.runningCount > 0 ? investigationPhase(props.block.tools.at(-1)?.tool.name ?? '', JSON.stringify(props.block.tools.at(-1)?.tool.input ?? {}).slice(0, 2000)) : `已完成 ${props.block.tools.length} 步查证`}</summary>
         <div className="mt-3"><DeveloperToolGroupCard {...props} /></div>
     </details>
 }

@@ -43,6 +43,8 @@ struct ChatView: View {
     private let onNavigateToSession: ((String) -> Void)?
     /// Opens the structured parent session without altering navigation history semantics.
     private let onOpenParentSession: ((String) -> Void)?
+    private let onAssistantHistory: (() -> Void)?
+    private let onAssistantNew: ((Bool) -> Void)?
 
     /// Kept for the files/viewer pushes (the model owns its own reference).
     private let session: HubSession
@@ -74,13 +76,16 @@ struct ChatView: View {
         session: HubSession,
         sessionId: String,
         onNavigateToSession: ((String) -> Void)? = nil,
-        onOpenParentSession: ((String) -> Void)? = nil
+        onOpenParentSession: ((String) -> Void)? = nil,
+        onAssistantHistory: (() -> Void)? = nil,
+        onAssistantNew: ((Bool) -> Void)? = nil
     ) {
         self.init(
             session: session,
             model: ChatModel(session: session, sessionId: sessionId),
             onNavigateToSession: onNavigateToSession,
-            onOpenParentSession: onOpenParentSession
+            onOpenParentSession: onOpenParentSession,
+            onAssistantHistory: onAssistantHistory, onAssistantNew: onAssistantNew
         )
     }
 
@@ -88,13 +93,17 @@ struct ChatView: View {
         session: HubSession,
         model: ChatModel,
         onNavigateToSession: ((String) -> Void)? = nil,
-        onOpenParentSession: ((String) -> Void)? = nil
+        onOpenParentSession: ((String) -> Void)? = nil,
+        onAssistantHistory: (() -> Void)? = nil,
+        onAssistantNew: ((Bool) -> Void)? = nil
     ) {
         _model = State(initialValue: model)
         self.session = session
         self.sessionId = model.sessionId
         self.onNavigateToSession = onNavigateToSession
         self.onOpenParentSession = onOpenParentSession
+        self.onAssistantHistory = onAssistantHistory
+        self.onAssistantNew = onAssistantNew
     }
 
     var body: some View {
@@ -120,6 +129,7 @@ struct ChatView: View {
             reconnectNotice
         }
         .safeAreaInset(edge: .top, spacing: 0) {
+            if session.isAssistantMode { assistantHeader }
             warningBanner
         }
         // Toast overlays the thread; applying it before the bottom inset
@@ -145,7 +155,8 @@ struct ChatView: View {
                     api: session.api,
                     machineId: currentMachineId,
                     notice: model.notice,
-                    hugsBottomEdge: isFoldedOuterScreen
+                    hugsBottomEdge: isFoldedOuterScreen,
+                    assistantSession: session
                 ) { entry, editing in
                     scratchlistEntry = entry
                     scratchlistStartsEditing = editing
@@ -158,7 +169,8 @@ struct ChatView: View {
                     holdDictation: model.holdDictation,
                     api: session.api,
                     machineId: currentMachineId,
-                    hugsBottomEdge: isFoldedOuterScreen
+                    hugsBottomEdge: isFoldedOuterScreen,
+                    assistantSession: session
                 ) { entry, editing in
                     scratchlistEntry = entry
                     scratchlistStartsEditing = editing
@@ -181,12 +193,12 @@ struct ChatView: View {
             // Folded Duo: Back and the actions live in the side bar, so a
             // centered title would float right of an empty gap; the system
             // title (below) sits at the leading margin instead.
-            if !usesSystemTitle {
+            if !session.isAssistantMode && !usesSystemTitle {
                 ToolbarItem(placement: .principal) {
                     headerTitle
                 }
             } else {
-                if showsProminentSystemToolbarStatus {
+                if !session.isAssistantMode && showsProminentSystemToolbarStatus {
                     ToolbarItem(placement: .topBarTrailing) {
                         ChatHeaderStatusBadge(
                             status: model.header.status,
@@ -195,13 +207,8 @@ struct ChatView: View {
                     }
                 }
             }
-            if session.isAssistantMode, model.header.flavor == "agy", session.clientProfile?.modelPresets?.isEmpty == false {
-                ToolbarItem(placement: .topBarTrailing) {
-                    AssistantChatModelPicker(session: session, sessionId: sessionId)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                moreActionsMenu
+            if !session.isAssistantMode {
+                ToolbarItem(placement: .topBarTrailing) { moreActionsMenu }
             }
         }
         .sheet(isPresented: $configOpen) {
@@ -271,7 +278,15 @@ struct ChatView: View {
         }
         .alert("Delete Session", isPresented: $deleteOpen) {
             Button("Delete", role: .destructive) {
-                model.interactor.deleteSession()
+                if session.isAssistantMode {
+                    Task {
+                        do {
+                            if model.sessionIsActive == true { try await session.api.archiveSession(id: sessionId) }
+                            try await session.api.deleteSession(id: sessionId)
+                            try? await session.sessionStore.refresh()
+                        } catch { model.interactor.postNotice("删除暂未成功，请稍后重试") }
+                    }
+                } else { model.interactor.deleteSession() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -437,6 +452,28 @@ struct ChatView: View {
     }
     #endif
 
+    private var assistantHeader: some View {
+        let summary = session.sessionStore.sessions.first { $0.id == sessionId }
+        return HStack(alignment: .top, spacing: 10) {
+            Button { onAssistantHistory?() } label: {
+                Image(systemName: "line.3.horizontal").frame(width: 44, height: 44).assistantSurface(radius: 22)
+            }.accessibilityLabel("历史调查")
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.header.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let summary, AssistantHistoryPresentation.status(summary) == "待回复" {
+                    Text("待回复").font(.caption).foregroundStyle(.orange)
+                } else if let summary, AssistantHistoryPresentation.status(summary) == "调查中" {
+                    HStack(spacing: 5) { ProgressView().controlSize(.mini); Text("调查中").font(.caption) }.foregroundStyle(.secondary)
+                }
+            }.padding(.top, 9)
+            HStack(spacing: 2) {
+                Button { onAssistantNew?(false) } label: { Image(systemName: "square.and.pencil").frame(width: 38, height: 44) }.accessibilityLabel("新建调查")
+                moreActionsMenu.frame(width: 32, height: 44)
+            }
+        }.foregroundStyle(.primary).padding(.horizontal, 16).padding(.vertical, 10).background(AssistantDesign.background)
+    }
+
     private var moreActionsMenu: some View {
         ChatActionsMenu(
             state: .init(model: model, session: session),
@@ -444,7 +481,8 @@ struct ChatView: View {
             jumpOpen: $jumpOpen, previewPortOpen: $previewPortOpen,
             terminalOpen: $terminalOpen, filesOpen: $filesOpen,
             forkConfirmOpen: $forkConfirmOpen, historyOpen: $historyOpen,
-            exportFormatOpen: $exportFormatOpen, renameOpen: $renameOpen, deleteOpen: $deleteOpen
+            exportFormatOpen: $exportFormatOpen, renameOpen: $renameOpen, deleteOpen: $deleteOpen,
+            onCrossCheck: onAssistantNew.map { callback in { callback(true) } }
         )
     }
 
@@ -568,11 +606,8 @@ struct ChatView: View {
     private var emptyState: some View {
         Group {
             if session.isAssistantMode {
-                ScrollView {
-                    AssistantQuickActions(actions: session.clientProfile?.quickActions ?? []) {
-                        model.interactor.setComposerText($0.prompt)
-                    }.padding()
-                }
+                Text("继续调查").font(.title3).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
                     Label("No messages yet", systemImage: "bubble.left.and.bubble.right")

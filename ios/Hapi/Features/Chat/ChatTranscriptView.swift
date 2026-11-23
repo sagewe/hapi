@@ -81,6 +81,8 @@ struct ChatTranscriptView: View {
         var result: [TranscriptRow] = [.history(model.historyPaging.phase, model.hasMore, isHistoryDisabled)]
         result.reserveCapacity(model.messageRows.count + 1)
         for row in model.messageRows {
+            if model.hidesExecutionDetails, case .message(let block, _, _) = row.kind,
+               case .block(.agentReasoning) = block { continue }
             result.append(row)
             guard case .group(let presentation) = row.kind,
                   presentation.isExecutionProcess, presentation.processRole != "header",
@@ -88,6 +90,7 @@ struct ChatTranscriptView: View {
                   let group = model.toolInspection.group(presentation.id) else { continue }
             let openTools = model.inlineExecutionMembers(group.id, field: "inlineTools")
             func appendStep(_ block: ChatBlock) {
+                if model.hidesExecutionDetails, case .agentReasoning = block { return }
                 if case .toolCall(let tool) = block {
                     result.append(TranscriptRow(id: "inline-tool:\(group.id):\(tool.id)", role: .tool,
                         box: .init(.executionTool(group.id, tool, openTools.contains(tool.id))), navigationID: group.id))

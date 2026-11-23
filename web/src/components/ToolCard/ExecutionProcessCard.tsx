@@ -1,3 +1,4 @@
+import { investigationPhase } from '@/components/AssistantWorkspace/transaction'
 import { useHideExecutionDetails, useClientProfile } from '@/lib/client-profile'
 import { Component, createRef, useEffect, useState, useMemo, useRef, useLayoutEffect, type ReactNode } from 'react'
 import { executionDetailSections, type ExecutionDetailSection } from '@/chat/executionDetails'
@@ -55,6 +56,8 @@ function ExecutionTimingLabel({ timing }: { timing: ToolGroupBlock['processTimin
 export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupBlock; renderMedia: (block: GeneratedImageBlock) => ReactNode }) {
     const assistant = useClientProfile()?.mode === 'assistant'
     const hideDetails = useHideExecutionDetails()
+    const phaseTool = [...block.tools].reverse().find(t => t.tool.state === 'running') ?? block.tools.at(-1)
+    const phase = investigationPhase(phaseTool?.tool.name ?? '', JSON.stringify(phaseTool?.tool.input ?? {}).slice(0, 2000))
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const open = ctx.openExecutionProcesses?.has(block.id) ?? false
@@ -77,12 +80,12 @@ export function ExecutionProcessCard({ block, renderMedia }: { block: ToolGroupB
         <ExecutionTimingLabel timing={block.processTiming} />
     </div>
     return <section data-testid={block.processRole === 'tools' ? 'execution-tools' : 'execution-process'} className="min-w-0">
-        <button type="button" aria-expanded={open} className="flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"
+        <button type="button" aria-expanded={open} className={assistant ? "assistant-phase w-full text-left" : "flex min-h-11 items-center gap-2 text-xs text-[var(--app-hint)] hover:text-[var(--app-fg)]"}
             onClick={() => {
                 ctx.setExecutionProcessOpen?.(block.id, !open)
                 if (!open) { ctx.onNestedScrollFollowChange?.(false); ctx.onExecutionInspect?.(block.id) }
             }}>
-            <span>{assistant ? (block.processTiming?.running || block.summary.runningCount > 0 ? '正在检索与核验资料…' : `已完成 ${block.tools.length} 步查证`) : block.processRole === 'tools'
+            <span>{assistant ? (block.processTiming?.running || block.summary.runningCount > 0 ? phase : `已完成 ${block.tools.length} 步查证`) : block.processRole === 'tools'
                 ? (block.tools.length === 0 ? t('chat.execution.media') : formatGroupedHeaderSubtitle(block, t) ?? t('chat.execution.tools', { n: block.tools.length }))
                 : <ExecutionTimingLabel timing={block.processTiming} />}</span>
             <span aria-hidden="true">{open ? '⌄' : '›'}</span>

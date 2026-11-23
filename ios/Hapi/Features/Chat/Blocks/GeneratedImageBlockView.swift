@@ -20,6 +20,9 @@ struct GeneratedImageBlockView: View {
 
 private struct GeneratedMediaCard: View {
     let loader: GeneratedMediaLoader?
+    @Environment(\.isAssistantMode) private var isAssistantMode
+    @State private var wantsShare = false
+    @State private var imageShareFile: GeneratedMediaFile?
     @State private var content: GeneratedMediaPresentation
     @State private var loadAttempt = 0
     @State private var imageOpen = false
@@ -33,48 +36,15 @@ private struct GeneratedMediaCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                Text(verbatim: content.block.fileName)
-                    .lineLimit(2)
-            } icon: {
-                Image(systemName: content.kind.icon)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            if let image = content.image {
-                Button { imageOpen = true } label: {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 360)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(content.block.fileName)
-            } else if let file = content.file {
-                loadedFile(file)
-            } else if content.loadFailed {
-                Text("Couldn't load media.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Retry", systemImage: "arrow.clockwise") { loadAttempt += 1 }
-            } else if loader != nil && (content.kind == .image || content.isLoading) {
-                ProgressView()
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else if content.kind != .image {
-                loadButton
-                    .disabled(loader == nil)
-            }
+        Group {
+            if isAssistantMode && content.kind == .file { assistantFileCard }
+            else { regularCard }
         }
-        .padding(12)
-        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .task(id: loadAttempt) {
             guard let loader, content.kind == .image || loadAttempt > 0 else { return }
             await content.load(using: loader)
             if content.kind == .file, let file = content.file, loadAttempt > 0 {
-                if Self.canPreview(file.url) { previewOpen = true } else { shareOpen = true }
+                if wantsShare || !Self.canPreview(file.url) { shareOpen = true } else { previewOpen = true }
             }
         }
         .fullScreenCover(isPresented: $imageOpen) {
@@ -96,8 +66,90 @@ private struct GeneratedMediaCard: View {
             }
         }
         .sheet(isPresented: $shareOpen) {
-            if let file = content.file { GeneratedMediaShareSheet(file: file) }
+            if let file = content.file ?? imageShareFile { GeneratedMediaShareSheet(file: file) }
         }
+    }
+
+    private var regularCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label {
+                Text(verbatim: content.block.fileName)
+                    .lineLimit(2)
+            } icon: {
+                Image(systemName: content.kind.icon)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            if let image = content.image {
+                Button { imageOpen = true } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 360)
+                        .clipShape(RoundedRectangle(cornerRadius: isAssistantMode ? 16 : 12, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16).stroke(AssistantDesign.border, lineWidth: isAssistantMode ? 0.5 : 0))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(content.block.fileName)
+                if isAssistantMode {
+                    Button("转发或保存", systemImage: "square.and.arrow.up") {
+                        guard let imageData = image.jpegData(compressionQuality: 0.95) else { return }
+                        imageShareFile = try? GeneratedMediaFile(data: imageData, fileName: "证据截图.jpg", mimeType: "image/jpeg")
+                        shareOpen = imageShareFile != nil
+                    }.font(.caption).frame(minHeight: 36)
+                }
+            } else if let file = content.file {
+                loadedFile(file)
+            } else if content.loadFailed {
+                Text("Couldn't load media.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Retry", systemImage: "arrow.clockwise") { loadAttempt += 1 }
+            } else if loader != nil && (content.kind == .image || content.isLoading) {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else if content.kind != .image {
+                loadButton
+                    .disabled(loader == nil)
+            }
+        }
+        .padding(12)
+        .background(isAssistantMode ? AssistantDesign.surface : Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: isAssistantMode ? 16 : 12))
+    }
+
+    private var assistantFileCard: some View {
+        let pdf = content.block.fileName.lowercased().hasSuffix(".pdf")
+        let zip = content.block.fileName.lowercased().hasSuffix(".zip")
+        let color: Color = pdf ? .pink : zip ? .orange : .teal
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                AssistantIcon(symbol: pdf ? "doc.richtext" : zip ? "archivebox" : "doc", color: color, size: 40)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(content.block.fileName).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                    Text(pdf ? "PDF 报告" : zip ? "证据包" : "交付文件").font(.caption).foregroundStyle(color)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 10) {
+                Button { openFile(share: false) } label: {
+                    Label("预览", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 42)
+                        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(color)
+                }
+                Button { openFile(share: true) } label: {
+                    Label("转发", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 42)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.primary)
+                }
+                if content.isLoading { ProgressView().controlSize(.small) }
+            }.font(.subheadline.weight(.medium)).buttonStyle(.plain).disabled(loader == nil || content.isLoading)
+            if content.loadFailed { Text("文件暂不可用，可重试或请助手重新发送").font(.caption).foregroundStyle(.secondary) }
+        }.padding(16).assistantSurface().accessibilityIdentifier("assistant.report-card")
+    }
+    private func openFile(share: Bool) {
+        wantsShare = share
+        if let file = content.file {
+            if share || !Self.canPreview(file.url) { shareOpen = true } else { previewOpen = true }
+        } else { loadAttempt += 1 }
     }
 
     @ViewBuilder

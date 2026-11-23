@@ -31,6 +31,7 @@ struct ChatComposerView: View {
     /// Folded iPhone Duo: the short outer screen keeps more transcript by
     /// letting the composer sit closer to the home indicator.
     var hugsBottomEdge = false
+    var assistantSession: HubSession?
     var onOpenScratchlist: (ScratchlistEntry?, Bool) -> Void = { _, _ in }
 
     // Attachment pickers (the launchers live here; policy + upload live in
@@ -75,6 +76,7 @@ struct ChatComposerView: View {
         machineId: String? = nil,
         notice: String? = nil,
         hugsBottomEdge: Bool = false,
+        assistantSession: HubSession? = nil,
         onOpenScratchlist: @escaping (ScratchlistEntry?, Bool) -> Void = { _, _ in }
     ) {
         self.interactor = interactor
@@ -86,13 +88,17 @@ struct ChatComposerView: View {
         self.machineId = machineId
         self.notice = notice
         self.hugsBottomEdge = hugsBottomEdge
+        self.assistantSession = assistantSession
         self.onOpenScratchlist = onOpenScratchlist
         _configModel = State(initialValue: SessionConfigModel(interactor: interactor, api: api, machineId: machineId))
     }
 
     private var scratchlistMode: Bool { interactor.composerDestination == .scratchlist }
     private var composerPrompt: LocalizedStringKey {
-        if isAssistantMode { return "输入公司/人名，或上传图片/PDF…" }
+        #if !targetEnvironment(macCatalyst)
+        if isAssistantMode && !textFocused && holdDictation?.isAvailable == true { return "按住说话…" }
+        #endif
+        if isAssistantMode { return "输入线索，或添加单据…" }
         if scratchlistMode {
             return "Keep an instruction for later…"
         }
@@ -1137,7 +1143,13 @@ struct ChatComposerView: View {
 
     @ViewBuilder
     private func composerLeadingTools(hasAttachments: Bool) -> some View {
-        if isAssistantMode { addAttachmentButton } else {
+        if isAssistantMode {
+            addAttachmentButton
+            if let assistantSession {
+                if interactor.mentionFlavor == "codex" { Text("交叉核验").font(.caption).foregroundStyle(.secondary) }
+                else { AssistantChatPresetCapsule(session: assistantSession, sessionId: interactor.sessionId) }
+            }
+        } else {
         #if targetEnvironment(macCatalyst)
         addAttachmentButton
         if !scratchlistMode {
@@ -1864,12 +1876,14 @@ struct ChatComposerView: View {
 /// Glass on iOS 26 to match the glass navigation controls, otherwise the
 /// elevated surface with a hairline edge so it separates from white rows.
 private struct ComposerCardSurface: ViewModifier {
+    @Environment(\.isAssistantMode) private var assistant
     @Environment(\.colorScheme) private var colorScheme
     let fill: Color
     var isFocused: Bool = false
     var isCollapsed: Bool = false
 
     func body(content: Content) -> some View {
+        if assistant { content.assistantSurface() } else {
         #if targetEnvironment(macCatalyst)
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         let borderColor = isFocused
@@ -1918,6 +1932,7 @@ private struct ComposerCardSurface: ViewModifier {
                 .shadow(color: .black.opacity(isDark ? 0.28 : 0.10), radius: 14, y: 4)
         }
         #endif
+        }
     }
 }
 

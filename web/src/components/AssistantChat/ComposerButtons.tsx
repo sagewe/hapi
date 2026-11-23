@@ -24,7 +24,7 @@ function OrderedToolbarItems(props: { layout: ComposerToolbarLayout; children: R
     )
     const slotsByItem = new Map(slots.map((slot) => [slot.props.item, slot]))
     const renderItems = (items: ComposerToolbarItemId[]) => items.map((item) => {
-        if (assistant && !['attachment', 'voiceMic', 'abort'].includes(item)) return null
+        if (assistant && !['attachment', 'voiceMic', 'abort', 'model'].includes(item)) return null
         const slot = slotsByItem.get(item)
         if (!slot || slot.props.children == null) return null
         return <div key={item} className="shrink-0">{slot}</div>
@@ -797,6 +797,7 @@ export async function addSelectedAttachments(
 }
 
 export function ComposerButtons(props: {
+    assistantControl?: ReactNode
     canSend: boolean
     controlsDisabled: boolean
     showSettingsButton: boolean
@@ -864,6 +865,7 @@ export function ComposerButtons(props: {
      */
     omitPrimaryButton?: boolean
 }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { t } = useTranslation()
     const { layout } = useComposerToolbarLayout()
     const isNarrowViewport = useNarrowViewport()
@@ -962,7 +964,7 @@ export function ComposerButtons(props: {
                 </ToolbarItemSlot>
 
                 <ToolbarItemSlot item="model">
-                {props.modelValueLabel ? (
+                {assistant ? props.assistantControl ?? null : props.modelValueLabel ? (
                     <button
                         ref={props.modelValueButtonRef}
                         type="button"

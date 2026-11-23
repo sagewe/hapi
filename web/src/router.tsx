@@ -1,3 +1,4 @@
+import { AssistantWorkspace } from '@/components/AssistantWorkspace/AssistantWorkspace'
 import { useClientProfile } from '@/lib/client-profile'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -146,6 +147,7 @@ function SettingsIcon(props: { className?: string }) {
 }
 
 function SessionsPage() {
+    const assistantProfile = useClientProfile()
     const { api, baseUrl, titleSuggestionAvailable = false } = useAppContext()
     const navigate = useNavigate()
     const router = useRouter()
@@ -294,6 +296,8 @@ function SessionsPage() {
         const nextHref = `${currentPathname}${nextSearch ? `?${nextSearch}` : ''}${hash}`
         router.history.replace(nextHref, state)
     }, [router, setIsSidebarVisible, sidebarHidden])
+
+    if (assistantProfile?.mode === 'assistant') return <AssistantWorkspace key={baseUrl} api={api} machines={machines} sessions={sessions} refresh={refetch}><Outlet /></AssistantWorkspace>
 
     return (
         <>

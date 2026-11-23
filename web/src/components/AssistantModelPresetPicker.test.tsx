@@ -15,10 +15,10 @@ it('hot-switches both model and effort and waits for server state to mark select
     render(<QueryClientProvider client={query}><AssistantChatModelPicker profile={profile}
         api={{ setModel } as unknown as ApiClient}
         session={{ id: 'case', active: true, model: 'gemini-4-neon', effort: 'high' } as Session} /></QueryClientProvider>)
-    expect(screen.getByRole('button', { name: '深度' })).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(screen.getByRole('button', { name: '快速' }))
+    expect(screen.getByRole('button', { name: '切换调查档位' })).toHaveTextContent('深度')
+    fireEvent.click(screen.getByRole('button', { name: '切换调查档位' }))
     await waitFor(() => expect(setModel).toHaveBeenCalledWith('case', 'gemini-4-hydrogen-medium', { effort: 'medium' }))
-    expect(screen.getByRole('button', { name: '快速' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: '切换调查档位' })).toHaveTextContent('深度')
     expect(screen.queryByText(/gemini-4/)).toBeNull()
     query.clear()
 })

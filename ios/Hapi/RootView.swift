@@ -23,8 +23,10 @@ struct RootView: View {
                 if let session = model.session {
                     // `.id` resets navigation + list state on hub switch —
                     // each hub gets a fresh HomeView over its own stores.
-                    HomeView(session: session)
-                        .id(session.hubUrl)
+                    Group {
+                        if session.isAssistantMode { AssistantRootView(session: session) }
+                        else { HomeView(session: session) }
+                    }.id(session.hubUrl)
                 } else {
                     // Defensive: .paired always carries a session; fall back
                     // to pairing rather than a dead screen.

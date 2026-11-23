@@ -7,6 +7,22 @@ web-generated golden fixtures in `shared/fixtures/`.
 End users: install HAPI from the [App Store](https://apps.apple.com/app/id6805699104).
 This README covers development builds.
 
+## Assistant workspace
+
+Hubs with `clientProfile.mode == "assistant"` open a local investigation draft
+instead of the developer session list. Scenes are removable chips; text, voice
+and attachments remain local until Send creates a session, uploads files and
+sends the first message. Failed sends reuse the allocated session and local ID.
+History, search, archive filters and Hub settings live in a left-edge drawer;
+notification targets still open the corresponding investigation directly.
+
+The composer keeps the Hub's quick/deep presets in a small capsule, with atomic
+model/effort switching for existing agy sessions. Chinese execution phases hide
+raw reasoning. PDF reports offer one-tap QuickLook preview and system sharing.
+The developer Home and Mac session chrome retain their existing behavior.
+`AssistantWorkbenchTests` cover lazy creation, attachment retry, voice edits,
+status mapping and light/dark hosted SwiftUI captures.
+
 ## Archived session visibility
 
 Archived sessions are hidden from the home list by default. Filters → Show

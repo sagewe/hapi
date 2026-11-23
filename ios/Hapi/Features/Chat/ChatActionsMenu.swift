@@ -53,18 +53,37 @@ struct ChatActionsMenu: View {
     @Binding var exportFormatOpen: Bool
     @Binding var renameOpen: Bool
     @Binding var deleteOpen: Bool
+    var onCrossCheck: (() -> Void)? = nil
 
     var body: some View {
+        if state.assistant { assistantMenu } else {
         #if targetEnvironment(macCatalyst)
         MacMenu(owner: self)
         #else
         swiftUIMenu
         #endif
+        }
+    }
+    private var assistantMenu: some View {
+        Menu {
+            Button("重命名与标签", systemImage: "tag") { renameOpen = true }
+            Button("导出对话", systemImage: "square.and.arrow.up") { exportFormatOpen = true }
+            Button("标为未读", systemImage: "circle.badge") { model.markUnread() }
+            if state.sessionActive == true {
+                Button("归档", systemImage: "archivebox") { model.interactor.archiveSession() }
+            } else {
+                Button("重新打开", systemImage: "arrow.clockwise") { model.interactor.reopenSession() }
+            }
+            Button("删除", systemImage: "trash", role: .destructive) { deleteOpen = true }
+            Divider()
+            Button("用 Codex 交叉核验", systemImage: "sparkle.magnifyingglass") { onCrossCheck?() }
+        } label: { Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 44) }
+        .accessibilityLabel("更多操作")
     }
 
     private var swiftUIMenu: some View {
         Menu {
-            if let parentId = state.parentID,
+            if !state.assistant, let parentId = state.parentID,
                let parentTitle = state.parentTitle,
                let onOpenParentSession {
                 Button {
@@ -77,6 +96,7 @@ struct ChatActionsMenu: View {
                 }
                 Divider()
             }
+            if !state.assistant {
             Button {
                 jumpOpen = true
             } label: {
@@ -84,6 +104,7 @@ struct ChatActionsMenu: View {
             }
             .disabled(!state.canJump)
             Divider()
+            }
             if !state.assistant {
             Button("Web Preview", systemImage: "globe") { previewPortOpen = true }
             if state.terminalAvailable {
@@ -160,6 +181,10 @@ struct ChatActionsMenu: View {
                     Label("Delete…", systemImage: "trash")
                 }
                 .disabled(state.sessionOperationPending)
+            }
+            if state.assistant {
+                Divider()
+                Button("用 Codex 交叉核验", systemImage: "sparkle.magnifyingglass") { onCrossCheck?() }
             }
         } label: {
             Image(systemName: "ellipsis")

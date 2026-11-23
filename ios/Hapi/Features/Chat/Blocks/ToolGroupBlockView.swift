@@ -14,11 +14,14 @@ struct ToolGroupPresentation: Identifiable, Equatable {
     let isExecutionProcess: Bool
     let processTiming: ExecutionProcessTiming?
     let processRole: String?
+    let assistantPhase: String
 
     init(_ block: ToolGroupBlock) {
         id = block.id
         processTiming = block.processTiming
         processRole = block.processRole
+        let tool = block.tools.last { $0.tool.state == .running } ?? block.tools.last
+        assistantPhase = AssistantInvestigationPhase.title(name: tool?.tool.name ?? "", input: String(describing: tool?.tool.input))
         isExecutionProcess = block.processBlocks != nil
         activityTitle = block.activityTitle
         totalTools = block.summary.totalTools

@@ -1,3 +1,4 @@
+import { useClientProfile } from '@/lib/client-profile'
 import { useId } from 'react'
 import { useTranslation } from '@/lib/use-translation'
 import { HoverTooltip } from '@/components/HoverTooltip'
@@ -30,6 +31,7 @@ type SessionActionMenuProps = {
     /** Soft-fail tip when reopen is allowed but chat-store probe could not verify. */
     reopenHint?: string
     onDelete: () => void
+    onCrossCheck?: () => void
     anchorPoint: { x: number; y: number }
     menuId?: string
 }
@@ -188,6 +190,7 @@ function OpenWindowIcon(props: { className?: string }) {
 }
 
 export function SessionActionMenu(props: SessionActionMenuProps) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const { t } = useTranslation()
     const { haptic, isTelegram } = usePlatform()
     const {
@@ -286,6 +289,15 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
     const baseItemClassName =
         'flex w-full items-center gap-3 rounded-md py-2 pl-3 pr-[42px] text-left text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]'
 
+    if (assistant) return <div ref={menuRef} style={menuStyle} role="menu" className="fixed z-50 min-w-48 rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)] p-2 shadow-lg">
+        <button className={baseItemClassName} role="menuitem" onClick={handleRename}>重命名与标签</button>
+        {onExport && <button className={baseItemClassName} role="menuitem" onClick={handleExport}>导出对话</button>}
+        {onMarkUnread && <button className={baseItemClassName} role="menuitem" onClick={handleMarkUnread}>标为未读</button>}
+        <button className={baseItemClassName} role="menuitem" onClick={sessionActive ? handleArchive : handleReopen}>{sessionActive ? '归档' : '重新打开'}</button>
+        <button className={`${baseItemClassName} text-rose-500`} role="menuitem" onClick={handleDelete}>删除</button>
+        {props.onCrossCheck && <button className={`${baseItemClassName} mt-2 border-t border-[var(--app-border)] text-[var(--app-hint)]`} role="menuitem" onClick={() => { onClose(); props.onCrossCheck?.() }}>用 Codex 交叉核验</button>}
+    </div>
+
     return (
         <div
             ref={menuRef}
@@ -314,7 +326,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                     {t('session.action.rename')}
                 </button>
 
-                <button
+                {!assistant && <button
                     type="button"
                     role="menuitem"
                     className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
@@ -322,7 +334,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                 >
                     <CopyIcon className="h-[18px] w-[18px] text-[var(--app-hint)]" />
                     {t('session.action.copyReference')}
-                </button>
+                </button>}
 
                 {onForkSession || forkDisabledReason ? (
                     <HoverTooltip
@@ -350,7 +362,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                     </HoverTooltip>
                 ) : null}
 
-                {!isTelegram ? (
+                {!assistant && !isTelegram ? (
                     <a
                         href={buildSessionWindowPath(sessionId)}
                         target="_blank"
@@ -376,7 +388,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                     </button>
                 ) : null}
 
-                {onSetPinMode ? (
+                {!assistant && onSetPinMode ? (
                     <>
                         <button
                             type="button"
@@ -487,6 +499,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                         </button>
                     </>
                 )}
+                {props.onCrossCheck && <button type="button" role="menuitem" className={`${baseItemClassName} text-[var(--app-hint)]`} onClick={() => { onClose(); props.onCrossCheck?.() }}>✦ 用 Codex 交叉核验</button>}
             </div>
         </div>
     )

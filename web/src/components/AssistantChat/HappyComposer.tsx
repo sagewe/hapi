@@ -1,3 +1,5 @@
+import { AssistantChatModelPicker } from '@/components/AssistantModelPresetPicker'
+import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { useClientProfile } from '@/lib/client-profile'
 import {
     getCodexCollaborationModeOptions,
@@ -897,7 +899,9 @@ export function HappyComposer(props: {
     const { isStandalone, isIOS } = usePWAInstall()
     const isIOSPWA = isIOS && isStandalone
     const bottomPaddingClass = isIOSPWA ? 'pb-0' : 'pb-3'
-    const assistant = useClientProfile()?.mode === 'assistant'
+    const clientProfile = useClientProfile()
+    const assistant = clientProfile?.mode === 'assistant'
+    const assistantChat = useOptionalHappyChatContext()
     const activeWord = useActiveWord(inputState.text, inputState.selection, assistant ? [] : autocompletePrefixes)
     const [suggestions, selectedIndex, moveUp, moveDown, clearSuggestions] = useActiveSuggestions(
         activeWord,
@@ -2405,7 +2409,7 @@ export function HappyComposer(props: {
                     ) : null}
 
                     <div
-                        className={`flex overflow-hidden rounded-[20px] bg-[var(--app-secondary-bg)] ${
+                        className={`flex overflow-hidden ${assistant ? 'rounded-2xl border border-[var(--app-border)] bg-[var(--app-bg)]' : 'rounded-[20px] bg-[var(--app-secondary-bg)]'} ${
                             isExpanded ? 'min-h-0 flex-1' : ''
                         } ${
                             sendError ? 'ring-1 ring-red-500' : ''
@@ -2519,6 +2523,8 @@ export function HappyComposer(props: {
                             ) : null}
 
                             <ComposerButtons
+                                assistantControl={assistant && clientProfile && assistantChat ? (agentFlavor === 'codex' ? <span className="assistant-quiet">交叉核验</span> : <AssistantChatModelPicker profile={clientProfile} api={assistantChat.api}
+                                    session={{ id: assistantChat.sessionId, active, model: typeof model === 'string' ? model : null, effort }} />) : undefined}
                                 canSend={canSend}
                                 controlsDisabled={controlsDisabled}
                                 showSettingsButton={showSettingsButton}

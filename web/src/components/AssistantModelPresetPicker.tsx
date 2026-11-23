@@ -16,7 +16,7 @@ export function AssistantModelPresetPicker(props: { presets: ClientModelPreset[]
             className={`min-h-8 rounded-md px-3 text-sm disabled:opacity-50 ${props.value === p.id ? 'bg-[var(--app-bg)] font-semibold shadow-sm' : 'text-[var(--app-hint)]'}`}>{p.label}</button>)}
     </div>
 }
-export function AssistantChatModelPicker(props: { profile: ClientProfile; api: ApiClient; session: Session }) {
+export function AssistantChatModelPicker(props: { profile: ClientProfile; api: ApiClient; session: Pick<Session, 'id' | 'active' | 'model' | 'effort'> }) {
     const queryClient = useQueryClient()
     const [failed, setFailed] = useState(false)
     const mutation = useMutation({
@@ -29,8 +29,10 @@ export function AssistantChatModelPicker(props: { profile: ClientProfile; api: A
         return (props.session.model === p.model || props.session.model === split.model)
             && (!p.effort || props.session.effort === p.effort || (!props.session.effort && props.session.model === p.model))
     })
-    return <div><AssistantModelPresetPicker presets={props.profile.modelPresets ?? []} value={selected?.id ?? ''}
-        disabled={mutation.isPending || !props.session.active} onSelect={p => mutation.mutate(p)} />
-        {failed && <span role="alert" className="text-xs text-red-600">切换暂未成功，请重试</span>}
-    </div>
+    const list = props.profile.modelPresets ?? []
+    return <div><button type="button" className="assistant-mode" aria-label="切换调查档位"
+        disabled={mutation.isPending || !props.session.active || !list.length}
+        onClick={() => { const index = list.findIndex(p => p.id === selected?.id); const next = list[(index + 1) % list.length]; if (next) mutation.mutate(next) }}>
+        {selected?.label === '快速' ? 'ϟ' : '✦'} {selected?.label ?? '深度'}
+    </button>{failed && <span role="alert" className="text-xs text-red-600">切换暂未成功，请重试</span>}</div>
 }

@@ -731,7 +731,7 @@ struct SessionRowView: View {
         .help(([row.title, row.project].compactMap { $0 } + row.tags.map { "#" + $0 }).joined(separator: " · "))
         #endif
         // Separators start under the text column, as in Mail and Messages.
-        .alignmentGuide(.listRowSeparatorLeading) { _ in displayIconSize + iconSpacing }
+        .alignmentGuide(.listRowSeparatorLeading) { _ in isAssistantMode ? 0 : displayIconSize + iconSpacing }
         .accessibilityElement(children: .combine)
         .accessibilityValue(row.unread ? Text("Unread") : Text(verbatim: ""))
         .accessibilityIdentifier("home.session.\(row.id)")

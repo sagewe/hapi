@@ -1,3 +1,4 @@
+import { useAssistantWorkspace } from '@/components/AssistantWorkspace/AssistantWorkspace'
 import { AssistantChatModelPicker } from '@/components/AssistantModelPresetPicker'
 import { useClientProfile } from '@/lib/client-profile'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -243,6 +244,7 @@ export function SessionHeader(props: {
     onSessionReopened?: (newSessionId: string) => void | Promise<void>
     onOpenParentSession?: (parentSessionId: string) => void
 }) {
+    const assistantWorkspace = useAssistantWorkspace()
     const clientProfile = useClientProfile()
     const assistant = clientProfile?.mode === 'assistant'
     const { t, locale } = useTranslation()
@@ -389,6 +391,7 @@ export function SessionHeader(props: {
     const scratchlistCount = useScratchlistCount(session.id, api)
 
     const handleDelete = async () => {
+        if (assistant && session.active && api) await api.archiveSession(session.id)
         await deleteSession()
         onSessionDeleted?.()
     }
@@ -508,7 +511,11 @@ export function SessionHeader(props: {
 
     return (
         <>
-            <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
+            {assistant && assistantWorkspace ? <header className="assistant-top">
+                <button className="assistant-circle" aria-label="历史调查" onClick={assistantWorkspace.history}>☰</button>
+                <div className="assistant-title"><h1>{title}</h1>{session.thinking ? <small>● 调查中</small> : session.agentState?.requests && Object.values(session.agentState.requests).some(r => /question|input/i.test(r.tool)) ? <small>待回复</small> : null}</div>
+                <div className="assistant-top-tools"><button aria-label="新建调查" onClick={() => assistantWorkspace.create()}>＋</button><button type="button" onClick={handleMenuToggle} ref={menuAnchorRef} aria-label="更多操作">⋮</button></div>
+            </header> : <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
                 <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3">
                     {/* Back button */}
                     <button
@@ -667,8 +674,6 @@ export function SessionHeader(props: {
                         </div> : null}
                     </div>
 
-                    {assistant && api && session.metadata?.flavor === 'agy' && clientProfile?.modelPresets?.length
-                        ? <AssistantChatModelPicker profile={clientProfile} api={api} session={session} /> : null}
                     {!assistant && props.onToggleFiles ? (
                         <button
                             type="button"
@@ -735,7 +740,7 @@ export function SessionHeader(props: {
                         <MoreVerticalIcon />
                     </button>
                 </div>
-            </div>
+            </div>}
 
             <SessionActionMenu
                 isOpen={menuOpen}
@@ -756,6 +761,7 @@ export function SessionHeader(props: {
                 reopenDisabledReason={props.reopenDisabledReason}
                 reopenHint={props.reopenHint}
                 onDelete={() => setDeleteOpen(true)}
+                onCrossCheck={assistant ? () => assistantWorkspace?.create(true) : undefined}
                 anchorPoint={menuAnchorPoint}
                 menuId={menuId}
             />

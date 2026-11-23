@@ -1,3 +1,5 @@
+import { useClientProfile } from '@/lib/client-profile'
+import { visibleSceneMessage } from '@/components/AssistantWorkspace/transaction'
 import { MessagePrimitive, useAuiState, type TextMessagePart } from '@assistant-ui/react'
 import { useHappyChatContext } from '@/components/AssistantChat/context'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
@@ -20,10 +22,12 @@ export function HappyUserMessage() {
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined
         return custom?.sourceMessageIds
     })
-    const text = useAuiState((s) => {
+    const rawText = useAuiState((s) => {
         if (s.message.role !== 'user') return ''
         return s.message.content.find((part): part is TextMessagePart => part.type === 'text')?.text ?? ''
     })
+    const assistant = useClientProfile()?.mode === 'assistant'
+    const text = assistant ? visibleSceneMessage(rawText) : rawText
     const status = useAuiState((s) => {
         if (s.message.role !== 'user') return undefined
         const custom = s.message.metadata.custom as Partial<HappyChatMessageMetadata> | undefined

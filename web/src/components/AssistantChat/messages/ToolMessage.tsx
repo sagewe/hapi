@@ -1,3 +1,5 @@
+import { useClientProfile } from '@/lib/client-profile'
+import { AssistantReportCard } from '@/components/AssistantWorkspace/AssistantReportCard'
 import { ExecutionActivityCard } from '@/components/ToolCard/ExecutionActivityCard'
 import { ExecutionProcessCard } from '@/components/ToolCard/ExecutionProcessCard'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -67,6 +69,7 @@ export function computeTinyImageScale(width: number, height: number): number {
 
 /** Exported for generated-media fetch and renderer tests. */
 export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
+    const assistant = useClientProfile()?.mode === 'assistant'
     const ctx = useHappyChatContext()
     const { t } = useTranslation()
     const [objectUrl, setObjectUrl] = useState<string | null>(null)
@@ -139,6 +142,8 @@ export function GeneratedImageCard(props: { block: GeneratedImageBlock }) {
             disposed = true
         }
     }, [ctx.api, ctx.sessionId, props.block.imageId, isImage, shouldFetch])
+
+    if (assistant && isFile) return <AssistantReportCard key={props.block.imageId} block={props.block} />
 
     return (
         <div

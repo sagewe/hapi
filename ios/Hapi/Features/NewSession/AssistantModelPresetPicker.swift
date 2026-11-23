@@ -40,3 +40,29 @@ struct AssistantChatModelPicker: View {
         .alert("切换暂未成功，请稍后重试", isPresented: $failed) { Button("好") {} }
     }
 }
+
+struct AssistantChatPresetCapsule: View {
+    let session: HubSession
+    let sessionId: String
+    @State private var applying = false
+    @State private var failed = false
+    private var presets: [ClientModelPreset] { session.clientProfile?.modelPresets ?? [] }
+    private var selected: ClientModelPreset? {
+        let detail = session.sessionStore.detail(for: sessionId)
+        return presets.first { $0.matches(model: detail?.model, effort: detail?.effort) }
+    }
+    var body: some View {
+        AssistantPresetCapsule(label: selected?.label ?? "深度") {
+            guard !applying, !presets.isEmpty else { return }
+            let index = presets.firstIndex { $0.id == selected?.id } ?? -1
+            let next = presets[(index + 1) % presets.count]
+            applying = true
+            Task {
+                do { try await session.api.setModel(sessionId: sessionId, model: .id(next.model), effort: next.effort) }
+                catch { failed = true }
+                applying = false
+            }
+        }.disabled(applying)
+        .alert("切换暂未成功，请稍后重试", isPresented: $failed) { Button("好") {} }
+    }
+}

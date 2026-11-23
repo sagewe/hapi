@@ -85,15 +85,22 @@ struct ChatBlockCard: View {
 /// Dispatcher for the plain `ChatBlock` union (shared by the thread and by
 /// tool-card children).
 struct ChatSubBlockView: View {
+    @Environment(\.isAssistantMode) private var isAssistantMode
     let block: ChatBlock
     let basePath: String?
     var isHighlighted: Bool = false
     var isStreamingReasoning: Bool = false
 
+    private func assistantUserBlock(_ original: UserTextBlock) -> UserTextBlock {
+        guard isAssistantMode else { return original }
+        var value = original
+        value.text = AssistantScene.visibleText(original.text)
+        return value
+    }
     var body: some View {
         switch block {
         case .userText(let value):
-            UserTextBlockView(block: value, isHighlighted: isHighlighted)
+            UserTextBlockView(block: assistantUserBlock(value), isHighlighted: isHighlighted)
         case .agentText(let value):
             AgentTextBlockView(block: value, isHighlighted: isHighlighted)
         case .agentReasoning(let value):
