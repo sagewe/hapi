@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.hapi.companion.R
+import kotlinx.coroutines.launch
 
 /**
  * Settings hub (P2 IA): the category directory that replaced the former
@@ -80,6 +81,14 @@ internal fun SettingsHubContent(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
+            if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
+                val graph = app.hapi.companion.di.LocalAppGraph.current
+                val hubs by graph.hubRegistry.state.collectAsState()
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                hubs.hubs.forEach { hub -> androidx.compose.material3.TextButton({ scope.launch { graph.hubRegistry.setActiveHub(hub) } }) { Text(hub) } }
+                val navigation = app.hapi.companion.feature.assistant.AssistantNavigation.current
+                androidx.compose.material3.TextButton({ navigation.pair() }) { Text("扫码配对 / 添加 Hub") }
+            }
             Surface(
                 shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surfaceContainerLow,

@@ -70,6 +70,17 @@ fun ChatBlockCard(
     modifier: Modifier = Modifier,
     processSteps: Int? = null,
 ) {
+    if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
+        when (block) {
+            is GeneratedImageBlock -> if (block.fileName.endsWith(".pdf", true) || block.fileName.endsWith(".zip", true)) {
+                app.hapi.companion.feature.assistant.DeliveryCard(block, modifier); return
+            }
+            is AgentReasoningBlock, is CliOutputBlock -> return
+            is ToolCallBlock -> { AssistantStage(listOf(block), modifier); return }
+            is ToolGroupBlock -> { AssistantStage(block.tools, modifier); return }
+            else -> Unit
+        }
+    }
     when (block) {
         is UserTextBlock -> UserTextBlockView(block, modifier)
         is AgentTextBlock -> AgentTextBlockView(block, modifier)
@@ -81,4 +92,18 @@ fun ChatBlockCard(
         is ToolCallBlock -> ToolCallBlockView(block, basePath, modifier, processSteps)
         is ToolGroupBlock -> ToolGroupBlockView(block, basePath, modifier)
     }
+}
+
+@Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier) {
+    if (tools.isEmpty()) return
+    val running = tools.any { it.tool.state == "running" || it.tool.state == "pending" }
+    val names = tools.joinToString { it.tool.name + " " + it.tool.input.toString() }.lowercase()
+    val phase = when {
+        "pdf" in names || "render" in names -> "正在排版调查报告"
+        "search" in names -> "正在检索公开线索"
+        "web" in names || "fetch" in names || "browse" in names -> "正在核验官网与公开来源"
+        "read" in names || "parse" in names -> "正在解析资料与单据"
+        else -> "正在整理调查证据"
+    }
+    androidx.compose.material3.Text(if (running) phase + "…" else "已完成 ${tools.size} 项调查步骤", modifier, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
 }

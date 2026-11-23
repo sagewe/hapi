@@ -420,3 +420,18 @@ frame-time, memory, or predictive-back measurements are claimed by these checks.
 Unread state uses the hub’s [revision read-state contract](../docs/api/client-contract/read-state.md).
 List selection and metadata updates never acknowledge reading. The resumed chat
 acknowledges only its rendered tail, with a durable outbox scoped by hub and namespace.
+
+### Compliance APK (no GMS)
+
+Build with `-PhapiCompliance=true`. The application ID is
+`com.sagewe.hapi.compliance`; the default build remains `run.hapi.companion`.
+The compliance source set excludes Firebase messaging and its service entirely,
+including when a local `google-services.json` exists. QR camera and gallery
+recognition use offline ZXing. No push provider is registered.
+
+Assistant presentation is enabled only by the active hub's `clientProfile.mode`.
+Profiles are cached per hub in DataStore and refreshed in the foreground.
+New investigations stage drafts and attachments in private no-backup storage;
+spawn, upload and first send occur only on Send. Retries reuse the session,
+upload paths and message local ID. Incoming Android shares go to this workbench.
+Release signing uses an external keystore; no credentials belong in this tree.

@@ -11,9 +11,10 @@ import java.util.Locale
 
 /** Never coerce a URI clip to text: that can read the entire provider file. */
 fun parseSharedIntent(intent: Intent): SharedInput? {
-    if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE) return null
+    if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE && !(intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "content")) return null
     return try {
         val uris = mutableListOf<Uri>()
+        if (intent.action == Intent.ACTION_VIEW) intent.data?.let(uris::add)
         if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
             IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(uris::addAll)
         } else {

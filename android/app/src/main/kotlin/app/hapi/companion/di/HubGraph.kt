@@ -71,6 +71,19 @@ class HubGraph(
     /** Normalized origin (via [HubSession]'s own normalization). */
     val hubUrl: String get() = session.hubUrl
 
+    private val profileCache = ClientProfileCache(context, session.hubUrl)
+    val clientProfile = kotlinx.coroutines.flow.MutableStateFlow(profileCache.read())
+    val profileReady = kotlinx.coroutines.flow.MutableStateFlow(clientProfile.value != null)
+    private fun refreshProfile() { scope.launch {
+        try {
+            val profile = session.api.getHubSettings().clientProfile
+            profileCache.write(profile)
+            clientProfile.value = profile
+        } catch (_: Exception) { /* Offline: retain the per-hub profile. */ }
+        finally { profileReady.value = true }
+    } }
+    init { refreshProfile() }
+
     val sseEngine: SseEngine = SseEngine(
         baseUrl = session.hubUrl,
         transport = OkHttpSseTransport(),
@@ -176,6 +189,7 @@ class HubGraph(
      * `ProcessLifecycleOwner`.
      */
     fun setLifecycleForeground(foreground: Boolean) {
+        if (foreground) refreshProfile()
         sseEngine.setLifecycleForeground(foreground)
         visibilityReporter.setForeground(foreground)
         lastSeenStore.setForeground(foreground)

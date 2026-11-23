@@ -24,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -286,14 +288,19 @@ internal fun ChatScreen(
         )
     }
 
+    val assistantProfile = app.hapi.companion.di.LocalClientProfile.current?.takeIf { it.mode == "assistant" }
+    val assistantNavigation = app.hapi.companion.feature.assistant.AssistantNavigation.current
+    val assistantDrawer = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
+    val assistantScope = rememberCoroutineScope()
+    app.hapi.companion.feature.assistant.AssistantConversationShell(assistantDrawer) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                expandedHeight = toolbarHeight,
+                expandedHeight = if (assistantProfile != null) 88.dp else toolbarHeight,
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chat_back))
+                    IconButton(onClick = { if(assistantProfile != null) assistantScope.launch { assistantDrawer.open() } else onBack() }) {
+                        Icon(if(assistantProfile != null) androidx.compose.material.icons.Icons.Filled.Menu else Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chat_back))
                     }
                 },
                 title = { ChatTitle(state.header, reconnecting, viewModel::retry) },
@@ -301,11 +308,12 @@ internal fun ChatScreen(
                     // Two icons max (device feedback: four icons squeezed the
                     // title out) — gear for the frequent config switches,
                     // everything else in the overflow menu.
-                    IconButton(onClick = { configSheetOpen = true }) {
-                        Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.chat_open_settings))
+                    IconButton(onClick = { if (assistantProfile != null) assistantNavigation.home() else configSheetOpen = true }) {
+                        Icon(if (assistantProfile != null) Icons.Filled.Add else Icons.Filled.Settings, contentDescription = stringResource(R.string.chat_open_settings))
                     }
                     val scratchlistCount by viewModel.scratchlistCount.collectAsState()
-                    SessionOverflowMenu(
+                    if (assistantProfile != null) app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true })
+                    else SessionOverflowMenu(
                         active = state.header.active,
                         onOpenFiles = onOpenFiles,
                         scratchlistCount = scratchlistCount,
@@ -348,19 +356,27 @@ internal fun ChatScreen(
                     )
                     // Context-remaining readout; rides the same strip as the
                     // mode chip and hides until the thread reports usage.
-                    ContextUsageChip(indicator = state.contextUsage)
+                    if (assistantProfile == null) ContextUsageChip(indicator = state.contextUsage)
                     // Web StatusBar parity: the current permission mode rides
                     // directly above the composer; tapping opens the config
                     // sheet that hosts the switcher (the web span itself is
                     // not clickable).
-                    PermissionModeChip(
+                    if (assistantProfile == null) PermissionModeChip(
                         config = configState,
                         onClick = { configSheetOpen = true },
                     )
                     ChatComposer(
+                        presetControls = {
+                            if (assistantProfile != null && state.header.flavor != "codex") {
+                                val selected by viewModel.config.collectAsState()
+                                assistantProfile.modelPresets.forEachIndexed { index, preset ->
+                                    androidx.compose.material3.FilterChip((selected.model == preset.model || (selected.model != null && preset.model.startsWith(selected.model + "-") && selected.effort == preset.effort)), { viewModel.setModelPreset(preset.model, preset.effort) }, { Text((if(index == 0) "⚡ " else "✦ ") + preset.label) })
+                                }
+                            }
+                        },
                         state = composerState,
                         onTextChange = viewModel::onComposerChange,
-                        onSend = { viewModel.sendMessage() },
+                        onSend = { viewModel.sendMessage(steer = assistantProfile != null && composerState.canSteer) },
                         onSendSteer = { viewModel.sendMessage(steer = true) },
                         onAbort = viewModel::abortSession,
                         attachments = attachmentItems,
@@ -475,6 +491,7 @@ internal fun ChatScreen(
                 onDismiss = { messageInfoBlock = null },
             )
         }
+    }
     }
 }
 
@@ -593,9 +610,9 @@ private fun InactiveSessionBar(onReopen: () -> Unit) {
 private fun ChatTitle(header: ChatHeaderUi, reconnecting: Boolean, retry: () -> Unit) {
     Column(Modifier.heightIn(min = 48.dp).then(if (reconnecting) Modifier.clickable(onClick = retry) else Modifier),
         verticalArrangement = Arrangement.Center) {
-        Text(header.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        // Always reserve the subtitle slot; reconnect phases never resize the transcript.
-        Text(
+        Text(header.title, style = MaterialTheme.typography.titleMedium, maxLines = if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") 3 else 1, overflow = TextOverflow.Ellipsis)
+        // Developer subtitles keep their existing slot.
+        if (app.hapi.companion.di.LocalClientProfile.current?.mode != "assistant" || reconnecting) Text(
             if (reconnecting) stringResource(R.string.chat_reconnecting_retry) else header.subtitle.orEmpty(),
             style = app.hapi.companion.ui.theme.HapiTypography.caption,
             color = if (reconnecting) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,

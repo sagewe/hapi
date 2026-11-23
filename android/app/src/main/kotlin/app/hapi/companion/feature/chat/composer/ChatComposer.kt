@@ -110,6 +110,7 @@ fun ChatComposer(
     dictation: DictationState? = null,
     onDictationToggle: () -> Unit = {},
     onDictationCancel: () -> Unit = {},
+    presetControls: @Composable () -> Unit = {},
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -263,13 +264,14 @@ fun ChatComposer(
                                 Icon(PlusGlyph, contentDescription = null, modifier = Modifier.size(20.dp))
                             }
                         }
+                        presetControls()
                         Spacer(modifier = Modifier.weight(1f))
                         // Clock toggle (B-M16b, web ComposerButtons schedule
                         // slot): with a pending pick the tap clears it; else it
                         // toggles the picker. Disabled while sending or with
                         // attachments on the tray (web `controlsDisabled ||
                         // hasAttachments`); accent-filled while pending.
-                        ComposerActionButton(
+                        if (app.hapi.companion.di.LocalClientProfile.current?.mode != "assistant") ComposerActionButton(
                             contentDescription = stringResource(R.string.chat_schedule_send),
                             onClick = {
                                 if (hasSchedule) {

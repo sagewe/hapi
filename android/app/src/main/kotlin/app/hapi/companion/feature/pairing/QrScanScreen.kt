@@ -38,6 +38,7 @@ import app.hapi.protocol.pairing.BindLink
 import app.hapi.protocol.pairing.PairingLinks
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.launch
 
 /**
  * QR pairing via zxing-android-embedded's [ScanContract] (the full-screen
@@ -61,6 +62,27 @@ fun QrScanScreen(
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
     val scanPrompt = stringResource(R.string.pairing_scan_prompt)
 
+    val galleryScope = androidx.compose.runtime.rememberCoroutineScope()
+    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) galleryScope.launch {
+            val contents = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+                    val options = android.graphics.BitmapFactory.Options().apply { inSampleSize = (maxOf(bounds.outWidth, bounds.outHeight) / 1600).coerceAtLeast(1) }
+                    val bitmap = context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, options) } ?: error("Unreadable image")
+                    try {
+                        val pixels = IntArray(bitmap.width * bitmap.height)
+                        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+                        val source = com.google.zxing.RGBLuminanceSource(bitmap.width, bitmap.height, pixels)
+                        com.google.zxing.MultiFormatReader().decode(com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(source))).text
+                    } finally { bitmap.recycle() }
+                }.getOrNull()
+            }
+            val link = contents?.let(PairingLinks::parse)
+            if (link == null) notPairingQr = true else onPairLink(link)
+        }
+    }
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val contents = result.contents
         if (contents == null) {
@@ -165,6 +187,7 @@ fun QrScanScreen(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = { gallery.launch(arrayOf("image/*")) }, modifier = Modifier.fillMaxWidth()) { Text("从相册识别二维码") }
             OutlinedButton(
                 onClick = onManualEntry,
                 enabled = state !is PairingUiState.Validating,

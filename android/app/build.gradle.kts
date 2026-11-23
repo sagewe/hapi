@@ -17,6 +17,7 @@ plugins {
 // drop in their own (see ../README.md "Firebase / push"); everyone else builds
 // without it — Firebase then never initializes and PushBinding reports push as
 // unavailable, so every push code path no-ops cleanly.
+val complianceBuild = providers.gradleProperty("hapiCompliance").map(String::toBooleanStrict).orElse(false).get()
 val officialBuild = providers.gradleProperty("hapiOfficialBuild").map(String::toBooleanStrict).orElse(false).get()
 val googleServicesFile = file("google-services.json")
 if (officialBuild) {
@@ -33,7 +34,7 @@ if (officialBuild) {
         android?.get("package_name") == "run.hapi.companion"
     } == true) { "Official Firebase configuration must include run.hapi.companion" }
 }
-if (googleServicesFile.exists()) {
+if (!complianceBuild && googleServicesFile.exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
@@ -73,7 +74,10 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "run.hapi.companion"
+        applicationId = if (complianceBuild) "com.sagewe.hapi.compliance" else "run.hapi.companion"
+        manifestPlaceholders["appLabel"] = if (complianceBuild) "合规调查" else "@string/app_name"
+        manifestPlaceholders["appIcon"] = if (complianceBuild) "@mipmap/ic_compliance" else "@mipmap/ic_launcher"
+        buildConfigField("boolean", "COMPLIANCE", complianceBuild.toString())
         minSdk = 26
         targetSdk = 36
         versionCode = providers.gradleProperty("hapiVersionCode").map { value ->
@@ -118,6 +122,15 @@ android {
         }
     }
 
+    sourceSets.getByName("main") {
+        java.srcDir(if (complianceBuild) "src/noPush/kotlin" else "src/firebase/kotlin")
+
+    }
+
+    listOf("debug", "release", "profile").forEach { type ->
+        sourceSets.getByName(type).manifest.srcFile(if (complianceBuild) "src/noPush/AndroidManifest.xml" else "src/firebase/AndroidManifest.xml")
+    }
+
     testBuildType = providers.gradleProperty("hapiTestBuildType").orElse("debug").get()
 
     compileOptions {
@@ -150,6 +163,7 @@ kotlin {
 }
 
 dependencies {
+    if (complianceBuild) compileOnly("com.google.errorprone:error_prone_annotations:2.30.0")
     implementation(project(":core:protocol"))
     implementation(project(":core:data"))
 
@@ -178,7 +192,7 @@ dependencies {
     // FCM push + notification actions (B-M4a). firebase-messaging is always on
     // the classpath; whether it *activates* depends on google-services.json
     // (conditional plugin above) — PushBinding gates every use at runtime.
-    implementation(libs.firebase.messaging)
+    if (!complianceBuild) implementation(libs.firebase.messaging)
     implementation(libs.androidx.work.runtime.ktx)
     constraints {
         // Version floor only: firebase-messaging → play-services-base drags in
@@ -198,6 +212,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.compose.material:material-icons-extended")
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

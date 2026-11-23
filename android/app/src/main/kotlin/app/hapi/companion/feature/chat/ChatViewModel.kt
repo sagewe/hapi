@@ -1942,6 +1942,10 @@ class ChatViewModel(
     }
 
     /** `POST /model` — null clears back to the agent default. */
+    fun setModelPreset(model: String, effort: String?) {
+        runConfigChange(optimistic = { it }, call = { api.setModelPreset(sessionId, model, effort) })
+    }
+
     fun setModel(model: String?) {
         runConfigChange(
             optimistic = { it.copy(model = model) },
@@ -2052,6 +2056,7 @@ class ChatViewModel(
                     else -> modelOptions = emptyList()
                 }
             }
+            "agy" -> { modelOptions = null; effort = detail?.effort ?: summary?.effort }
             else -> modelOptions = null // Generic fallback: hide the picker.
         }
 

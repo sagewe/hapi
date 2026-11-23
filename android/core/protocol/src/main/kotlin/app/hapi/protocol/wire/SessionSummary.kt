@@ -46,6 +46,7 @@ data class SessionSummary(
 /** `SessionSummaryMetadata` — list-sized metadata projection. */
 @Serializable
 data class SessionSummaryMetadata(
+    val tags: List<String> = emptyList(),
     val name: String? = null,
     val path: String,
     val machineId: String? = null,

@@ -41,10 +41,10 @@
         android:allowBackup="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:icon="${appIcon}"
+        android:label="${appLabel}"
         android:localeConfig="@xml/locales_config"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="${appIcon}"
         android:supportsRtl="true"
         android:theme="@style/Theme.HapiCompanion"
         android:usesCleartextTraffic="false">
@@ -66,6 +66,13 @@
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
             <!-- Pairing deep link: hapicompanion://bind?hub=<url>&code=<accessToken> -->
             <intent-filter>
@@ -117,13 +124,8 @@
 
         <!-- FCM entry point (B-M4a). Data-only messages per the companion
              contract; inert when no Firebase config is present. -->
-        <service
-            android:name=".fcm.HapiFirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
+
+
 
         <!-- Notification action taps (Allow / Deny / Reply / Dismiss). -->
         <receiver

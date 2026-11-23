@@ -60,6 +60,23 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `assistant profile and atomic preset use the shared wire contract`() = runBlocking {
+        server.enqueue(ok("""{"clientProfile":{"mode":"assistant","appTitle":"合规调查","defaultAgent":"agy","defaultPermissionMode":"always-proceed","defaultDirectory":"/cases","hideExecutionDetails":true,"modelPresets":[{"id":"deep","label":"深度","model":"neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"document","title":"单据审核","prompt":"审核资料"}]}}"""))
+        val profile = session.api.getHubSettings().clientProfile!!
+        assertEquals("assistant", profile.mode)
+        assertEquals("high", profile.modelPresets.single().effort)
+        assertEquals("/api/hub-settings", server.takeRequest().path)
+        server.enqueue(ok("{}"))
+        session.api.setModelPreset("case", "neon-high", "high")
+        val request = server.takeRequest()
+        assertEquals("/api/sessions/case/model", request.path)
+        val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("neon-high", body["model"]!!.jsonPrimitive.content)
+        assertEquals("high", body["effort"]!!.jsonPrimitive.content)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
     fun `production clients reject cleartext hub urls`() {
         assertFailsWith<IllegalArgumentException> {
             HapiApi("http://hub.example", OkHttpClient())

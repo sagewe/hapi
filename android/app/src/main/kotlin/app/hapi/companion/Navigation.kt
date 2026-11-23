@@ -182,8 +182,11 @@ fun HapiNavigation() {
     val navController = rememberNavController()
     val registryState by graph.hubRegistry.state.collectAsState()
     val activeHubGraph by graph.activeHubGraph.collectAsState()
+    val profile by (activeHubGraph?.clientProfile ?: remember { kotlinx.coroutines.flow.MutableStateFlow<app.hapi.protocol.wire.ClientProfile?>(null) }).collectAsState()
+    val profileReady by (activeHubGraph?.profileReady ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsState()
     val shares by graph.shareInbox.batches.collectAsState()
     val pendingShare = shares.firstOrNull()
+    val assistantShareRouted = remember { mutableSetOf<String>() }
     val shareIntakeFailed by graph.shareIntakeFailed.collectAsState()
     val currentEntry by navController.currentBackStackEntryAsState()
     val navigationScope = rememberCoroutineScope()
@@ -207,7 +210,7 @@ fun HapiNavigation() {
     // pairing screen; the landing destination consumes the link itself.
     val pendingBind by graph.pendingBindLink.collectAsState()
     LaunchedEffect(pendingBind) {
-        if (pendingBind != null) {
+        if (pendingBind != null && currentEntry?.destination?.hierarchy?.any { it.route == Routes.PAIRING } == false) {
             navController.navigateClearingBackStack(Routes.PAIRING)
         }
     }
@@ -250,13 +253,18 @@ fun HapiNavigation() {
 
     // Pending payloads outlive pairing and HubGraph replacement. A target is
     // persisted before navigation, so process restoration follows the same path.
-    LaunchedEffect(pendingShare?.id, pendingShare?.target, shares.size, currentEntry, activeHubGraph, registryState.activeHubUrl) {
+    LaunchedEffect(pendingShare?.id, pendingShare?.target, shares.size, currentEntry, activeHubGraph, registryState.activeHubUrl, profile, profileReady) {
         val share = pendingShare ?: return@LaunchedEffect
         if (shares.size > 1 || currentEntry == null) return@LaunchedEffect
         if (currentEntry?.destination?.hierarchy?.any { it.route == Routes.PAIRING } == true) return@LaunchedEffect
         val hubUrl = registryState.activeHubUrl
         if (hubUrl == null) {
             navController.navigateClearingBackStack(Routes.PAIRING)
+            return@LaunchedEffect
+        }
+        if (!profileReady) return@LaunchedEffect
+        if (profile?.mode == "assistant") {
+            if (assistantShareRouted.add(hubUrl + share.id) && currentEntry?.destination?.route != Routes.HOME) navController.navigateClearingBackStack(Routes.HOME)
             return@LaunchedEffect
         }
         val target = share.target
@@ -320,6 +328,9 @@ fun HapiNavigation() {
         )
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(app.hapi.companion.di.LocalClientProfile provides profile,
+        app.hapi.companion.feature.assistant.AssistantNavigation provides app.hapi.companion.feature.assistant.AssistantNavigationActions(
+            home = { navController.navigateClearingBackStack(Routes.HOME) }, settings = { navController.navigate(Routes.SETTINGS) }, pair = { navController.navigate(Routes.PAIRING) }, chat = { navController.navigate(Routes.chat(it)) })) {
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.SHARE, arguments = listOf(navArgument("requestId") { type = NavType.StringType })) { entry ->
             val batch = shares.find { it.id == entry.arguments?.getString("requestId") } ?: return@composable
@@ -359,6 +370,13 @@ fun HapiNavigation() {
                 key = "sessions",
                 factory = viewModelFactory { SessionListViewModelHolder() },
             )
+            if (!profileReady) return@composable
+            if (profile?.mode == "assistant") {
+                app.hapi.companion.feature.assistant.AssistantRootScreen(
+                    hubGraph, profile!!, onOpenSession = { navController.navigate(Routes.chat(it)) },
+                    onSettings = { navController.navigate(Routes.SETTINGS) })
+                return@composable
+            }
             HomeScreen(
                 viewModel = holder.forHub(hubGraph),
                 activeHubUrl = activeHubUrl,
@@ -731,6 +749,7 @@ fun HapiNavigation() {
                 )
             }
         }
+    }
     }
 }
 

@@ -346,6 +346,12 @@ class HapiApi internal constructor(
     }
 
     /** `PATCH /api/sessions/:id` — rename (1–255 chars). */
+    suspend fun renameInvestigation(sessionId: String, name: String, tags: List<String>) {
+        request<Unit>("PATCH", url("api", "sessions", sessionId).build(), jsonBody(buildJsonObject {
+            put("name", name)
+            put("tags", kotlinx.serialization.json.JsonArray(tags.map(::JsonPrimitive)))
+        }))
+    }
     suspend fun renameSession(sessionId: String, name: String) {
         request<Unit>("PATCH", url("api", "sessions", sessionId).build(), RenameSessionRequest(name).toJsonBody())
     }
@@ -524,6 +530,15 @@ class HapiApi internal constructor(
      * `POST /api/machines/:id/spawn`. The response discriminates on `type`,
      * not HTTP status — a failed spawn is still HTTP 200 with `type: 'error'`.
      */
+    suspend fun getHubSettings(): app.hapi.protocol.wire.HubSettingsResponse =
+        request("GET", url("api", "hub-settings").build())
+
+    /** Model and effort are committed atomically by the hub. */
+    override suspend fun setModelPreset(sessionId: String, model: String, effort: String?) {
+        request<Unit>("POST", url("api", "sessions", sessionId, "model").build(),
+            jsonBody(buildJsonObject { put("model", model); effort?.let { put("effort", it) } }))
+    }
+
     suspend fun spawnSession(machineId: String, spawn: SpawnSessionRequest): SpawnResponse =
         request("POST", url("api", "machines", machineId, "spawn").build(), spawn.toJsonBody())
 
