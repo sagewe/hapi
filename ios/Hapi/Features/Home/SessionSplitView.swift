@@ -1,5 +1,6 @@
 import SwiftUI
 #if targetEnvironment(macCatalyst)
+import HapiUI
 import UIKit
 #endif
 
@@ -12,11 +13,18 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
     @ViewBuilder var sidebar: () -> Sidebar
     @ViewBuilder var detail: (String) -> Detail
 
+    #if targetEnvironment(macCatalyst)
+    @State private var chromeBySession: [String: MacSessionChrome] = [:]
+    #endif
+
     var body: some View {
         @Bindable var navigation = navigation
         // Observe selection here, not only inside the lazy stack root. That
         // root may be hidden behind a Boolean/item-based file destination.
         let selectedSessionId = navigation.selectedSessionId
+        #if targetEnvironment(macCatalyst)
+        let chrome = selectedSessionId.flatMap { chromeBySession[$0] }
+        #endif
         NavigationSplitView(
             columnVisibility: $navigation.columnVisibility,
             preferredCompactColumn: $navigation.preferredCompactColumn
@@ -27,9 +35,6 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
             NavigationStack(path: $navigation.detailPath) {
                 if let sessionId = selectedSessionId {
                     #if targetEnvironment(macCatalyst)
-                    // A stable native tab container retains the selected chat's
-                    // SwiftUI graph and collection cells between visits. Hidden
-                    // tabs receive normal disappearance/appearance callbacks.
                     TabView(selection: Binding(get: { navigation.selectedSessionId },
                                                set: { if let id = $0 { navigation.open(id) } })) {
                         ForEach(navigation.recentSessionIds, id: \.self) { id in
@@ -52,6 +57,15 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
                     .accessibilityIdentifier("home.no-selection")
                 }
             }
+            #if targetEnvironment(macCatalyst)
+            // TabView absorbs standard navigation preferences. Forward only the
+            // selected chat's chrome to the stable outer navigation stack.
+            .navigationTitle(Text(verbatim: chrome?.header.title ?? ""))
+            .toolbar {
+                if let chrome { ToolbarItem(placement: .topBarTrailing) { chrome.controls } }
+            }
+            .focusedSceneValue(\.chatCommands, chrome?.commands)
+            #endif
             // Mac keeps its native navigation container while replacing the
             // selected chat. Touch layouts retain the existing stack reset.
             #if !targetEnvironment(macCatalyst)
@@ -60,6 +74,19 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
         }
         .navigationSplitViewStyle(.balanced)
         #if targetEnvironment(macCatalyst)
+        .onPreferenceChange(MacSessionChromeKey.self) { entries in
+            let allowed = Set(navigation.recentSessionIds)
+            var next = chromeBySession.filter { allowed.contains($0.key) }
+            next.merge(entries.filter { allowed.contains($0.key) }) { _, new in new }
+            if next != chromeBySession { chromeBySession = next }
+        }
+        .onChange(of: navigation.recentSessionIds) {
+            chromeBySession = chromeBySession.filter { navigation.recentSessionIds.contains($0.key) }
+        }
+        .onChange(of: selectedSessionId) {
+            MacTextSelectionTracker.shared.clear()
+            if selectedSessionId == nil { chromeBySession.removeAll() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             navigation.releaseInactiveDetails()
         }

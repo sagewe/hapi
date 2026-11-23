@@ -1,7 +1,7 @@
 #if targetEnvironment(macCatalyst)
 import HapiClient
 import HapiProtocol
-import HapiUI
+@testable import HapiUI
 import Observation
 import SwiftUI
 import UIKit
@@ -23,6 +23,8 @@ final class MacSessionSwitchTests: XCTestCase {
                 .navigationDestination(isPresented: $files) {
                     Text("Files \(id)").background(Presence(id: "switch-files-\(id)").frame(width: 1, height: 1))
                 }
+                .navigationTitle(id)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Detail action") {} } }
                 .onChange(of: probe.showFilesFor) { _, target in if target == id { files = true } }
         }
     }
@@ -47,7 +49,7 @@ final class MacSessionSwitchTests: XCTestCase {
         }
     }
 
-    func testMacSwitchKeepsTheNavigationContainerAndClearsBooleanDestinations() async throws {
+    func testMacSwitchKeepsNavigationAndIsolatesDestinations() async throws {
         let navigation = SessionNavigationState()
         let probe = Probe()
         navigation.open("a")
@@ -62,13 +64,14 @@ final class MacSessionSwitchTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(350))
         navigation.open("b")
         try await wait { self.find("switch-detail-b", in: window) != nil }
-        let second = try XCTUnwrap(navigations(in: host).last { self.find("switch-detail-b", in: $0.view) != nil })
         try await wait { self.find("switch-files-a", in: window) == nil }
         XCTAssertNil(find("switch-files-a", in: window), "A different session must never inherit the old file page")
-        XCTAssertTrue(first === second, "A session switch must replace the chat, not recreate the Mac navigation controller")
         navigation.open("a")
-        try await wait { self.find("switch-detail-a", in: window) != nil }
-        XCTAssertNil(find("switch-files-a", in: window))
+        try await wait { self.find("switch-detail-a", in: window) != nil || self.find("switch-files-a", in: window) != nil }
+        let returned = try XCTUnwrap(navigations(in: host).last {
+            self.find("switch-detail-a", in: $0.view) != nil || self.find("switch-files-a", in: $0.view) != nil
+        })
+        XCTAssertTrue(first === returned, "Returning to a cached session must keep its native navigation controller")
     }
 
     private struct PlainDetail: UIViewRepresentable {
@@ -151,16 +154,36 @@ final class MacSessionSwitchTests: XCTestCase {
         XCTAssertTrue(b.visibleSurfaces.isEmpty)
         a.interactor.setComposerText("draft-a")
         b.interactor.setComposerText("draft-b")
+        let selectedText = try XCTUnwrap(first)
+        selectedText.selectedRange = NSRange(location: 0, length: 6)
+        MacTextSelectionTracker.shared.updateSelection(from: selectedText)
+        XCTAssertNotNil(MacTextSelectionTracker.shared.selectedText)
         navigation.open("b")
         try await wait { self.hasText("switch:b:", in: window) && a.visibleSurfaces.isEmpty }
         XCTAssertTrue(b.visibleSurfaces.contains("chat"))
+        XCTAssertNil(MacTextSelectionTracker.shared.selectedText, "Copy in B must not copy A's hidden selection")
+        XCTAssertEqual(selectedText.selectedRange.length, 0)
         XCTAssertEqual(hub.openChatSessionId, "b")
+        weak var secondCollection = textView("switch:b:", in: window).flatMap { collection(containing: $0) }
+        XCTAssertNotNil(secondCollection)
         XCTAssertNotNil(first, "A warm session must keep its actual native content, not just its reduced data")
         navigation.open("a")
         try await wait { self.hasText("switch:a:", in: window) && b.visibleSurfaces.isEmpty }
         XCTAssertTrue(first === textView("switch:a:", in: window))
         XCTAssertEqual(a.interactor.composerText, "draft-a")
         XCTAssertEqual(b.interactor.composerText, "draft-b")
+        NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        try await wait { secondCollection == nil }
+        XCTAssertEqual(navigation.recentSessionIds, ["a"])
+    }
+
+    private func collection(containing view: UIView) -> UICollectionView? {
+        var parent: UIView? = view
+        while let candidate = parent {
+            if let result = candidate as? UICollectionView { return result }
+            parent = candidate.superview
+        }
+        return nil
     }
 
     private func textView(_ marker: String, in view: UIView) -> UITextView? {

@@ -215,6 +215,13 @@ struct ChatView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .focusedSceneValue(\.chatCommands, chatCommandActions)
+        #if targetEnvironment(macCatalyst)
+        .preference(key: MacSessionChromeKey.self, value: [sessionId: MacSessionChrome(
+            sessionId: sessionId, header: model.header,
+            menuState: .init(model: model, session: session), profile: session.clientProfile,
+            controls: AnyView(macChromeControls), commands: chatCommandActions
+        )])
+        #endif
         .navigationDestination(isPresented: $filesOpen) {
             FilesView(session: session, sessionId: sessionId)
         }
@@ -415,6 +422,20 @@ struct ChatView: View {
     }
 
     // MARK: - Chrome
+
+    #if targetEnvironment(macCatalyst)
+    private var macChromeControls: some View {
+        HStack(spacing: 12) {
+            if showsProminentSystemToolbarStatus {
+                ChatHeaderStatusBadge(status: model.header.status, onTapAttention: { model.jumpToPendingRequestOrLatest() })
+            }
+            if session.isAssistantMode, model.header.flavor == "agy", session.clientProfile?.modelPresets?.isEmpty == false {
+                AssistantChatModelPicker(session: session, sessionId: sessionId)
+            }
+            moreActionsMenu
+        }
+    }
+    #endif
 
     private var moreActionsMenu: some View {
         ChatActionsMenu(

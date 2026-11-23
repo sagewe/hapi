@@ -731,7 +731,9 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
 - Sidebar rows use smaller icons, up to two title lines and one visible tag;
   hover shows the complete title/project/tags and the context menu edits them.
 - Switching Mac sessions keeps the navigation container and up to three recent
-  complete chat views in a native tab container with its tab bar hidden. Returning
+  complete chat/navigation views in a native tab container with its tab bar hidden.
+  The selected chat forwards its title, toolbar and commands to the stable outer
+  navigation stack; inactive chats cannot supply the current window's actions. Returning
   reuses native transcript cells instead of rebuilding the message hierarchy;
   hidden chats receive disappearance callbacks and stop their subscriptions.
   Least-recently-used views are evicted, and memory warnings release inactive
