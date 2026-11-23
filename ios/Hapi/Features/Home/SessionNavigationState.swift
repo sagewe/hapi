@@ -7,6 +7,11 @@ import SwiftUI
 @MainActor @Observable
 final class SessionNavigationState {
     private(set) var selectedSessionId: String?
+    #if targetEnvironment(macCatalyst)
+    /// Keep native chat hierarchies warm without retaining every opened session.
+    private(set) var recentSessionIds: [String] = []
+    @ObservationIgnored private var detailAccessOrder: [String] = []
+    #endif
     var detailPath = NavigationPath()
     var columnVisibility: NavigationSplitViewVisibility = .all
     var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
@@ -14,6 +19,15 @@ final class SessionNavigationState {
     func open(_ sessionId: String) {
         if selectedSessionId != sessionId {
             detailPath = NavigationPath()
+            #if targetEnvironment(macCatalyst)
+            detailAccessOrder.removeAll { $0 == sessionId }
+            detailAccessOrder.append(sessionId)
+            if !recentSessionIds.contains(sessionId) { recentSessionIds.append(sessionId) }
+            while detailAccessOrder.count > 3 {
+                let evicted = detailAccessOrder.removeFirst()
+                recentSessionIds.removeAll { $0 == evicted }
+            }
+            #endif
             selectedSessionId = sessionId
         }
         // Also works for notifications/new sessions not yet in the list.
@@ -25,7 +39,18 @@ final class SessionNavigationState {
         open(replacement)
     }
 
+    #if targetEnvironment(macCatalyst)
+    func releaseInactiveDetails() {
+        recentSessionIds.removeAll { $0 != selectedSessionId }
+        detailAccessOrder = recentSessionIds
+    }
+    #endif
+
     func remove(_ sessionId: String) {
+        #if targetEnvironment(macCatalyst)
+        recentSessionIds.removeAll { $0 == sessionId }
+        detailAccessOrder.removeAll { $0 == sessionId }
+        #endif
         guard selectedSessionId == sessionId else { return }
         detailPath = NavigationPath()
         selectedSessionId = nil

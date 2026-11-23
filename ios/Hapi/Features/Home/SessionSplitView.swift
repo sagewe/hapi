@@ -1,4 +1,7 @@
 import SwiftUI
+#if targetEnvironment(macCatalyst)
+import UIKit
+#endif
 
 /// Keep the same split/stack hierarchy across size-class changes. SwiftUI
 /// moves the detail controller when collapsing instead of creating a second
@@ -23,10 +26,20 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
         } detail: {
             NavigationStack(path: $navigation.detailPath) {
                 if let sessionId = selectedSessionId {
+                    #if targetEnvironment(macCatalyst)
+                    // A stable native tab container retains the selected chat's
+                    // SwiftUI graph and collection cells between visits. Hidden
+                    // tabs receive normal disappearance/appearance callbacks.
+                    TabView(selection: Binding(get: { navigation.selectedSessionId },
+                                               set: { if let id = $0 { navigation.open(id) } })) {
+                        ForEach(navigation.recentSessionIds, id: \.self) { id in
+                            detail(id).id(id).tag(Optional(id))
+                        }
+                    }
+                    .toolbar(.hidden, for: .tabBar)
+                    #else
                     detail(sessionId)
-                        #if targetEnvironment(macCatalyst)
-                        .id(sessionId)
-                        #endif
+                    #endif
                 } else {
                     ContentUnavailableView {
                         Label("Select a session", systemImage: "bubble.left.and.bubble.right")
@@ -46,5 +59,10 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
             #endif
         }
         .navigationSplitViewStyle(.balanced)
+        #if targetEnvironment(macCatalyst)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            navigation.releaseInactiveDetails()
+        }
+        #endif
     }
 }

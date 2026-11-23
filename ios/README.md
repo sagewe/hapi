@@ -730,10 +730,14 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
   available on hover instead of occupying toolbar space.
 - Sidebar rows use smaller icons, up to two title lines and one visible tag;
   hover shows the complete title/project/tags and the context menu edits them.
-- Switching Mac sessions keeps the navigation container and replaces the chat
-  identity; Boolean file destinations still close. The sidebar's native filter
-  menu builds its catalogue on opening, avoiding toolbar menu reconstruction
-  when session metadata changes.
+- Switching Mac sessions keeps the navigation container and up to three recent
+  complete chat views in a native tab container with its tab bar hidden. Returning
+  reuses native transcript cells instead of rebuilding the message hierarchy;
+  hidden chats receive disappearance callbacks and stop their subscriptions.
+  Least-recently-used views are evicted, and memory warnings release inactive
+  views. Switching does not expose the previous chat's Boolean file destination.
+  The sidebar's native filter menu builds its catalogue on opening, avoiding
+  toolbar menu reconstruction when session metadata changes.
 - Reopening a transcript reuses compatible height measurements and restores its
   reading anchor before layout. Cached jump tokens prevent replaying an old
   jump; new jump requests still take priority. Width/font/locale changes keep

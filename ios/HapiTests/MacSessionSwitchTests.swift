@@ -66,6 +66,15 @@ final class MacSessionSwitchTests: XCTestCase {
         try await wait { self.find("switch-files-a", in: window) == nil }
         XCTAssertNil(find("switch-files-a", in: window), "A different session must never inherit the old file page")
         XCTAssertTrue(first === second, "A session switch must replace the chat, not recreate the Mac navigation controller")
+        navigation.open("a")
+        try await wait { self.find("switch-detail-a", in: window) != nil }
+        XCTAssertNil(find("switch-files-a", in: window))
+    }
+
+    private struct PlainDetail: UIViewRepresentable {
+        let id: String
+        func makeUIView(context: Context) -> UITextView { UITextView() }
+        func updateUIView(_ view: UITextView, context: Context) { view.text = "switch:\(id):plain" }
     }
 
     private struct ChatShell: View {
@@ -79,10 +88,84 @@ final class MacSessionSwitchTests: XCTestCase {
                 ), onOpenSession: navigation.open)
                 .toolbar { ToolbarItem(placement: .topBarLeading) { SessionFilterMenu(model: list) } }
             } detail: { id in
-                ChatView(session: hub, model: hub.chatModel(for: id)).id(id)
+                if ProcessInfo.processInfo.environment["HAPI_SWITCH_SURFACE"] == "plain" {
+                    PlainDetail(id: id)
+                } else if ProcessInfo.processInfo.environment["HAPI_SWITCH_SURFACE"] == "transcript" {
+                    let model = hub.chatModel(for: id)
+                    ChatTranscriptView(model: model)
+                        .onAppear { model.retainSurface("chat") }
+                        .onDisappear { model.releaseSurface("chat") }
+                } else {
+                    ChatView(session: hub, model: hub.chatModel(for: id)).id(id)
+                }
             }
             .hapiTypography().hapiTheme(.light)
         }
+    }
+
+    func testWarmDetailBudgetUsesRecencyAndRemovalPreservesOtherSelection() {
+        let navigation = SessionNavigationState()
+        ["a", "b", "c", "a", "d"].forEach(navigation.open)
+        XCTAssertEqual(Set(navigation.recentSessionIds), ["a", "c", "d"])
+        navigation.remove("c")
+        XCTAssertEqual(navigation.selectedSessionId, "d")
+        XCTAssertEqual(Set(navigation.recentSessionIds), ["a", "d"])
+        navigation.releaseInactiveDetails()
+        XCTAssertEqual(navigation.recentSessionIds, ["d"])
+        navigation.remove("d")
+        XCTAssertTrue(navigation.recentSessionIds.isEmpty)
+        XCTAssertNil(navigation.selectedSessionId)
+    }
+
+    func testMemoryWarningDropsInactiveNativeDetail() async throws {
+        let navigation = SessionNavigationState()
+        let probe = Probe()
+        navigation.open("a")
+        let (window, _) = try mount(Shell(navigation: navigation, probe: probe))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await wait { self.find("switch-detail-a", in: window) != nil }
+        weak var first = find("switch-detail-a", in: window)
+        navigation.open("b")
+        try await wait { self.find("switch-detail-b", in: window) != nil }
+        XCTAssertNotNil(first)
+        NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        try await wait { first == nil }
+        XCTAssertEqual(navigation.recentSessionIds, ["b"])
+        XCTAssertNotNil(find("switch-detail-b", in: window))
+    }
+
+    func testWarmSelectionRetainsNativeTranscriptAndReleasesHiddenChat() async throws {
+        let credentials = InMemoryCredentialStore()
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: "http://127.0.0.1:1", accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: "http://127.0.0.1:1/retained-\(UUID())", credentialStore: credentials,
+                                         performer: SplitTestHTTP(sessionSwitchProfile: true)))
+        let navigation = SessionNavigationState()
+        let (window, _) = try mount(ChatShell(navigation: navigation, hub: hub, list: SessionListModel(session: hub)))
+        defer { window.isHidden = true; window.rootViewController = nil; hub.shutdown() }
+        navigation.open("a")
+        try await wait { self.hasText("switch:a:", in: window) }
+        weak var first = textView("switch:a:", in: window)
+        let a = hub.chatModel(for: "a")
+        let b = hub.chatModel(for: "b")
+        XCTAssertTrue(b.visibleSurfaces.isEmpty)
+        a.interactor.setComposerText("draft-a")
+        b.interactor.setComposerText("draft-b")
+        navigation.open("b")
+        try await wait { self.hasText("switch:b:", in: window) && a.visibleSurfaces.isEmpty }
+        XCTAssertTrue(b.visibleSurfaces.contains("chat"))
+        XCTAssertEqual(hub.openChatSessionId, "b")
+        XCTAssertNotNil(first, "A warm session must keep its actual native content, not just its reduced data")
+        navigation.open("a")
+        try await wait { self.hasText("switch:a:", in: window) && b.visibleSurfaces.isEmpty }
+        XCTAssertTrue(first === textView("switch:a:", in: window))
+        XCTAssertEqual(a.interactor.composerText, "draft-a")
+        XCTAssertEqual(b.interactor.composerText, "draft-b")
+    }
+
+    private func textView(_ marker: String, in view: UIView) -> UITextView? {
+        if let text = view as? UITextView, text.text.contains(marker) { return text }
+        return view.subviews.lazy.compactMap { self.textView(marker, in: $0) }.first
     }
 
     func testProfileColdAndWarmSelectionToReadableContent() async throws {
