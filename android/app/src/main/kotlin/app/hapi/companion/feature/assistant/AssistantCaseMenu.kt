@@ -15,7 +15,7 @@ import kotlinx.serialization.encodeToString
 import app.hapi.protocol.wire.HapiJson
 import java.io.File
 
-@Composable fun AssistantCaseMenu(sessionId: String, title: String, onDelete: () -> Unit) {
+@Composable fun AssistantCaseMenu(sessionId: String, title: String, onDelete: () -> Unit, onReopen: () -> Unit) {
     val hub = LocalAppGraph.current.activeHubGraph.value ?: return
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -24,6 +24,8 @@ import java.io.File
     var editing by remember { mutableStateOf(false) }
     var name by remember(title) { mutableStateOf(title) }
     val summary = hub.sessionStore.sessions.collectAsState().value.find { it.id == sessionId }
+    val detail by hub.sessionStore.sessionDetail(sessionId).collectAsState(initial=null)
+    val isArchived=(detail?.metadata?.lifecycleState ?: summary?.metadata?.lifecycleState)=="archived"
     var tags by remember(summary?.metadata?.tags) { mutableStateOf(summary?.metadata?.tags.orEmpty().joinToString("，")) }
     var failure by remember { mutableStateOf<String?>(null) }
     fun action(block: suspend () -> Unit) { open = false; scope.launch { try { block() } catch (_: Exception) { failure = "操作未完成，请重试" } } }
@@ -41,12 +43,14 @@ import java.io.File
             }
             result = result.copy(messages = messages)
             val root = File(context.cacheDir, "text-exports").apply { mkdirs() }
-            val file = File(root, "investigation.json").apply { writeText(HapiJson.encodeToString(result)) }
+            val content=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { investigationExport(title,messages) }
+            val file=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { File(root,investigationFilename(title)).apply {writeText(content)} }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", file)
-            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "application/json"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "导出当前调查记录"))
+            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/markdown"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "导出当前调查记录"))
         } })
         DropdownMenuItem({ Text("标为未读") }, { action { hub.session.api.updateSessionReadState(sessionId, SessionReadStateRequest("unread", expectedVersion = summary?.readState?.version ?: 0)); navigation.home() } })
-        DropdownMenuItem({ Text("归档") }, { action { hub.session.api.archiveSession(sessionId); navigation.home() } })
+        if(isArchived) DropdownMenuItem({ Text("取消归档 / 重新打开") }, { open=false;onReopen() })
+        else DropdownMenuItem({ Text("归档") }, { action { hub.session.api.archiveSession(sessionId); navigation.home() } })
         DropdownMenuItem({ Text("删除") }, { open = false; onDelete() })
         HorizontalDivider()
         DropdownMenuItem({ Text("使用 Codex 交叉核验", style = MaterialTheme.typography.bodySmall) }, { action {

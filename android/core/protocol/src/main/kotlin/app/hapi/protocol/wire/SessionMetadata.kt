@@ -46,6 +46,7 @@ data class SessionMetadata(
     val copilotSessionId: String? = null,
     val piSessionId: String? = null,
     val dshSessionId: String? = null,
+    val tags: List<String> = emptyList(),
 )
 
 /** `metadata.summary` on the detail session (`{text, updatedAt}`). */

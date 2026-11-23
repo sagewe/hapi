@@ -82,7 +82,7 @@ android {
         targetSdk = 36
         versionCode = providers.gradleProperty("hapiVersionCode").map { value ->
             value.toInt().also { require(it > 0) { "hapiVersionCode must be positive" } }
-        }.orElse(if (complianceBuild) 2 else 1).get()
+        }.orElse(if (complianceBuild) 3 else 1).get()
         // Tracks the hapi CLI/hub release train.
         versionName = providers.gradleProperty("hapiVersionName").orElse("0.34.3").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

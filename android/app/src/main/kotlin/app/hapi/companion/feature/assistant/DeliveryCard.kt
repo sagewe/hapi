@@ -4,6 +4,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,7 +34,7 @@ import java.io.File
         scope.launch {
             try {
                 val cached = file ?: requireNotNull(media.fetchGeneratedMedia)(requireNotNull(media.generatedImageUrl(block.imageId)), block.imageId, block.fileName).also { file = it }
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", cached)
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.attachments", cached, block.fileName)
                 val intent = Intent(if(share) Intent.ACTION_SEND else Intent.ACTION_VIEW).apply {
                     if(share) { type = mime; putExtra(Intent.EXTRA_STREAM, uri); clipData = android.content.ClipData.newRawUri("报告", uri) }
                     else setDataAndType(uri, mime)
@@ -44,15 +47,21 @@ import java.io.File
             finally { busy = false }
         }
     }
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), border = BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Surface(color = tint.copy(alpha = .12f), shape = RoundedCornerShape(8.dp)) { Text(if(pdf) "PDF" else "ZIP", color = tint, modifier = Modifier.padding(8.dp)) }
-                Spacer(Modifier.width(12.dp))
-                Text(block.fileName, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+    Surface(modifier.fillMaxWidth(),color=assistantPaper(),shape=RoundedCornerShape(18.dp),border=BorderStroke(.5.dp,MaterialTheme.colorScheme.outlineVariant.copy(alpha=.7f))) {
+        Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                Surface(color=tint.copy(alpha=.12f),shape=RoundedCornerShape(11.dp),modifier=Modifier.size(42.dp)) { Icon(if(pdf) Icons.Default.PictureAsPdf else Icons.Default.FolderZip,null,Modifier.padding(9.dp),tint=tint) }
+                Column(Modifier.padding(start=12.dp).weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text(block.fileName,style=MaterialTheme.typography.bodyMedium,fontWeight=FontWeight.SemiBold)
+                    Text((if(pdf) "中文调查报告 · PDF" else "完整证据包 · ZIP") + (if(busy) " · 下载中…" else if(file!=null) " · 已下载" else " · 可预览"),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            Row { TextButton({ open(false) }, enabled = !busy) { Text("预览") }; TextButton({ open(true) }, enabled = !busy) { Text("转发") }; if(busy) CircularProgressIndicator(Modifier.padding(10.dp).size(20.dp)) }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton({open(false)},enabled=!busy,modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=10.dp,vertical=10.dp)) {Icon(Icons.Default.Visibility,null,Modifier.size(17.dp));Spacer(Modifier.width(6.dp));Text(if(pdf) "预览报告" else "查看证据包",maxLines=1)}
+                OutlinedButton({open(true)},enabled=!busy,modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=10.dp,vertical=10.dp)) {Icon(Icons.Default.Share,null,Modifier.size(17.dp));Spacer(Modifier.width(6.dp));Text("转发微信",maxLines=1)}
+            }
+            error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
         }
     }
 }

@@ -152,6 +152,7 @@ object SummaryPatching {
     fun toSessionSummaryMetadata(metadata: SessionMetadata?): SessionSummaryMetadata? {
         if (metadata == null) return null
         return SessionSummaryMetadata(
+            tags = metadata.tags,
             name = metadata.name,
             path = metadata.path,
             machineId = metadata.machineId,
@@ -293,7 +294,8 @@ object SummaryPatching {
     ): Boolean {
         if (current === next) return true
         if (current == null || next == null) return current == null && next == null
-        return current.name == next.name
+        return current.tags == next.tags
+            && current.name == next.name
             && current.path == next.path
             && current.machineId == next.machineId
             && current.summary?.text == next.summary?.text

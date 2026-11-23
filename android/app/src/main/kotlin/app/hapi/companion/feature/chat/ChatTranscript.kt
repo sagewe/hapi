@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
@@ -240,10 +241,12 @@ internal fun ChatTranscript(
         stateKeys.addAll(retained)
     }
 
+    val assistantReading=app.hapi.companion.di.LocalClientProfile.current?.mode=="assistant"
+    val showingLatest=!followsTail || state.requiresLatestReset || jumpingLatest
     Box(modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().testTag("chat-transcript").layout { measurable, constraints ->
+            modifier = Modifier.fillMaxSize().padding(bottom=if(assistantReading && showingLatest) 52.dp else 0.dp).testTag("chat-transcript").layout { measurable, constraints ->
                 // A same-key page can still resize rows. Reading the version
                 // here forces a measure/placement pass even for a hidden-only
                 // page; acknowledging composition alone is too early.
@@ -256,7 +259,7 @@ internal fun ChatTranscript(
                     renderedMessagesVersion = messagesVersion
                 }
             },
-            contentPadding = PaddingValues(vertical = 10.dp),
+            contentPadding = PaddingValues(vertical=10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
         ) {
             item(key = HISTORY_KEY, contentType = HISTORY_KEY) {
@@ -288,7 +291,13 @@ internal fun ChatTranscript(
             }
         }
         if (!followsTail || state.requiresLatestReset || jumpingLatest) {
-            Surface(
+            if(app.hapi.companion.di.LocalClientProfile.current?.mode=="assistant") {
+                androidx.compose.material3.FilledTonalIconButton(onClick=onJumpToLatest,enabled=!jumpingLatest,
+                    modifier=Modifier.align(Alignment.BottomEnd).padding(12.dp).size(40.dp).testTag("chat-latest")) {
+                    if(jumpingLatest) CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)
+                    else androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ArrowDownward,"回到最新消息",Modifier.size(20.dp))
+                }
+            } else Surface(
                 shape = androidx.compose.foundation.shape.CircleShape,
                 tonalElevation = 4.dp,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),

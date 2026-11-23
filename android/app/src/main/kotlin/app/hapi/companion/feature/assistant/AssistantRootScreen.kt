@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
@@ -52,23 +53,20 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf(false) }
-    var search by remember { mutableStateOf("") }
-    var archived by remember { mutableStateOf(false) }
-    var tag by remember { mutableStateOf<String?>(null) }
-    val sessions by hub.sessionStore.sessions.collectAsState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val preparer = remember { AttachmentPreparer(context) }
     suspend fun add(prepared: PrepareResult) {
         when (prepared) {
-            is PrepareResult.Ready -> { val a = prepared.attachment; File(root, a.id).writeBytes(a.bytes); save(draft.copy(files = draft.files + DraftFile(a.id, a.filename, a.mimeType, a.sizeBytes))) }
+            is PrepareResult.Ready -> { val a = prepared.attachment; withContext(Dispatchers.IO) { File(root, a.id).writeBytes(a.bytes) }; save(draft.copy(files = draft.files + DraftFile(a.id, a.filename, a.mimeType, a.sizeBytes))) }
             else -> error = "无法读取附件，或文件超过 50 MB"
         }
     }
     val documents = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> scope.launch { uris.forEach { add(preparer.prepare(it)) } } }
-    var cameraUri by remember { mutableStateOf<Uri?>(null) }
-    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok -> if (ok) cameraUri?.let { scope.launch { add(preparer.prepare(it)) } } }
+    val photos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris -> scope.launch { uris.forEach { add(preparer.prepare(it)) } } }
+    var cameraUri by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok -> if (ok) cameraUri?.let { scope.launch { add(preparer.prepare(Uri.parse(it))) } } }
     fun takePhoto() {
-        try { val capture = preparer.newCameraCapture(); cameraUri = capture.uri; camera.launch(capture.uri) }
+        try { val capture = preparer.newCameraCapture(); cameraUri = capture.uri.toString(); camera.launch(capture.uri) }
         catch (_: Exception) { error = "无法启动相机，请使用相册或选择 PDF" }
     }
     val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if(granted) takePhoto() else error = "请允许使用相机" }
@@ -115,21 +113,18 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
     ModalNavigationDrawer(drawerState = drawer, drawerContent = {
         AssistantHistoryDrawer(hub, { id -> scope.launch { drawer.close() }; onOpenSession(id) }, onSettings)
     }) {
-        Scaffold(topBar = { TopAppBar(title = { Text("新调查", style = MaterialTheme.typography.titleLarge) }, navigationIcon = { IconButton({ scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu, "历史调查") } }, actions = { IconButton({ if (!busy) save(Draft(preset = preset?.id)) }) { Icon(Icons.Default.Add, "新建调查") } }) }, bottomBar = {
-            Surface(shape = RoundedCornerShape(20.dp), border = BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.padding(12.dp).navigationBarsPadding().imePadding()) {
-                Column(Modifier.padding(8.dp)) {
-                    draft.scene?.let { InputChip(true, { save(draft.copy(scene = null)) }, { Text(it) }, trailingIcon = { Icon(Icons.Default.Close, "取消场景", Modifier.size(16.dp)) }) }
-                    Row(Modifier.horizontalScroll(rememberScrollState())) { draft.files.forEach { f -> InputChip(false, { if (!busy) { save(draft.copy(files = draft.files - f)); File(root, f.id).delete() } }, { Text(f.filename, maxLines = 2) }, trailingIcon = { Icon(Icons.Default.Close, "移除附件", Modifier.size(16.dp)) }) } }
-                    TextField(draft.text, { save(draft.copy(text = it)) }, enabled = !busy, placeholder = { Text(when(draft.scene) { "企业穿透" -> "输入企业名称、注册地或线索"; "自然人" -> "输入姓名、国籍或身份线索"; "单据审核" -> "添加单据图片或 PDF，说明核验重点"; "制裁筛查" -> "输入主体名称、国家或名单线索"; else -> "输入调查对象或添加资料" }) }, modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton({ picker = true }, enabled = !busy) { Icon(Icons.Default.Add, "添加资料") }
-                        profile.modelPresets.forEachIndexed { index, p -> FilterChip(p.id == preset?.id, { save(draft.copy(preset = p.id)) }, { Text((if(index == 0) "⚡ " else "✦ ") + p.label) }, enabled = !busy) }
-                        Spacer(Modifier.weight(1f))
-                        if (micAvailable) IconButton({ if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) dictation.toggle() else microphone.launch(Manifest.permission.RECORD_AUDIO) }) { Icon(if (micState is DictationState.Recording) Icons.Default.Stop else Icons.Default.Mic, "语音听写") }
-                        IconButton(::send, enabled = !busy && micState == DictationState.Idle) { if(busy) CircularProgressIndicator(Modifier.size(22.dp)) else Icon(Icons.Default.ArrowUpward, "发送") }
-                    }
-                }
-            }
+        Scaffold(topBar = { TopAppBar(title = {}, navigationIcon = { IconButton({ scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu,"历史调查") } }, actions = {
+            if(draft.text.isNotBlank() || draft.scene != null || draft.files.isNotEmpty()) IconButton({ if(!busy) { draft.files.forEach { File(root,it.id).delete() }; save(Draft(preset=preset?.id)) } }) { Icon(Icons.Default.ClearAll,"清空草稿") }
+        }) }, bottomBar = {
+            AssistantComposer(text=draft.text,onTextChange={text,_,_->save(draft.copy(text=text))},onSend=::send,onAdd={picker=true},
+                onMic={if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) dictation.toggle() else microphone.launch(Manifest.permission.RECORD_AUDIO)},
+                onCancelRecording=dictation::cancel, modifier=Modifier.padding(horizontal=12.dp,vertical=8.dp).navigationBarsPadding().imePadding(),
+                placeholder=when(draft.scene) { "企业穿透"->"输入企业名称、注册地或线索";"自然人"->"输入姓名、国籍或身份线索";"单据审核"->"添加单据图片或 PDF，说明核验重点";"制裁筛查"->"输入主体名称、国家或名单线索";else->"输入调查对象或补充线索" },
+                attachments=draft.files.map { AssistantAttachment(it.id,it.filename,it.mime,if(it.mime.startsWith("image/")) File(root,it.id) else null) },
+                onRemove={id->draft.files.find { it.id==id }?.let { file->save(draft.copy(files=draft.files-file));File(root,file.id).delete() }},
+                busy=busy,dictation=if(micAvailable) micState else null,
+                leading={draft.scene?.let { InputChip(true,{save(draft.copy(scene=null))},{Text(it)},trailingIcon={Icon(Icons.Default.Close,"取消场景",Modifier.size(14.dp))}) }},
+                presets={AssistantPresetSwitch(profile.modelPresets,{it.id==preset?.id},{save(draft.copy(preset=it.id))},enabled=!busy)})
         }) { padding ->
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) {
                 app.hapi.companion.feature.updates.AndroidUpdateHint(hub)
@@ -137,8 +132,8 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
                 Spacer(Modifier.height(28.dp))
                 sceneTitles.chunked(2).forEachIndexed { row, titles ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { titles.forEachIndexed { col, title -> val i = row * 2 + col
-                        Surface(onClick = { save(draft.copy(scene = if (draft.scene == title) null else title)); if (i == 2) picker = true }, shape = RoundedCornerShape(16.dp), border = BorderStroke(.5.dp, if(draft.scene == title) assistantSceneColors[i] else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.weight(1f)) {
-                            Column(Modifier.padding(16.dp)) { Surface(color = assistantSceneColors[i].copy(alpha = .12f), shape = RoundedCornerShape(8.dp), modifier = Modifier.size(32.dp)) { Icon(listOf(Icons.Default.Business, Icons.Default.PersonSearch, Icons.Default.Description, Icons.Default.Policy)[i], null, tint = assistantSceneColors[i], modifier = Modifier.padding(6.dp)) }; Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleSmall) }
+                        Surface(onClick = { save(draft.copy(scene = if (draft.scene == title) null else title)); if (i == 2) picker = true }, shape = RoundedCornerShape(16.dp), color = if(draft.scene == title) androidx.compose.ui.graphics.lerp(assistantPaper(),assistantSceneColors[i],.055f) else assistantPaper(), tonalElevation = 1.dp, border = BorderStroke(.5.dp, if(draft.scene == title) assistantSceneColors[i] else MaterialTheme.colorScheme.outlineVariant.copy(alpha=.65f)), modifier = Modifier.weight(1f)) {
+                            Column(Modifier.padding(16.dp)) { Surface(color = assistantSceneColors[i].copy(alpha = .12f), shape = RoundedCornerShape(8.dp), modifier = Modifier.size(32.dp)) { Icon(listOf(Icons.Default.Business, Icons.Default.PersonSearch, Icons.Default.Description, Icons.Default.Policy)[i], null, tint = assistantSceneColors[i], modifier = Modifier.padding(6.dp)) }; Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleSmall); Spacer(Modifier.height(5.dp)); Text(listOf("注册、股东与实控人","同名消歧与关联风险","水单、发票与合同核验","官方名单与转口排查")[i],style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,softWrap=false) }
                         }
                     } }; Spacer(Modifier.height(12.dp))
                 }
@@ -150,8 +145,8 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
             }
         }
     }
-    if (picker) ModalBottomSheet({ picker = false }) {
-        listOf("拍照", "相册", "选择 PDF").forEachIndexed { index, title -> TextButton({ picker = false; if(index == 0) { if(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) takePhoto() else cameraPermission.launch(Manifest.permission.CAMERA) } else documents.launch(arrayOf(if(index == 1) "image/*" else "application/pdf")) }, Modifier.fillMaxWidth()) { Text(title) } }
-        Spacer(Modifier.navigationBarsPadding())
-    }
+    if(picker) AssistantAttachmentSheet({picker=false},
+        {if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) takePhoto() else cameraPermission.launch(Manifest.permission.CAMERA)},
+        {photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},
+        {documents.launch(arrayOf("application/pdf"))})
 }

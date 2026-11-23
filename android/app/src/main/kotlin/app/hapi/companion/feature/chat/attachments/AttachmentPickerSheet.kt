@@ -36,6 +36,10 @@ fun AttachmentPickerSheet(
     onTakePhoto: () -> Unit,
     onPickFiles: () -> Unit,
 ) {
+    if(app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
+        app.hapi.companion.feature.assistant.AssistantAttachmentSheet(onDismiss,onTakePhoto,onPickPhotos,onPickFiles)
+        return
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(modifier = Modifier.padding(bottom = 20.dp)) {
             Text(

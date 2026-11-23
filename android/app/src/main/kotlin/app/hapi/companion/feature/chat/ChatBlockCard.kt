@@ -3,6 +3,10 @@ package app.hapi.companion.feature.chat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import app.hapi.companion.feature.chat.blocks.AgentEventBlockView
 import app.hapi.companion.feature.chat.blocks.AgentReasoningBlockView
 import app.hapi.companion.feature.chat.blocks.AgentTextBlockView
@@ -77,7 +81,7 @@ fun ChatBlockCard(
             }
             is AgentReasoningBlock, is CliOutputBlock -> return
             is ToolCallBlock -> { AssistantStage(listOf(block), modifier); return }
-            is ToolGroupBlock -> { AssistantStage(block.tools, modifier, block.summary); return }
+            is ToolGroupBlock -> { AssistantStage(block.tools, modifier, block.summary,block.id); return }
             else -> Unit
         }
     }
@@ -94,9 +98,18 @@ fun ChatBlockCard(
     }
 }
 
-@Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier, summary: app.hapi.protocol.chat.ToolGroupSummary? = null) {
-    assistantStageText(tools, summary)?.let {
-        androidx.compose.material3.Text(it, modifier, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+@Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier, summary: app.hapi.protocol.chat.ToolGroupSummary? = null, groupId: String? = null) {
+    val label=assistantStageText(tools,summary) ?: return
+    val running=label.startsWith("正在")
+    val inspection=LocalChatInspection.current
+    androidx.compose.material3.Surface(onClick={ if(groupId!=null) inspection?.openGroup(groupId) else tools.firstOrNull()?.id?.let {inspection?.openTool(it)} },enabled=inspection!=null && (groupId!=null || tools.isNotEmpty()),
+        color=androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.45f),shape=androidx.compose.foundation.shape.RoundedCornerShape(12.dp),modifier=modifier.fillMaxWidth().padding(vertical=6.dp)) {
+        androidx.compose.foundation.layout.Row(androidx.compose.ui.Modifier.padding(horizontal=12.dp,vertical=11.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            if(running) app.hapi.companion.feature.assistant.PulseDot(androidx.compose.material3.MaterialTheme.colorScheme.primary)
+            else androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.CheckCircle,null,androidx.compose.ui.Modifier.size(15.dp),tint=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            androidx.compose.material3.Text(label,androidx.compose.ui.Modifier.padding(start=8.dp).weight(1f),style=androidx.compose.material3.MaterialTheme.typography.labelMedium)
+            if(!running) androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ChevronRight,"展开查证步骤",androidx.compose.ui.Modifier.size(16.dp),tint=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
@@ -114,5 +127,5 @@ internal fun assistantStageText(tools: List<ToolCallBlock>, summary: app.hapi.pr
         "read" in names || "parse" in names || (kinds[app.hapi.protocol.chat.ToolGroupActionKind.READ] ?: 0) > 0 -> "正在解析资料与单据"
         else -> "正在整理调查证据"
     }
-    return if (running) phase + "…" else "已完成 $total 项调查步骤"
+    return if (running) phase + "…" else "已完成 $total 步查证"
 }

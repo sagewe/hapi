@@ -112,6 +112,14 @@ fun ChatComposer(
     onDictationCancel: () -> Unit = {},
     presetControls: @Composable () -> Unit = {},
 ) {
+    if(app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
+        app.hapi.companion.feature.assistant.AssistantComposer(
+            text=state.text,onTextChange=onTextChange,onSend=onSend,onAdd={onAddAttachment?.invoke()},onMic=onDictationToggle,onCancelRecording=onDictationCancel,
+            modifier=modifier.padding(horizontal=12.dp,vertical=8.dp),busy=state.isSending || state.isImportingShare,running=state.canSteer,onStop=onAbort,dictation=dictation,caretPosition=state.caretPosition,
+            attachments=attachments.map { app.hapi.companion.feature.assistant.AssistantAttachment(it.id,it.filename,it.mimeType,it.previewBytes,when(it.status) { app.hapi.companion.feature.chat.attachments.ComposerAttachmentStatus.Uploading->"上传中…";app.hapi.companion.feature.chat.attachments.ComposerAttachmentStatus.Failed->"上传失败，轻点重试";else->null }) },
+            onRemove=onAttachmentRemove,onRetry=onAttachmentRetry,presets=presetControls)
+        return
+    }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Do not replay an old focus intent when returning from an inspector.

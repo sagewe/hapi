@@ -328,7 +328,14 @@ fun HapiNavigation() {
         )
     }
 
+    val actualContext=LocalContext.current
+    val currentConfiguration=androidx.compose.ui.platform.LocalConfiguration.current
+    val assistantContext=remember(actualContext,currentConfiguration) {
+        val chineseResources=actualContext.createConfigurationContext(android.content.res.Configuration(currentConfiguration).apply { setLocale(java.util.Locale.SIMPLIFIED_CHINESE) }).resources
+        object : android.content.ContextWrapper(actualContext) { override fun getResources(): android.content.res.Resources = chineseResources }
+    }
     androidx.compose.runtime.CompositionLocalProvider(app.hapi.companion.di.LocalClientProfile provides profile,
+        LocalContext provides (if(profile?.mode=="assistant") assistantContext else actualContext),
         app.hapi.companion.feature.assistant.AssistantNavigation provides app.hapi.companion.feature.assistant.AssistantNavigationActions(
             home = { navController.navigateClearingBackStack(Routes.HOME) }, settings = { navController.navigate(Routes.SETTINGS) }, pair = { navController.navigate(Routes.PAIRING) }, chat = { navController.navigate(Routes.chat(it)) })) {
     NavHost(navController = navController, startDestination = startDestination) {

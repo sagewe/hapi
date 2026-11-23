@@ -56,8 +56,8 @@ object HapiTypography {
 
 /** Owns the minimum margins; children measure against this column, not the display. */
 @Composable
-fun ReadingColumn(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+fun ReadingColumn(modifier: Modifier = Modifier, horizontalPadding: androidx.compose.ui.unit.Dp = 16.dp, content: @Composable BoxScope.() -> Unit) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-        Box(Modifier.widthIn(max = 752.dp).fillMaxWidth().padding(horizontal = 16.dp), content = content)
+        Box(Modifier.widthIn(max = 752.dp).fillMaxWidth().padding(horizontal = horizontalPadding), content = content)
     }
 }

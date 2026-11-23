@@ -14,6 +14,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Alignment
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -30,7 +42,17 @@ import app.hapi.protocol.chat.AgentTextBlock
 /** Assistant prose: full-width markdown (the shared M2d1 renderer). */
 @Composable
 fun AgentTextBlockView(block: AgentTextBlock, modifier: Modifier = Modifier) {
-    Markdown(text = block.text, modifier = modifier.fillMaxWidth())
+    if(app.hapi.companion.di.LocalClientProfile.current?.mode=="assistant") {
+        val clipboard=LocalClipboardManager.current
+        var copied by remember(block.id,block.text) { mutableStateOf(false) }
+        Column(modifier.fillMaxWidth()) {
+            SelectionContainer { Markdown(text=block.text,modifier=Modifier.fillMaxWidth()) }
+            TextButton({clipboard.setText(AnnotatedString(block.text));copied=true},Modifier.align(Alignment.End)) {
+                Icon(if(copied) Icons.Default.Check else Icons.Default.ContentCopy,null,Modifier.size(14.dp))
+                Text(if(copied) "已复制" else "复制结论",Modifier.padding(start=5.dp),style=MaterialTheme.typography.labelSmall)
+            }
+        }
+    } else Markdown(text = block.text, modifier = modifier.fillMaxWidth())
 }
 
 /**

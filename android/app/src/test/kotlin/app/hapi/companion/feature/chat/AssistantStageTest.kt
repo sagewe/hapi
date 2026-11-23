@@ -7,7 +7,7 @@ class AssistantStageTest {
         assertEquals("正在检索公开线索…", assistantStageText(emptyList(), summary(2)))
     }
     @Test fun compactCompletedGroupRetainsStepCount() {
-        assertEquals("已完成 7 项调查步骤", assistantStageText(emptyList(), summary(0)))
+        assertEquals("已完成 7 步查证", assistantStageText(emptyList(), summary(0)))
         assertNull(assistantStageText(emptyList()))
     }
 }

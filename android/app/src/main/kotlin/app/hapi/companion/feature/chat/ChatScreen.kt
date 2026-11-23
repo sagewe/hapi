@@ -300,7 +300,7 @@ internal fun ChatScreen(
                 expandedHeight = if (assistantProfile != null) 88.dp else toolbarHeight,
                 navigationIcon = {
                     IconButton(onClick = { if(assistantProfile != null) assistantScope.launch { assistantDrawer.open() } else onBack() }) {
-                        Icon(if(assistantProfile != null) androidx.compose.material.icons.Icons.Filled.Menu else Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chat_back))
+                        Icon(if(assistantProfile != null) androidx.compose.material.icons.Icons.Filled.Menu else Icons.AutoMirrored.Filled.ArrowBack, contentDescription = if(assistantProfile!=null) "历史调查" else stringResource(R.string.chat_back))
                     }
                 },
                 title = { ChatTitle(state.header, reconnecting, viewModel::retry) },
@@ -309,10 +309,10 @@ internal fun ChatScreen(
                     // title out) — gear for the frequent config switches,
                     // everything else in the overflow menu.
                     IconButton(onClick = { if (assistantProfile != null) assistantNavigation.home() else configSheetOpen = true }) {
-                        Icon(if (assistantProfile != null) Icons.Filled.Add else Icons.Filled.Settings, contentDescription = stringResource(R.string.chat_open_settings))
+                        Icon(if (assistantProfile != null) Icons.Filled.Add else Icons.Filled.Settings, contentDescription = if(assistantProfile!=null) "新建调查" else stringResource(R.string.chat_open_settings))
                     }
                     val scratchlistCount by viewModel.scratchlistCount.collectAsState()
-                    if (assistantProfile != null) app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true })
+                    if (assistantProfile != null) app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true },viewModel::reopenSession)
                     else SessionOverflowMenu(
                         active = state.header.active,
                         onOpenFiles = onOpenFiles,
@@ -334,7 +334,7 @@ internal fun ChatScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            app.hapi.companion.ui.theme.ReadingColumn {
+            app.hapi.companion.ui.theme.ReadingColumn(horizontalPadding=if(assistantProfile!=null) 0.dp else 16.dp) {
                 // Edge-to-edge (enforced by targetSdk 35+): the bar owns its own
                 // system insets — nav-bar padding when the keyboard is closed,
                 // IME padding when open (inset consumption prevents doubling).
@@ -369,9 +369,9 @@ internal fun ChatScreen(
                         presetControls = {
                             if (assistantProfile != null && state.header.flavor != "codex") {
                                 val selected by viewModel.config.collectAsState()
-                                assistantProfile.modelPresets.forEachIndexed { index, preset ->
-                                    androidx.compose.material3.FilterChip((selected.model == preset.model || (selected.model != null && preset.model.startsWith(selected.model + "-") && selected.effort == preset.effort)), { viewModel.setModelPreset(preset.model, preset.effort) }, { Text((if(index == 0) "⚡ " else "✦ ") + preset.label) })
-                                }
+                                app.hapi.companion.feature.assistant.AssistantPresetSwitch(assistantProfile.modelPresets,
+                                    { preset -> selected.model == preset.model || (selected.model != null && preset.model.startsWith(selected.model + "-") && selected.effort == preset.effort) },
+                                    { viewModel.setModelPreset(it.model,it.effort) })
                             }
                         },
                         state = composerState,
@@ -446,7 +446,7 @@ internal fun ChatScreen(
                 )
             },
             onTakePhoto = onTakePhoto,
-            onPickFiles = { documentPickerLauncher.launch(arrayOf("*/*")) },
+            onPickFiles = { documentPickerLauncher.launch(arrayOf(if(assistantProfile!=null) "application/pdf" else "*/*")) },
         )
     }
     if (configSheetOpen) {
