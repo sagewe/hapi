@@ -246,11 +246,7 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .focusedSceneValue(\.chatCommands, chatCommandActions)
         #if targetEnvironment(macCatalyst)
-        .preference(key: MacSessionChromeKey.self, value: [sessionId: MacSessionChrome(
-            sessionId: sessionId, header: model.header,
-            menuState: .init(model: model, session: session), profile: session.clientProfile,
-            controls: AnyView(macChromeControls), commands: chatCommandActions
-        )])
+        .preference(key: MacSessionChromeKey.self, value: [sessionId: macSessionChrome])
         #endif
         .navigationDestination(isPresented: $filesOpen) {
             FilesView(session: session, sessionId: sessionId)
@@ -462,16 +458,18 @@ struct ChatView: View {
     // MARK: - Chrome
 
     #if targetEnvironment(macCatalyst)
-    private var macChromeControls: some View {
-        HStack(spacing: 12) {
-            if showsProminentSystemToolbarStatus {
-                ChatHeaderStatusBadge(status: model.header.status, onTapAttention: { model.jumpToPendingRequestOrLatest() })
-            }
-            if session.isAssistantMode, model.header.flavor == "agy", session.clientProfile?.modelPresets?.isEmpty == false {
-                AssistantChatModelPicker(session: session, sessionId: sessionId)
-            }
-            moreActionsMenu
-        }
+    private var macSessionChrome: MacSessionChrome {
+        let picker: AnyView? = session.isAssistantMode && model.header.flavor == "agy"
+            && session.clientProfile?.modelPresets?.isEmpty == false
+            ? AnyView(AssistantChatModelPicker(session: session, sessionId: sessionId)) : nil
+        return MacSessionChrome(
+            sessionId: sessionId, header: model.header,
+            menuState: .init(model: model, session: session), profile: session.clientProfile,
+            status: showsProminentSystemToolbarStatus ? AnyView(ChatHeaderStatusBadge(
+                status: model.header.status, onTapAttention: { model.jumpToPendingRequestOrLatest() }
+            )) : nil,
+            modelPicker: picker, actions: AnyView(moreActionsMenu), commands: chatCommandActions
+        )
     }
     #endif
 
@@ -707,7 +705,11 @@ struct ChatHeaderStatusBadge: View {
             Group {
                 if status.isAttention, let onTapAttention {
                     Button(action: onTapAttention) {
+                        #if targetEnvironment(macCatalyst)
+                        label.frame(minHeight: 28)
+                        #else
                         label.frame(minHeight: 44)
+                        #endif
                     }
                     .buttonStyle(.plain)
                 } else {

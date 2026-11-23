@@ -628,7 +628,13 @@ enum SessionStatusPalette {
 
 /// Lightweight text filters; only selection adds an underline.
 struct SessionStatusSummaryBar: View {
+    #if targetEnvironment(macCatalyst)
+    @ScaledMetric(relativeTo: .footnote) private var controlHeight: CGFloat = 28
+    private let minimumHeight: CGFloat = 28
+    #else
     @ScaledMetric(relativeTo: .footnote) private var controlHeight: CGFloat = 44
+    private let minimumHeight: CGFloat = 44
+    #endif
     @Environment(\.hapiTheme) private var theme
     let counts: SessionStatusSummaryCounts
     let activeLens: SessionQuickStatusLens?
@@ -661,8 +667,10 @@ struct SessionStatusSummaryBar: View {
             }
             .padding(.horizontal, 16)
         }
-        .frame(height: max(44, controlHeight))
+        .frame(height: max(minimumHeight, controlHeight))
+        #if !targetEnvironment(macCatalyst)
         .background(theme.background)
+        #endif
         .accessibilityIdentifier("home.status-summary-bar")
     }
 
@@ -684,7 +692,7 @@ struct SessionStatusSummaryBar: View {
             .font(.footnote.weight(selected ? .medium : .regular))
             .foregroundStyle(selected ? theme.textPrimary : theme.textSecondary)
             .lineLimit(1)
-            .frame(minHeight: max(44, controlHeight))
+            .frame(minHeight: max(minimumHeight, controlHeight))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -760,7 +760,10 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
 - Switching Mac sessions keeps the navigation container and up to three recent
   complete chat/navigation views in a native tab container with its tab bar hidden.
   The selected chat forwards its title, toolbar and commands to the stable outer
-  navigation stack; inactive chats cannot supply the current window's actions. Returning
+  navigation stack; inactive chats cannot supply the current window's actions.
+  Status, model picker and actions use separate toolbar items so an attention
+  label cannot compress away the menu. The sidebar status strip uses 28pt pointer
+  targets and the native sidebar background; touch targets stay at 44pt. Returning
   reuses native transcript cells instead of rebuilding the message hierarchy;
   hidden chats receive disappearance callbacks and stop their subscriptions.
   Least-recently-used views are evicted, and memory warnings release inactive

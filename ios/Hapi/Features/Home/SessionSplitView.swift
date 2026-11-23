@@ -62,7 +62,15 @@ struct SessionSplitView<Sidebar: View, Detail: View>: View {
             // selected chat's chrome to the stable outer navigation stack.
             .navigationTitle(Text(verbatim: chrome?.header.title ?? ""))
             .toolbar {
-                if let chrome { ToolbarItem(placement: .topBarTrailing) { chrome.controls } }
+                if let chrome {
+                    if let status = chrome.status {
+                        ToolbarItem(id: "mac.chat.status", placement: .topBarTrailing) { status }
+                    }
+                    if let picker = chrome.modelPicker {
+                        ToolbarItem(id: "mac.chat.model", placement: .topBarTrailing) { picker }
+                    }
+                    ToolbarItem(id: "mac.chat.actions", placement: .topBarTrailing) { chrome.actions }
+                }
             }
             .focusedSceneValue(\.chatCommands, chrome?.commands)
             #endif

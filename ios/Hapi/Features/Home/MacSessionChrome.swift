@@ -10,7 +10,9 @@ struct MacSessionChrome: Equatable {
     let header: ChatHeaderUI
     let menuState: ChatActionsMenu.State
     let profile: ClientProfile?
-    let controls: AnyView
+    let status: AnyView?
+    let modelPicker: AnyView?
+    let actions: AnyView
     let commands: ChatCommandActions
 
     private var commandAvailability: [Bool] {

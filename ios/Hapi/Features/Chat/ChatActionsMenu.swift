@@ -58,7 +58,7 @@ struct ChatActionsMenu: View {
     var body: some View {
         if state.assistant { assistantMenu } else {
         #if targetEnvironment(macCatalyst)
-        MacMenu(owner: self)
+        MacMenu(owner: self).frame(width: 28, height: 28)
         #else
         swiftUIMenu
         #endif
@@ -232,6 +232,7 @@ private extension ChatActionsMenu {
             let button = UIButton(type: .system)
             var configuration = UIButton.Configuration.plain()
             configuration.image = UIImage(systemName: "ellipsis")
+            configuration.contentInsets = .zero
             button.configuration = configuration
             button.showsMenuAsPrimaryAction = true
             button.accessibilityLabel = String(localized: "More actions")
