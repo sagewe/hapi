@@ -71,6 +71,10 @@ class HubGraph(
     /** Normalized origin (via [HubSession]'s own normalization). */
     val hubUrl: String get() = session.hubUrl
 
+    val androidUpdates = if(app.hapi.companion.BuildConfig.COMPLIANCE)
+        app.hapi.companion.feature.updates.AndroidUpdateController(session.api,
+            File(context.cacheDir,"updates/" + dirNameFor(session.hubUrl)),scope).also { it.check() } else null
+
     private val profileCache = ClientProfileCache(context, session.hubUrl)
     val clientProfile = kotlinx.coroutines.flow.MutableStateFlow(profileCache.read())
     val profileReady = kotlinx.coroutines.flow.MutableStateFlow(clientProfile.value != null)
@@ -189,7 +193,7 @@ class HubGraph(
      * `ProcessLifecycleOwner`.
      */
     fun setLifecycleForeground(foreground: Boolean) {
-        if (foreground) refreshProfile()
+        if (foreground) { refreshProfile(); androidUpdates?.check() }
         sseEngine.setLifecycleForeground(foreground)
         visibilityReporter.setForeground(foreground)
         lastSeenStore.setForeground(foreground)

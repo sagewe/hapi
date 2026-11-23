@@ -44,6 +44,7 @@ import app.hapi.companion.di.HubGraph
                 HorizontalDivider(Modifier.padding(start = 56.dp), thickness = .5.dp)
             }
         }
+        app.hapi.companion.feature.updates.AndroidUpdateHint(hub)
         onNew?.let { TextButton(it, Modifier.fillMaxWidth()) { Text("新建调查") } }
         TextButton(onSettings, Modifier.fillMaxWidth().navigationBarsPadding()) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(8.dp)); Text("设置") }
     }

@@ -60,6 +60,31 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `update downloads are authenticated streamed and checksum gated`() = runBlocking {
+        val bytes = "apk".toByteArray()
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val release = app.hapi.protocol.wire.AndroidRelease("com.sagewe.hapi.compliance",2,"0.34.3","work.apk",hash,3,"notes","2026-11-23T00:00:00Z","/api/app-updates/android/download/work.apk")
+        val file = java.nio.file.Files.createTempFile("update-download", ".apk").toFile()
+        try {
+            server.enqueue(MockResponse().setBody("apk"))
+            var count = 0L
+            session.api.downloadAndroidRelease(release,file) { count = it }
+            assertEquals(3L,count); assertEquals("apk",file.readText())
+            val request = server.takeRequest()
+            assertEquals("/api/app-updates/android/download/work.apk",request.path)
+            assertEquals("Bearer $jwt",request.getHeader("Authorization"))
+            server.enqueue(MockResponse().setBody("bad"))
+            assertFailsWith<IllegalArgumentException> { session.api.downloadAndroidRelease(release,file) {} }
+            assertTrue(!file.exists())
+            server.takeRequest()
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location","https://other.example/file.apk"))
+            assertFailsWith<ApiError> { session.api.downloadAndroidRelease(release,file) {} }
+            server.takeRequest(); assertTrue(!file.exists())
+            assertEquals(3,server.requestCount)
+        } finally { file.delete() }
+    }
+
+    @Test
     fun `assistant profile and atomic preset use the shared wire contract`() = runBlocking {
         server.enqueue(ok("""{"clientProfile":{"mode":"assistant","appTitle":"合规调查","defaultAgent":"agy","defaultPermissionMode":"always-proceed","defaultDirectory":"/cases","hideExecutionDetails":true,"modelPresets":[{"id":"deep","label":"深度","model":"neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"document","title":"单据审核","prompt":"审核资料"}]}}"""))
         val profile = session.api.getHubSettings().clientProfile!!

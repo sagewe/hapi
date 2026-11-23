@@ -64,6 +64,7 @@ import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -530,6 +531,37 @@ class HapiApi internal constructor(
      * `POST /api/machines/:id/spawn`. The response discriminates on `type`,
      * not HTTP status — a failed spawn is still HTTP 200 with `type: 'error'`.
      */
+    suspend fun getAndroidRelease(): app.hapi.protocol.wire.AndroidRelease =
+        request("GET", url("api", "app-updates", "android", "latest").build())
+
+    suspend fun downloadAndroidRelease(release: app.hapi.protocol.wire.AndroidRelease, destination: java.io.File, progress: (Long) -> Unit) {
+        app.hapi.data.update.AndroidUpdatePolicy.validate(release)
+        val temporary = java.io.File(destination.parentFile, destination.name + ".part")
+        try {
+            val request = Request.Builder().url(url("api", "app-updates", "android", "download", release.fileName).build()).build()
+            val downloadClient = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+            downloadClient.newCall(request).await().use { response ->
+                if (!response.isSuccessful) throw ApiError.from(response.code, "更新下载失败")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val body = requireNotNull(response.body)
+                    val length = body.contentLength()
+                    require(length == -1L || length == release.size) { "更新大小不匹配" }
+                    body.byteStream().use { input -> temporary.outputStream().use { output ->
+                        val buffer = ByteArray(65536); var total = 0L
+                        while(true) {
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            val count = input.read(buffer); if(count < 0) break
+                            total += count; require(total <= release.size) { "更新超过声明大小" }
+                            output.write(buffer,0,count); progress(total)
+                        }
+                    } }
+                    app.hapi.data.update.AndroidUpdatePolicy.verify(temporary, release)
+                    check(temporary.renameTo(destination)) { "无法保存更新文件" }
+                }
+            }
+        } catch(e: Exception) { temporary.delete(); destination.delete(); throw e }
+    }
+
     suspend fun getHubSettings(): app.hapi.protocol.wire.HubSettingsResponse =
         request("GET", url("api", "hub-settings").build())
 

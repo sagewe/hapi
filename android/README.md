@@ -435,3 +435,15 @@ New investigations stage drafts and attachments in private no-backup storage;
 spawn, upload and first send occur only on Send. Retries reuse the session,
 upload paths and message local ID. Incoming Android shares go to this workbench.
 Release signing uses an external keystore; no credentials belong in this tree.
+
+The compliance app is **琪琪工作**, version code 2 by default (override with
+`-PhapiVersionCode` for later releases or isolated upgrade fixtures). Only this
+build declares `REQUEST_INSTALL_PACKAGES` and an isolated update FileProvider.
+It checks the active hub's authenticated `/api/app-updates/android/latest` on
+foreground entry and offers updates quietly; Settings exposes manual checking.
+Downloads stay on the authenticated hub origin, reject redirects and invalid
+paths, enforce declared size and SHA-256, and check the APK package/version and
+installed signing identity before passing a private URI to Android's installer.
+The first upgrade from the original version 1 needs a manually installed APK:
+that original binary has no updater. Updater-enabled version-1 fixtures are for
+upgrade-path verification only and must not be published as real releases.

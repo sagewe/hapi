@@ -75,14 +75,14 @@ android {
 
     defaultConfig {
         applicationId = if (complianceBuild) "com.sagewe.hapi.compliance" else "run.hapi.companion"
-        manifestPlaceholders["appLabel"] = if (complianceBuild) "合规调查" else "@string/app_name"
+        manifestPlaceholders["appLabel"] = if (complianceBuild) "琪琪工作" else "@string/app_name"
         manifestPlaceholders["appIcon"] = if (complianceBuild) "@mipmap/ic_compliance" else "@mipmap/ic_launcher"
         buildConfigField("boolean", "COMPLIANCE", complianceBuild.toString())
         minSdk = 26
         targetSdk = 36
         versionCode = providers.gradleProperty("hapiVersionCode").map { value ->
             value.toInt().also { require(it > 0) { "hapiVersionCode must be positive" } }
-        }.orElse(1).get()
+        }.orElse(if (complianceBuild) 2 else 1).get()
         // Tracks the hapi CLI/hub release train.
         versionName = providers.gradleProperty("hapiVersionName").orElse("0.34.3").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

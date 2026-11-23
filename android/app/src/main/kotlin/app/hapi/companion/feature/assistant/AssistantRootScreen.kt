@@ -132,7 +132,8 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
             }
         }) { padding ->
             Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) {
-                Text(profile.appTitle ?: "合规调查", style = MaterialTheme.typography.headlineMedium)
+                app.hapi.companion.feature.updates.AndroidUpdateHint(hub)
+                Text(profile.appTitle ?: "琪琪工作", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(28.dp))
                 sceneTitles.chunked(2).forEachIndexed { row, titles ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { titles.forEachIndexed { col, title -> val i = row * 2 + col

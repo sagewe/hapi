@@ -389,3 +389,17 @@ The web UI can be hosted separately from the hub (for example on GitHub Pages or
 3. Open the static site, click the Hub button on the login screen, and enter the hapi hub origin.
 
 Leaving the hub override empty preserves the default same-origin behavior when the hub serves the web assets directly.
+
+### Self-hosted Android releases
+
+Authenticated clients can read `GET /api/app-updates/android/latest` and
+`GET /api/app-updates/android/download/:filename`. Files live only in
+`HAPI_HOME/android-releases/`; a missing publication returns 404 without creating
+anything. Both endpoints remain behind the ordinary JWT middleware. There is no
+anonymous download route or remote publishing endpoint.
+
+Publish the immutable, signed APK first, then atomically replace `latest.json`.
+The manifest contains `packageName`, integer `versionCode`, `versionName`,
+`fileName`, lowercase `sha256`, byte `size`, `releaseNotes`, ISO `publishedAt`, and
+`downloadPath` equal to `/api/app-updates/android/download/<fileName>`.
+Downloads accept only ASCII APK basenames without `..`, and reject symlinks.

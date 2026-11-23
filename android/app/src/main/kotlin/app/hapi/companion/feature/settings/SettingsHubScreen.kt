@@ -81,6 +81,10 @@ internal fun SettingsHubContent(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
+            if (app.hapi.companion.BuildConfig.COMPLIANCE) {
+                val updateHub by app.hapi.companion.di.LocalAppGraph.current.activeHubGraph.collectAsState()
+                updateHub?.let { app.hapi.companion.feature.updates.AndroidUpdateSection(it) }
+            }
             if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
                 val graph = app.hapi.companion.di.LocalAppGraph.current
                 val hubs by graph.hubRegistry.state.collectAsState()
