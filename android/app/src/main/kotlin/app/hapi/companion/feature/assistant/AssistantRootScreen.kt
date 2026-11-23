@@ -37,7 +37,7 @@ import java.util.UUID
 
 @Serializable private data class Draft(val text: String = "", val scene: String? = null, val preset: String? = null, val session: String? = null, val localId: String = UUID.randomUUID().toString(), val files: List<DraftFile> = emptyList())
 @Serializable private data class DraftFile(val id: String, val filename: String, val mime: String, val size: Long, val path: String? = null)
-private val colors = listOf(Color(0xFF3478BD), Color(0xFF8B5FC1), Color(0xFF238B80), Color(0xFFC48132))
+internal val assistantSceneColors = listOf(Color(0xFF3478BD), Color(0xFF8B5FC1), Color(0xFF238B80), Color(0xFFC48132))
 private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "制裁筛查")
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -113,19 +113,7 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
         }
     }
     ModalNavigationDrawer(drawerState = drawer, drawerContent = {
-        ModalDrawerSheet(Modifier.fillMaxWidth(.88f)) {
-            Text("历史调查", Modifier.padding(20.dp), style = MaterialTheme.typography.titleLarge)
-            OutlinedTextField(search, { search = it }, placeholder = { Text("搜索调查") }, modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth())
-            FilterChip(archived, { archived = !archived }, { Text("已归档") }, Modifier.padding(horizontal = 16.dp))
-            Row(Modifier.padding(horizontal = 16.dp).horizontalScroll(rememberScrollState())) { sessions.flatMap { it.metadata?.tags.orEmpty() }.distinct().take(4).forEach { value -> FilterChip(tag == value, { tag = if(tag == value) null else value }, { Text(value.removePrefix("#")) }) } }
-            LazyColumn(Modifier.weight(1f)) {
-                items(sessions.filter { it.hasConversationContent && (if (archived) it.metadata?.lifecycleState == "archived" else it.metadata?.lifecycleState != "archived") && (tag == null || tag in it.metadata?.tags.orEmpty()) && (it.metadata?.name ?: "").contains(search, true) }.sortedByDescending { it.updatedAt }, key = { it.id }) { session ->
-                    ListItem(headlineContent = { Text(session.metadata?.name ?: "调查") }, supportingContent = { if (session.thinking) Text("调查中…") else if (session.pendingRequestsCount > 0) Text("等待回复") }, leadingContent = { Icon(Icons.Default.Policy, null, tint = colors[0]) }, modifier = Modifier.clickable { scope.launch { drawer.close() }; onOpenSession(session.id) })
-                    HorizontalDivider(Modifier.padding(start = 56.dp), thickness = .5.dp)
-                }
-            }
-            TextButton(onSettings, Modifier.fillMaxWidth().navigationBarsPadding()) { Icon(Icons.Default.Settings, null); Spacer(Modifier.width(8.dp)); Text("设置") }
-        }
+        AssistantHistoryDrawer(hub, { id -> scope.launch { drawer.close() }; onOpenSession(id) }, onSettings)
     }) {
         Scaffold(topBar = { TopAppBar(title = { Text("新调查", style = MaterialTheme.typography.titleLarge) }, navigationIcon = { IconButton({ scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu, "历史调查") } }, actions = { IconButton({ if (!busy) save(Draft(preset = preset?.id)) }) { Icon(Icons.Default.Add, "新建调查") } }) }, bottomBar = {
             Surface(shape = RoundedCornerShape(20.dp), border = BorderStroke(.5.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.padding(12.dp).navigationBarsPadding().imePadding()) {
@@ -148,8 +136,8 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
                 Spacer(Modifier.height(28.dp))
                 sceneTitles.chunked(2).forEachIndexed { row, titles ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { titles.forEachIndexed { col, title -> val i = row * 2 + col
-                        Surface(onClick = { save(draft.copy(scene = if (draft.scene == title) null else title)); if (i == 2) picker = true }, shape = RoundedCornerShape(16.dp), border = BorderStroke(.5.dp, if(draft.scene == title) colors[i] else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.weight(1f)) {
-                            Column(Modifier.padding(16.dp)) { Surface(color = colors[i].copy(alpha = .12f), shape = RoundedCornerShape(8.dp), modifier = Modifier.size(32.dp)) { Icon(listOf(Icons.Default.Business, Icons.Default.PersonSearch, Icons.Default.Description, Icons.Default.Policy)[i], null, tint = colors[i], modifier = Modifier.padding(6.dp)) }; Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleSmall) }
+                        Surface(onClick = { save(draft.copy(scene = if (draft.scene == title) null else title)); if (i == 2) picker = true }, shape = RoundedCornerShape(16.dp), border = BorderStroke(.5.dp, if(draft.scene == title) assistantSceneColors[i] else MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.weight(1f)) {
+                            Column(Modifier.padding(16.dp)) { Surface(color = assistantSceneColors[i].copy(alpha = .12f), shape = RoundedCornerShape(8.dp), modifier = Modifier.size(32.dp)) { Icon(listOf(Icons.Default.Business, Icons.Default.PersonSearch, Icons.Default.Description, Icons.Default.Policy)[i], null, tint = assistantSceneColors[i], modifier = Modifier.padding(6.dp)) }; Spacer(Modifier.height(14.dp)); Text(title, style = MaterialTheme.typography.titleSmall) }
                         }
                     } }; Spacer(Modifier.height(12.dp))
                 }

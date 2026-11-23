@@ -77,7 +77,7 @@ fun ChatBlockCard(
             }
             is AgentReasoningBlock, is CliOutputBlock -> return
             is ToolCallBlock -> { AssistantStage(listOf(block), modifier); return }
-            is ToolGroupBlock -> { AssistantStage(block.tools, modifier); return }
+            is ToolGroupBlock -> { AssistantStage(block.tools, modifier, block.summary); return }
             else -> Unit
         }
     }
@@ -94,16 +94,25 @@ fun ChatBlockCard(
     }
 }
 
-@Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier) {
-    if (tools.isEmpty()) return
-    val running = tools.any { it.tool.state == "running" || it.tool.state == "pending" }
-    val names = tools.joinToString { it.tool.name + " " + it.tool.input.toString() }.lowercase()
+@Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier, summary: app.hapi.protocol.chat.ToolGroupSummary? = null) {
+    assistantStageText(tools, summary)?.let {
+        androidx.compose.material3.Text(it, modifier, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Compact groups can omit their retained tool objects; summary remains authoritative. */
+internal fun assistantStageText(tools: List<ToolCallBlock>, summary: app.hapi.protocol.chat.ToolGroupSummary? = null): String? {
+    val total = summary?.totalTools ?: tools.size
+    if (total == 0) return null
+    val running = (summary?.runningCount ?: 0) + (summary?.pendingCount ?: 0) > 0 || tools.any { it.tool.state == "running" || it.tool.state == "pending" }
+    val names = (tools.joinToString { it.tool.name + " " + it.tool.input.toString() } + summary?.commandTargets.orEmpty().joinToString() + summary?.fileTargets.orEmpty().joinToString()).lowercase()
+    val kinds = summary?.countsByKind.orEmpty()
     val phase = when {
         "pdf" in names || "render" in names -> "正在排版调查报告"
-        "search" in names -> "正在检索公开线索"
-        "web" in names || "fetch" in names || "browse" in names -> "正在核验官网与公开来源"
-        "read" in names || "parse" in names -> "正在解析资料与单据"
+        "search" in names || (kinds[app.hapi.protocol.chat.ToolGroupActionKind.SEARCH] ?: 0) > 0 -> "正在检索公开线索"
+        "web" in names || "fetch" in names || "browse" in names || (kinds[app.hapi.protocol.chat.ToolGroupActionKind.WEB] ?: 0) > 0 -> "正在核验官网与公开来源"
+        "read" in names || "parse" in names || (kinds[app.hapi.protocol.chat.ToolGroupActionKind.READ] ?: 0) > 0 -> "正在解析资料与单据"
         else -> "正在整理调查证据"
     }
-    androidx.compose.material3.Text(if (running) phase + "…" else "已完成 ${tools.size} 项调查步骤", modifier, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+    return if (running) phase + "…" else "已完成 $total 项调查步骤"
 }
