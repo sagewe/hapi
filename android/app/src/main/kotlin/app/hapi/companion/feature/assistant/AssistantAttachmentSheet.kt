@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 @Composable fun AssistantAttachmentSheet(onDismiss: () -> Unit,onCamera: () -> Unit,onPhotos: () -> Unit,onPdf: () -> Unit) {
     ModalBottomSheet(onDismiss) {
         Column(Modifier.padding(horizontal=16.dp).padding(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf(Triple("拍照拍摄单据",Icons.Default.PhotoCamera,onCamera),Triple("从相册选择图片",Icons.Default.PhotoLibrary,onPhotos),Triple("选择 PDF 文档",Icons.Default.PictureAsPdf,onPdf)).forEachIndexed { i, item ->
+            listOf(Triple("拍照拍摄单据",Icons.Default.PhotoCamera,onCamera),Triple("从相册选择图片",Icons.Default.PhotoLibrary,onPhotos),Triple("选择文件（PDF / ZIP / Office）",Icons.Default.PictureAsPdf,onPdf)).forEachIndexed { i, item ->
                 val tint = assistantSceneColors[listOf(2,0,1)[i]]
                 Surface(onClick={onDismiss();item.third()},shape=RoundedCornerShape(14.dp),color=assistantPaper()) {
                     Row(Modifier.fillMaxWidth().padding(14.dp),verticalAlignment=Alignment.CenterVertically) {

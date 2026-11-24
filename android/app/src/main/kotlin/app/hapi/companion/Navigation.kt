@@ -10,6 +10,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
@@ -186,6 +187,7 @@ fun HapiNavigation() {
     val profileReady by (activeHubGraph?.profileReady ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsState()
     val shares by graph.shareInbox.batches.collectAsState()
     val pendingShare = shares.firstOrNull()
+    var assistantShareGuard by remember { mutableStateOf<String?>(null) }
     val assistantShareRouted = remember { mutableSetOf<String>() }
     val shareIntakeFailed by graph.shareIntakeFailed.collectAsState()
     val currentEntry by navController.currentBackStackEntryAsState()
@@ -264,7 +266,10 @@ fun HapiNavigation() {
         }
         if (!profileReady) return@LaunchedEffect
         if (profile?.mode == "assistant") {
-            if (assistantShareRouted.add(hubUrl + share.id) && currentEntry?.destination?.route != Routes.HOME) navController.navigateClearingBackStack(Routes.HOME)
+            if (share.target != null) return@LaunchedEffect
+            if(app.hapi.companion.feature.assistant.incomingCaseRoute(currentEntry?.arguments?.getString("sessionId")) == app.hapi.companion.feature.assistant.IncomingCaseRoute.AskCurrentCase) {
+                assistantShareGuard=share.id
+            } else if (assistantShareRouted.add(hubUrl + share.id) && currentEntry?.destination?.route != Routes.HOME) navController.navigateClearingBackStack(Routes.HOME)
             return@LaunchedEffect
         }
         val target = share.target
@@ -328,6 +333,14 @@ fun HapiNavigation() {
         )
     }
 
+    if(pendingShare != null && assistantShareGuard != null && pendingShare.id == assistantShareGuard && profile?.mode == "assistant") {
+        app.hapi.companion.feature.assistant.IncomingCaseGuard(
+            count=pendingShare.files.size,
+            newCase={assistantShareGuard=null;navController.navigateClearingBackStack(Routes.HOME)},
+            currentCase={ val id=currentEntry?.arguments?.getString("sessionId");val hub=activeHubGraph
+                if(id!=null && hub!=null) navigationScope.launch { graph.shareInbox.setTarget(pendingShare.id,ShareTarget(hub.hubUrl,id));assistantShareGuard=null }
+            },dismiss={assistantShareGuard=null;navigationScope.launch { graph.shareInbox.discard(pendingShare.id) }})
+    }
     val actualContext=LocalContext.current
     val currentConfiguration=androidx.compose.ui.platform.LocalConfiguration.current
     val assistantContext=remember(actualContext,currentConfiguration) {

@@ -98,7 +98,7 @@ internal fun recordingDuration(seconds: Long) = "%02d:%02d".format(seconds / 60,
                         Surface(onClick = { if(item.status != null) onRetry(item.id) }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = .65f)) {
                             Row(Modifier.padding(6.dp).widthIn(max = 190.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if(item.thumbnail != null) AsyncImage(model = item.thumbnail, contentDescription = "图片附件", contentScale = ContentScale.Crop, modifier = Modifier.size(36.dp))
-                                else Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFFBB4C68).copy(alpha=.12f)) { Icon(Icons.Default.PictureAsPdf,null,Modifier.padding(8.dp).size(20.dp),tint = Color(0xFFBB4C68)) }
+                                else FormatBadge(item.filename,item.mime)
                                 Column(Modifier.padding(horizontal = 8.dp).weight(1f,fill = false)) { Text(item.filename,maxLines = 1,overflow = TextOverflow.Ellipsis,style = MaterialTheme.typography.labelMedium); item.status?.let { Text(it,style=MaterialTheme.typography.labelSmall) } }
                                 IconButton({ onRemove(item.id) },Modifier.size(28.dp), enabled = !busy) { Icon(Icons.Default.Close,"移除附件",Modifier.size(16.dp)) }
                             }

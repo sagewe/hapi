@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable fun DeliveryCard(block: GeneratedImageBlock, modifier: Modifier = Modifier) {
+    val caseAccess = LocalCaseFiles.current
     val context = LocalContext.current
     val media = LocalChatMedia.current
     val scope = rememberCoroutineScope()
@@ -61,6 +62,7 @@ import java.io.File
                 FilledTonalButton({open(false)},enabled=!busy,modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=10.dp,vertical=10.dp)) {Icon(Icons.Default.Visibility,null,Modifier.size(17.dp));Spacer(Modifier.width(6.dp));Text(if(pdf) "预览报告" else "查看证据包",maxLines=1)}
                 OutlinedButton({open(true)},enabled=!busy,modifier=Modifier.weight(1f),contentPadding=PaddingValues(horizontal=10.dp,vertical=10.dp)) {Icon(Icons.Default.Share,null,Modifier.size(17.dp));Spacer(Modifier.width(6.dp));Text("转发微信",maxLines=1)}
             }
+            if(pdf && caseAccess.files.count { it.id != block.imageId } > 0) TextButton(caseAccess.open,modifier=Modifier.fillMaxWidth()) { Text("附 ${caseAccess.files.count { it.id != block.imageId }} 项核验图与资料 · 查看 ›",style=MaterialTheme.typography.labelMedium) }
             error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
         }
     }

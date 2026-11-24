@@ -148,5 +148,5 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
     if(picker) AssistantAttachmentSheet({picker=false},
         {if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) takePhoto() else cameraPermission.launch(Manifest.permission.CAMERA)},
         {photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))},
-        {documents.launch(arrayOf("application/pdf"))})
+        {documents.launch(arrayOf("*/*"))})
 }

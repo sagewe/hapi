@@ -684,6 +684,31 @@ class HapiApi internal constructor(
         )
     }
 
+    suspend fun getCaseFiles(sessionId: String): app.hapi.protocol.wire.CaseFilesResponse =
+        request("GET", url("api", "sessions", sessionId, "case-files").build())
+
+    suspend fun getCaseFile(sessionId: String, file: app.hapi.protocol.wire.CaseFile): GeneratedImage {
+        require(file.category == "uploads" || file.category == "deliverables")
+        val category = if (file.isUpload) "uploads" else "generated-images"
+        val target = url("api", "sessions", sessionId, category, file.id).build()
+        return imageClient.newCall(Request.Builder().url(target).build()).await().use { response ->
+            if (!response.isSuccessful) throw ApiError.from(response.code, response.body?.string().orEmpty())
+            val body = requireNotNull(response.body)
+            require(body.contentLength() <= 50L * 1024 * 1024) { "文件超过 50 MB" }
+            val bytes = body.byteStream().use { input ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while(true) { val count=input.read(buffer); if(count < 0) break
+                    require(output.size().toLong() + count <= 50L * 1024 * 1024) { "文件超过 50 MB" }
+                    output.write(buffer,0,count)
+                }
+                output.toByteArray()
+            }
+            require(bytes.size <= 50 * 1024 * 1024) { "文件超过 50 MB" }
+            GeneratedImage(bytes, response.header("Content-Type"))
+        }
+    }
+
     // ------------------------------------------------------------- images --
 
     /**

@@ -436,7 +436,7 @@ spawn, upload and first send occur only on Send. Retries reuse the session,
 upload paths and message local ID. Incoming Android shares go to this workbench.
 Release signing uses an external keystore; no credentials belong in this tree.
 
-The compliance app is **琪琪工作**, version code 3 by default (override with
+The compliance app is **琪琪工作**, version code 4 by default (override with
 `-PhapiVersionCode` for later releases or isolated upgrade fixtures). Only this
 build declares `REQUEST_INSTALL_PACKAGES` and an isolated update FileProvider.
 It checks the active hub's authenticated `/api/app-updates/android/latest` on
@@ -455,3 +455,16 @@ vector preset switch and recording timer controls. History retains tags through
 full-session patches and groups by local calendar date. Exports run the same
 normalizer/reducer as chat and share readable Markdown, excluding raw tools and
 reasoning. Developer mode keeps its existing composer and reading margins.
+
+Assistant case files use the authenticated persistent `/case-files` index and
+origin-bound generated/upload downloads. The bottom capsule opens a tall sheet
+and hides while the IME or pending attachments occupy the composer. Permanent
+selection circles separate preview from selection; the footer saves through
+MediaStore Downloads on API 29+ without storage permissions. Multiple images
+share as `image/*`; multiple documents or mixed selections are packaged into a
+case-named ZIP for Android WeChat. ZIP browsing stays inside the sheet, validates
+the central directory before extraction, rejects encryption, traversal, links,
+unsupported methods and expansion limits, then verifies member size and CRC.
+Incoming file shares in an existing investigation ask whether to create a new
+investigation or append to the current one before importing. Blank workbenches
+retain the existing local draft and lazy session creation behavior.

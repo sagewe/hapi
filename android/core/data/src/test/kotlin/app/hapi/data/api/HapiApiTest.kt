@@ -60,6 +60,16 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `case index and uploads stay authenticated on this origin`() = runBlocking {
+        server.enqueue(ok("""{"files":[{"id":"f","category":"uploads","fileName":"单据.zip","mimeType":"application/zip","size":3,"createdAt":1,"downloadPath":"https://evil.example/steal"}]}"""))
+        val file=session.api.getCaseFiles("case1").files.single()
+        val index=server.takeRequest(); assertEquals("/api/sessions/case1/case-files",index.path); assertEquals("Bearer $jwt",index.getHeader("Authorization"))
+        server.enqueue(MockResponse().setBody("zip").setHeader("Content-Type","application/zip"))
+        assertEquals("zip",session.api.getCaseFile("case1",file).bytes.toString(Charsets.UTF_8))
+        val download=server.takeRequest(); assertEquals("/api/sessions/case1/uploads/f",download.path);assertEquals("Bearer $jwt",download.getHeader("Authorization"))
+    }
+
+    @Test
     fun `update downloads are authenticated streamed and checksum gated`() = runBlocking {
         val bytes = "apk".toByteArray()
         val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }

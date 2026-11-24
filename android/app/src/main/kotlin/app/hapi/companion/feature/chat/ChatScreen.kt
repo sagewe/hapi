@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -289,10 +290,21 @@ internal fun ChatScreen(
     }
 
     val assistantProfile = app.hapi.companion.di.LocalClientProfile.current?.takeIf { it.mode == "assistant" }
+    val caseHub = if (assistantProfile != null) app.hapi.companion.di.LocalAppGraph.current.activeHubGraph.collectAsState().value else null
+    var caseFiles by remember(viewModel.sessionId) { mutableStateOf(emptyList<app.hapi.protocol.wire.CaseFile>()) }
+    var casePanel by remember(viewModel.sessionId) { mutableStateOf(false) }
+    LaunchedEffect(caseHub, assistantProfile, foreground, state.blocks.size, casePanel, attachmentItems.isEmpty()) {
+        if(assistantProfile != null && foreground && caseHub != null) {
+            runCatching { caseHub.session.api.getCaseFiles(viewModel.sessionId).files }.onSuccess { caseFiles=it }
+        }
+    }
+    val keyboardOpen = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    if(casePanel && caseHub != null) app.hapi.companion.feature.assistant.CaseFilesPanel(caseHub.session.api,viewModel.sessionId,state.header.title,caseFiles,{casePanel=false})
     val assistantNavigation = app.hapi.companion.feature.assistant.AssistantNavigation.current
     val assistantDrawer = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     val assistantScope = rememberCoroutineScope()
     app.hapi.companion.feature.assistant.AssistantConversationShell(assistantDrawer) {
+    CompositionLocalProvider(app.hapi.companion.feature.assistant.LocalCaseFiles provides app.hapi.companion.feature.assistant.CaseFilesAccess(caseFiles,{casePanel=true})) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -365,6 +377,11 @@ internal fun ChatScreen(
                         config = configState,
                         onClick = { configSheetOpen = true },
                     )
+                    androidx.compose.animation.AnimatedVisibility(assistantProfile != null && caseFiles.isNotEmpty() && !keyboardOpen && attachmentItems.isEmpty()) {
+                        Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center) {
+                            app.hapi.companion.feature.assistant.CaseFilesCapsule(caseFiles,{casePanel=true})
+                        }
+                    }
                     ChatComposer(
                         presetControls = {
                             if (assistantProfile != null && state.header.flavor != "codex") {
@@ -437,6 +454,7 @@ internal fun ChatScreen(
         }
     }
 
+    }
     if (attachmentSheetOpen) {
         AttachmentPickerSheet(
             onDismiss = { attachmentSheetOpen = false },
@@ -446,7 +464,7 @@ internal fun ChatScreen(
                 )
             },
             onTakePhoto = onTakePhoto,
-            onPickFiles = { documentPickerLauncher.launch(arrayOf(if(assistantProfile!=null) "application/pdf" else "*/*")) },
+            onPickFiles = { documentPickerLauncher.launch(arrayOf("*/*")) },
         )
     }
     if (configSheetOpen) {
