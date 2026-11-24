@@ -69,7 +69,7 @@ struct AssistantDraftComposer: View {
             #endif
             HStack(spacing: 12) {
                 Button { choices = true } label: { Image(systemName: "plus").font(.system(size: 20)).frame(width: 36, height: 36) }
-                    .accessibilityLabel("添加图片或 PDF").disabled(draft.allocatedSessionID != nil)
+                    .accessibilityLabel("添加图片或文件").disabled(draft.allocatedSessionID != nil)
                 if draft.useCodex { Text("交叉核验").font(.caption).foregroundStyle(.secondary) }
                 else { AssistantPresetCapsule(label: draft.preset?.label ?? "深度") { draft.cyclePreset() } }
                 Spacer(minLength: 4)
@@ -88,10 +88,10 @@ struct AssistantDraftComposer: View {
         .disabled(draft.sending)
         .confirmationDialog("添加资料", isPresented: $choices) {
             #if !targetEnvironment(macCatalyst)
-            Button("拍照") { if CameraCaptureView.isAvailable { camera = true } else { draft.error = "当前设备无法使用相机，请选择图片或 PDF" } }
+            Button("拍照") { if CameraCaptureView.isAvailable { camera = true } else { draft.error = "当前设备无法使用相机，请选择图片或文件" } }
             #endif
             Button("相册图片") { photos = true }
-            Button("选择 PDF 文件") { filePicker = true }
+            Button("选择文件（PDF / ZIP / Office）") { filePicker = true }
         }
         .photosPicker(isPresented: $photos, selection: $pickedPhotos, matching: .images)
         .onChange(of: pickedPhotos) { _, values in
@@ -108,7 +108,7 @@ struct AssistantDraftComposer: View {
                 pickedPhotos = []; focused = true
             }
         }
-        .fileImporter(isPresented: $filePicker, allowedContentTypes: [.pdf, .image], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $filePicker, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
                 draft.pendingImports += 1
                 Task { defer { draft.pendingImports -= 1 }; for url in urls { draft.add(await AttachmentPreparer.prepare(fileURL: url)) }; focused = true }
@@ -164,7 +164,7 @@ private struct AssistantLocalFileChip: View {
         HStack(spacing: 8) {
             if let bytes = file.previewBytes, let image = UIImage(data: bytes) {
                 Image(uiImage: image).resizable().scaledToFill().frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 7))
-            } else { Image(systemName: file.mimeType.hasPrefix("image/") ? "photo" : "doc.fill").foregroundStyle(.teal) }
+            } else { FileTypeBadge(name: file.filename) }
             Text(file.filename).font(.caption).lineLimit(1)
             Button(action: remove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
         }.padding(8).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))

@@ -42,7 +42,10 @@ struct GeneratedMediaPlaybackHost: ViewModifier {
             }) { request in
                 GeneratedMediaPlaybackView(request: request)
             }
-            .onChange(of: model.toolInspection.invalidation) { playback = nil }
+            .onChange(of: model.toolInspection.invalidation) {
+                playback?.player.pause()
+                playback = nil
+            }
     }
 }
 

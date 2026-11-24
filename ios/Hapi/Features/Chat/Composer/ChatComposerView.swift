@@ -2274,6 +2274,7 @@ private struct ScheduleTimeSheet: View {
 }
 
 struct ComposerAttachmentChipView: View {
+    @Environment(\.isAssistantMode) private var assistant
     let attachment: ComposerAttachmentUI
     let onRetry: () -> Void
     let onRemove: () -> Void
@@ -2392,9 +2393,8 @@ struct ComposerAttachmentChipView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(.fill.secondary)
                     .frame(width: 36, height: 36)
-                Image(systemName: attachment.mimeType.hasPrefix("image/") ? "photo" : "doc")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                if assistant { FileTypeBadge(name: attachment.filename) }
+                else { Image(systemName: attachment.mimeType.hasPrefix("image/") ? "photo" : "doc").font(.footnote).foregroundStyle(.secondary) }
             }
             if attachment.status == .uploading && attachment.uploadProgress == nil {
                 ProgressView()

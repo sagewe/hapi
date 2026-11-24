@@ -72,6 +72,7 @@ struct TranscriptRow: Identifiable, Equatable {
 }
 
 struct ChatTranscriptView: View {
+    @Environment(\.caseFileAccess) private var caseFileAccess
     @Environment(\.scenePhase) private var scenePhase
     let model: ChatModel
     var onOpenJumpSheet: (() -> Void)? = nil
@@ -132,7 +133,7 @@ struct ChatTranscriptView: View {
             jumpToken: model.jumpToLatestToken,
             scrollTarget: model.scrollTarget,
             geometryCache: model.geometryCache,
-            contentRevision: basePath ?? "",
+            contentRevision: caseFileAccess.map { "\(basePath ?? "")|case-files:\($0.count)" } ?? (basePath ?? ""),
             historyControlID: TranscriptRow.historyID,
             isInspectionPresented: model.isInspectingContent,
             onViewport: { viewport in
@@ -154,7 +155,7 @@ struct ChatTranscriptView: View {
             spacingBefore: { previous, row in row.spacing(after: previous) }
         ) { row in
             // The list bridges the current environment into its hosting roots.
-            AnyView(rowView(row, basePath: basePath).environment(\.executionDetailsHidden, model.hidesExecutionDetails))
+            AnyView(rowView(row, basePath: basePath).environment(\.executionDetailsHidden, model.hidesExecutionDetails).environment(\.caseFileAccess, caseFileAccess))
         }
         .overlay(alignment: .trailing) {
             if !model.isAssistantMode {
@@ -162,7 +163,7 @@ struct ChatTranscriptView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            JumpToLatestOverlay(model: model)
+            if !model.isAssistantMode { JumpToLatestOverlay(model: model) }
         }
     }
 

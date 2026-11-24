@@ -15,9 +15,9 @@ struct AssistantRootView: View {
     @State private var attachmentRequest = false
     @State private var focusRequest = false
     @State private var editing = false
-    init(session: HubSession, initialScene: AssistantScene? = nil, historyOpen: Bool = false) {
+    init(session: HubSession, initialScene: AssistantScene? = nil, historyOpen: Bool = false, initialDraft: AssistantWorkbenchModel? = nil) {
         self.session = session
-        let initial = AssistantWorkbenchModel(session: session)
+        let initial = initialDraft ?? AssistantWorkbenchModel(session: session)
         initial.scene = initialScene
         _draft = State(initialValue: initial)
         _drawerOpen = State(initialValue: historyOpen)
@@ -66,6 +66,27 @@ struct AssistantRootView: View {
                         drag = 0
                     }
                 })
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !app.pendingIncomingFiles.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("收到分享的 \(app.pendingIncomingFiles.count) 份资料").font(.subheadline.weight(.semibold))
+                    Text(app.pendingIncomingFiles.map(\.filename).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    HStack {
+                        Button("新建尽调送审") {
+                            let files = app.pendingIncomingFiles; newInvestigation(false)
+                            for file in files { draft.add(.ready(file)) }; app.pendingIncomingFiles = []
+                        }.buttonStyle(.borderedProminent)
+                        if selectedID != nil {
+                            Button("补传到当前案") {
+                                NotificationCenter.default.post(name: .assistantImportFiles, object: app.pendingIncomingFiles)
+                                app.pendingIncomingFiles = []
+                            }.buttonStyle(.bordered)
+                        }
+                        Button("取消") { app.pendingIncomingFiles = [] }.font(.caption)
+                    }
+                }.padding(16).assistantSurface().padding(16)
+            }
         }
         .environment(\.isAssistantMode, true)
         .task { await history.refresh() }

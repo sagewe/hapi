@@ -260,6 +260,30 @@ Source: `hub/src/web/routes/git.ts` (same file).
 
 The image id is an immutable content fingerprint, so it doubles as the ETag: send `If-None-Match` and the hub answers `304` *without* the CLI round-trip. Cache aggressively (iOS: URLCache honors this automatically; Android: OkHttp cache).
 
+### Persistent case files
+
+Generated media is cached under `<HAPI_HOME>/session-media/<sessionId>/generated/`
+on the first successful read and proactively when a generated-media message
+arrives from the CLI. Completed uploads are retained under the session's
+`uploads/`. Directories are 0700, payloads and atomic JSON manifests are 0600.
+Reads continue after CLI/Hub restart and archive; originals retain uploaded
+bytes. Files already lost before this feature cannot be reconstructed.
+
+| Method & path | Response |
+|---|---|
+| `GET /api/sessions/:id/case-files` | `{files: [...]}`; empty array when nothing has been retained |
+| `GET /api/sessions/:id/uploads/:attachmentId` | Authenticated raw original bytes; 404 when absent |
+
+Each index entry has `id`, `category` (`deliverables` or `uploads`), `fileName`,
+`mimeType`, `size` in bytes, `createdAt` in epoch milliseconds and a relative
+`downloadPath`. Upload ids are opaque; never use a Runner filesystem path as a
+Hub download URL. Both routes require a Bearer JWT and the existing session
+namespace ownership check, but no active CLI. A matching id from another
+session does not grant access. Uploads reject separators/control characters in
+filenames and files over 50 MiB; no client-provided path is opened. Deleting a
+pending upload also removes its retained Hub copy. Persistence failure does
+not report a successful upload completion.
+
 ### Uploads (message attachments)
 
 Source: `hub/src/web/routes/sessions.ts` (`UploadFileRequestSchema`).

@@ -17,6 +17,9 @@ struct ChatView: View {
     @Environment(\.hapiTheme) private var theme
     @State private var model: ChatModel
     /// Adaptive session settings (toolbar gear).
+    @State private var caseFiles: CaseFilesModel
+    @State private var caseFilesOpen = false
+    @State private var keyboardVisible = false
     @State private var configOpen = false
     /// Files browser push (toolbar folder, A-M4a).
     @State private var filesOpen = false
@@ -98,6 +101,7 @@ struct ChatView: View {
         onAssistantNew: ((Bool) -> Void)? = nil
     ) {
         _model = State(initialValue: model)
+        _caseFiles = State(initialValue: CaseFilesModel(api: session.api, sessionId: model.sessionId))
         self.session = session
         self.sessionId = model.sessionId
         self.onNavigateToSession = onNavigateToSession
@@ -147,6 +151,9 @@ struct ChatView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if session.isAssistantMode && !keyboardVisible && model.interactor.attachments.items.isEmpty && (!caseFiles.files.isEmpty || model.showsJumpToLatest) {
+                    assistantCaseBar.padding(.top, 8).padding(.bottom, 8).transition(.opacity)
+                }
                 QueuedMessagesBarView(interactor: model.interactor)
                 #if targetEnvironment(macCatalyst)
                 ChatComposerView(
@@ -210,6 +217,22 @@ struct ChatView: View {
             if !session.isAssistantMode {
                 ToolbarItem(placement: .topBarTrailing) { moreActionsMenu }
             }
+        }
+        .animation(session.isAssistantMode ? .easeInOut(duration: 0.16) : nil, value: keyboardVisible)
+        .animation(session.isAssistantMode ? .easeInOut(duration: 0.16) : nil, value: model.interactor.attachments.items.count)
+        .environment(\.caseFileAccess, session.isAssistantMode ? CaseFileAccess(count: caseFiles.files.count, mainReportID: caseFiles.report?.id, open: { caseFilesOpen = true }) : nil)
+        .sheet(isPresented: $caseFilesOpen) { CaseFilesView(model: caseFiles, title: model.header.title) }
+        .task(id: model.blocks.count) {
+            guard session.isAssistantMode else { return }
+            await caseFiles.refresh()
+            try? await Task.sleep(for: .seconds(1))
+            if !Task.isCancelled { await caseFiles.refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
+        .onReceive(NotificationCenter.default.publisher(for: .assistantImportFiles)) { notification in
+            guard session.isAssistantMode, let files = notification.object as? [PreparedAttachment] else { return }
+            for file in files { model.interactor.attachments.add(file) }
         }
         .sheet(isPresented: $configOpen) {
             SessionConfigView(
@@ -451,6 +474,34 @@ struct ChatView: View {
         }
     }
     #endif
+
+    private var assistantCaseBar: some View {
+        ZStack {
+            if !caseFiles.files.isEmpty {
+                Button { caseFilesOpen = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder.fill").foregroundStyle(.orange)
+                        Text("本案资料 · \(caseFiles.files.count)")
+                        if caseFiles.files.contains(where: { !$0.isUpload && $0.isPDF }) { Text("含报告").foregroundStyle(.secondary) }
+                        Image(systemName: "chevron.up").font(.caption2.weight(.semibold))
+                    }.font(.subheadline.weight(.medium)).padding(.horizontal, 16).frame(minHeight: 40)
+                        .background(AssistantDesign.surface, in: Capsule()).overlay(Capsule().stroke(Color.blue.opacity(0.7), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
+                }.buttonStyle(.plain)
+                    .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < -12 { caseFilesOpen = true } })
+                    .accessibilityIdentifier("assistant.case-capsule").accessibilityHint("轻点或向上轻挑查看本案资料")
+            }
+            if model.showsJumpToLatest {
+                HStack {
+                    Spacer()
+                    Button(action: model.jumpToLatest) {
+                        Image(systemName: "arrow.down").font(.subheadline).frame(width: 36, height: 36)
+                            .background(AssistantDesign.surface, in: Circle()).overlay(Circle().stroke(AssistantDesign.border, lineWidth: 0.7))
+                    }.buttonStyle(.plain).accessibilityLabel("回到最新").padding(.trailing, 16)
+                }
+            }
+        }.frame(maxWidth: .infinity, minHeight: 40)
+    }
 
     private var assistantHeader: some View {
         let summary = session.sessionStore.sessions.first { $0.id == sessionId }

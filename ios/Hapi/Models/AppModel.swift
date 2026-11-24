@@ -168,6 +168,8 @@ final class AppModel {
         pendingOpenSessionId = sessionId
     }
 
+    var pendingIncomingFiles: [PreparedAttachment] = []
+
     // MARK: - Deep links (hapicompanion://bind)
 
     /// Routes a parsed bind link: already-paired hubs just switch (with a

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises'
+import { SessionMediaStore, uploadMediaId, validUploadName } from '../sessionMedia/storage'
 import type { InitChunkedUploadRequest, AgentSessionTagsResult, SessionTagsContext } from '@hapi/protocol/apiTypes'
 /**
  * Sync Engine for HAPI Telegram Bot (Direct Connect)
@@ -273,6 +275,7 @@ export class SyncEngine {
      * Hub owner id for accountable work-graph principals (A2A P1/P3).
      * Defaults to "1" for unit tests; startHub overwrites with getOrCreateOwnerId().
      */
+    private readonly sessionMedia = new SessionMediaStore()
     private hubOwnerUserId: string = '1'
 
     constructor(
@@ -290,6 +293,13 @@ export class SyncEngine {
         })
         this.eventPublisher.subscribe((event) => {
             if (event.type === 'message-received') {
+                const record = unwrapRoleWrappedRecordEnvelope(event.message.content)
+                const payload = record?.content as { type?: string; data?: { type?: string; imageId?: string } } | undefined
+                if (record?.role === 'agent' && payload?.data?.type === 'generated-image' && typeof payload.data.imageId === 'string') {
+                    void this.readGeneratedImage(event.sessionId, payload.data.imageId).catch(error => {
+                        console.error('[session-media] Generated media persistence failed:', error instanceof Error ? error.message : 'unknown error')
+                    })
+                }
                 if (isUserInputMessage(event.message.content)) {
                     this.sessionCache.refreshLastUserMessageAt(event.sessionId)
                     this.recordPromptTitle(event.sessionId, event.message.content)
@@ -4959,7 +4969,13 @@ export class SyncEngine {
     }
 
     async readGeneratedImage(sessionId: string, imageId: string): Promise<RpcGeneratedImageResponse> {
-        return await this.rpcGateway.readGeneratedImage(sessionId, imageId)
+        const cached = await this.sessionMedia.get(sessionId, 'deliverables', imageId)
+        if (cached) return { success: true, content: cached.bytes.toString('base64'), mimeType: cached.file.mimeType, fileName: cached.file.fileName }
+        const result = await this.rpcGateway.readGeneratedImage(sessionId, imageId)
+        if (result.success && result.content) {
+            await this.sessionMedia.put(sessionId, 'deliverables', imageId, result.fileName ?? 'media', result.mimeType ?? 'application/octet-stream', Buffer.from(result.content, 'base64'))
+        }
+        return result
     }
 
     async listDirectory(sessionId: string, path: string): Promise<RpcListDirectoryResponse> {
@@ -4983,15 +4999,25 @@ export class SyncEngine {
     }
 
     async uploadFile(sessionId: string, filename: string, content: string, mimeType: string): Promise<RpcUploadFileResponse> {
-        return await this.rpcGateway.uploadFile(sessionId, filename, content, mimeType)
+        if (!validUploadName(filename)) throw new Error('Invalid upload filename')
+        const bytes = Buffer.from(content, 'base64')
+        if (bytes.length > 50 * 1024 * 1024) throw new Error('File too large')
+        const result = await this.rpcGateway.uploadFile(sessionId, filename, content, mimeType)
+        if (result.success && result.path) await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(result.path), filename, mimeType, bytes)
+        return result
     }
 
     async uploadStagedFile(sessionId: string, metadata: InitChunkedUploadRequest, path: string): Promise<RpcUploadFileResponse> {
-        return await this.rpcGateway.uploadStagedFile(sessionId, metadata, path)
+        if (!validUploadName(metadata.filename)) throw new Error('Invalid upload filename')
+        const result = await this.rpcGateway.uploadStagedFile(sessionId, metadata, path)
+        if (result.success && result.path) await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(result.path), metadata.filename, metadata.mimeType, await readFile(path))
+        return result
     }
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
-        return await this.rpcGateway.deleteUploadFile(sessionId, path)
+        const result = await this.rpcGateway.deleteUploadFile(sessionId, path)
+        if (result.success) await this.sessionMedia.remove(sessionId, 'uploads', uploadMediaId(path))
+        return result
     }
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string, fileSearch?: FileSearchOptions): Promise<RpcCommandResponse> {

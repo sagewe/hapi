@@ -19,6 +19,8 @@ struct HapiApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     model.session?.releaseInactiveCaches()
                 }
+                .onChange(of: AssistantFileInbox.shared.revision, initial: true) { _, _ in importPendingFiles() }
+                .onChange(of: model.session?.isAssistantMode) { _, _ in importPendingFiles() }
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
@@ -36,7 +38,15 @@ struct HapiApp: App {
     /// hub → switch with a notice; a different hub → add-hub confirm.
     ///
     /// Never log the URL itself: the query carries the access token.
+    private func importPendingFiles() {
+        guard model.session?.isAssistantMode == true else { return }
+        model.pendingIncomingFiles.append(contentsOf: AssistantFileInbox.shared.drain())
+    }
     private func handleIncomingURL(_ url: URL) {
+        if url.isFileURL, model.session?.isAssistantMode == true {
+            Task { if case .ready(let file) = await AttachmentPreparer.prepare(fileURL: url) { AssistantFileInbox.shared.receive([file]) } }
+            return
+        }
         guard let link = BindLink.parse(url.absoluteString) else {
             log.warning("Ignoring malformed URL (scheme: \(url.scheme ?? "none", privacy: .public))")
             return

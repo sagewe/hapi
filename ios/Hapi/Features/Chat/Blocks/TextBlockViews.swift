@@ -161,6 +161,7 @@ struct UserTextBlockView: View {
 
 /// Assistant prose: full-width markdown through the shared M2e renderer.
 struct AgentTextBlockView: View {
+    @Environment(\.isAssistantMode) private var assistant
     let block: AgentTextBlock
     var isHighlighted: Bool = false
     @Environment(\.openTextSelection) private var openTextSelection
@@ -172,6 +173,17 @@ struct AgentTextBlockView: View {
         VStack(alignment: .leading, spacing: 4) {
             CachedMarkdownView(markdown: block.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            #if !targetEnvironment(macCatalyst)
+            if assistant {
+                HStack {
+                    Spacer()
+                    Button(copied ? "已复制" : "复制结论", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                        pasteboard.copy(block.text); copied = true
+                        Task { try? await Task.sleep(for: .milliseconds(1500)); copied = false }
+                    }.font(.caption).foregroundStyle(.blue).frame(minHeight: 36).buttonStyle(.plain)
+                }
+            }
+            #endif
             #if targetEnvironment(macCatalyst)
             HStack {
                 Spacer(minLength: 0)

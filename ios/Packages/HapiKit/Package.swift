@@ -16,12 +16,13 @@ var products: [Product] = [
 var dependencies: [Package.Dependency] = []
 
 var targets: [Target] = [
+    .systemLibrary(name: "CZlib"),
     // Pure protocol layer: wire models, chat pipeline, window logic.
     // Must stay Foundation-only so it can be verified against
     // shared/fixtures/** without any UI or transport concerns.
     .target(name: "HapiProtocol"),
     // Transport layer: APIClient, auth, SSE, stores (lands in M1).
-    .target(name: "HapiClient", dependencies: ["HapiProtocol"]),
+    .target(name: "HapiClient", dependencies: ["HapiProtocol", "CZlib"]),
     .testTarget(name: "HapiProtocolTests", dependencies: ["HapiProtocol"]),
     // HapiProtocol is named directly by SSE tests (SyncEvent assertions).
     .testTarget(name: "HapiClientTests", dependencies: ["HapiClient", "HapiProtocol"]),

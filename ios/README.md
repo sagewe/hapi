@@ -20,8 +20,19 @@ The composer keeps the Hub's quick/deep presets in a small capsule, with atomic
 model/effort switching for existing agy sessions. Chinese execution phases hide
 raw reasoning. PDF reports offer one-tap QuickLook preview and system sharing.
 The developer Home and Mac session chrome retain their existing behavior.
-`AssistantWorkbenchTests` cover lazy creation, attachment retry, voice edits,
-status mapping and light/dark hosted SwiftUI captures.
+Assistant mode accepts ZIP, PDF, Office, CSV, text and images. Open In and the
+“送审文件” Shortcut stage files for explicit new-case/current-case confirmation.
+A bottom case-files capsule hides with the keyboard or pending attachments;
+tap or drag upward opens an 88% sheet with persistent deliverables/originals,
+always-visible selection circles, image grids and bottom export/share actions.
+Pure image selections use native multi-image sharing; mixed selections and
+multiple documents become a named ZIP. ZIP directories stay in the same sheet;
+only explicitly previewed/selected files are extracted to private temporary
+files, with path, encryption, count, size, compression-ratio and CRC checks.
+`CaseFilesTests`, `SafeZIPTests` and `AssistantWorkbenchTests` cover the data
+contract, packaging, lazy creation, retry, voice edits and light/dark captures.
+The capture test can coordinate real simulator screenshots via
+`HAPI_CASE81_SCREEN_CAPTURE`; it uses synthetic documents and fake HTTP.
 
 ## Archived session visibility
 

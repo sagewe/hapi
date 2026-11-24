@@ -1,3 +1,4 @@
+import { validUploadName } from '../../sessionMedia/storage'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
@@ -34,7 +35,7 @@ export function createResumableUploadRoutes(getSyncEngine: () => SyncEngine | nu
             if (error instanceof SyntaxError) return null
             throw error
         }))
-        if (!metadata.success) return c.json({ error: 'Invalid upload metadata' }, 400)
+        if (!metadata.success || !validUploadName(metadata.data.filename)) return c.json({ error: 'Invalid upload metadata' }, 400)
         return c.json(await uploads.start(a.namespace, a.sessionId, a.id, metadata.data))
     })
     app.put('/sessions/:id/uploads/:uploadId/chunk', async c => {

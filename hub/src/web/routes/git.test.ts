@@ -1,16 +1,23 @@
-import { describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { SessionMediaStore } from '../../sessionMedia/storage'
+import { afterAll, describe, expect, it } from 'bun:test'
 import { Hono } from 'hono'
 import type { Session, SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { createGitRoutes } from './git'
 
+const mediaDirs: string[] = []
+afterAll(() => mediaDirs.forEach(dir => rmSync(dir, { recursive: true, force: true })))
 function buildApp(engine: Partial<SyncEngine>): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
     app.use('*', async (c, next) => {
         c.set('namespace', 'default')
         await next()
     })
-    app.route('/api', createGitRoutes(() => engine as SyncEngine))
+    const dir = mkdtempSync(join(tmpdir(), 'git-media-')); mediaDirs.push(dir)
+    app.route('/api', createGitRoutes(() => engine as SyncEngine, new SessionMediaStore(dir)))
     return app
 }
 

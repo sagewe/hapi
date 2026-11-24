@@ -74,6 +74,18 @@ Official native apps register their encryption keys automatically; no push
 provider setup is needed on a fresh hub. See the [native companion push
 contract](../docs/api/native-companion-contract.md).
 
+## Session media retention
+
+Generated media and completed attachment originals are retained in private
+`HAPI_HOME/session-media/<sessionId>/{generated,uploads}/` directories. Generated
+media is proactively fetched from the CLI on its message event and cached on
+first download; both paths use atomic manifests. Read-only case-file/original
+routes enforce JWT and session ownership even for archived/inactive sessions.
+See the [REST contract](../docs/api/client-contract/rest.md#persistent-case-files).
+Retention applies to newly captured bytes; previously lost process registrations
+cannot restore unavailable original files. Include this directory in private
+backups. Archiving does not discard retained files.
+
 ## Running
 
 Binary (single executable):

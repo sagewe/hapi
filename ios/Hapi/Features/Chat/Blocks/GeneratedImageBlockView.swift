@@ -21,6 +21,7 @@ struct GeneratedImageBlockView: View {
 private struct GeneratedMediaCard: View {
     let loader: GeneratedMediaLoader?
     @Environment(\.isAssistantMode) private var isAssistantMode
+    @Environment(\.caseFileAccess) private var caseFileAccess
     @State private var wantsShare = false
     @State private var imageShareFile: GeneratedMediaFile?
     @State private var content: GeneratedMediaPresentation
@@ -142,7 +143,13 @@ private struct GeneratedMediaCard: View {
                 }
                 if content.isLoading { ProgressView().controlSize(.small) }
             }.font(.subheadline.weight(.medium)).buttonStyle(.plain).disabled(loader == nil || content.isLoading)
-            if content.loadFailed { Text("文件暂不可用，可重试或请助手重新发送").font(.caption).foregroundStyle(.secondary) }
+            if pdf, let access = caseFileAccess, access.mainReportID == content.block.imageId, access.count > 1 {
+                Button(action: access.open) {
+                    HStack { Image(systemName: "archivebox"); Text("附 \(access.count - 1) 项核验图与资料"); Spacer(); Text("查看 ›") }
+                        .font(.caption).foregroundStyle(.blue).frame(minHeight: 36)
+                }.buttonStyle(.plain)
+            }
+            if content.loadFailed { Text("文件暂不可用，请重试").font(.caption).foregroundStyle(.secondary) }
         }.padding(16).assistantSurface().accessibilityIdentifier("assistant.report-card")
     }
     private func openFile(share: Bool) {

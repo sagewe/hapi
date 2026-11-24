@@ -33,8 +33,9 @@ final class GeneratedMediaFile: Sendable {
         url = directory.appendingPathComponent(name)
         byteCount = data.count
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             try? FileManager.default.removeItem(at: directory)
             throw error

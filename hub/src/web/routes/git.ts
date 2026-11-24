@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { isWildcardSearch, matchesSearchQuery, toSearchGlob } from '@hapi/protocol'
 import { z } from 'zod'
+import { SessionMediaStore, validMediaId } from '../../sessionMedia/storage'
 import type { SyncEngine } from '../../sync/syncEngine'
 import type { WebAppEnv } from '../middleware/auth'
 import { requireSessionFromParam, requireSyncEngine } from './guards'
@@ -23,7 +24,7 @@ const boundedFileReadSchema = filePathSchema.extend({
 })
 
 const generatedImageSchema = z.object({
-    imageId: z.string().min(1)
+    imageId: z.string().refine(validMediaId)
 })
 
 function normalizeFileSearchPath(path: string): string {
@@ -190,7 +191,7 @@ function ifNoneMatchMatches(header: string | undefined, etag: string): boolean {
     })
 }
 
-export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<WebAppEnv> {
+export function createGitRoutes(getSyncEngine: () => SyncEngine | null, media = new SessionMediaStore()): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     app.get('/sessions/:id/git-status', async (c) => {
@@ -293,6 +294,30 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         return c.json(result)
     })
 
+    app.get('/sessions/:id/case-files', async c => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const access = requireSessionFromParam(c, engine)
+        if (access instanceof Response) return access
+        if (!validMediaId(access.sessionId)) return c.json({ error: 'Invalid session id' }, 400)
+        return c.json({ files: await media.list(access.sessionId) })
+    })
+    app.get('/sessions/:id/uploads/:attachmentId', async c => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+        const access = requireSessionFromParam(c, engine)
+        if (access instanceof Response) return access
+        const id = c.req.param('attachmentId')
+        if (!validMediaId(id) || !validMediaId(access.sessionId)) return c.json({ error: 'Invalid attachment id' }, 400)
+        const item = await media.get(access.sessionId, 'uploads', id)
+        if (!item) return c.json({ error: 'Attachment not found' }, 404)
+        return c.body(new Uint8Array(item.bytes), 200, {
+            'Content-Type': item.file.mimeType,
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(item.file.fileName)}"`,
+            'Cache-Control': 'private, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff'
+        })
+    })
+
     app.get('/sessions/:id/generated-images/:imageId', async (c) => {
         const engine = requireSyncEngine(c, getSyncEngine)
         if (engine instanceof Response) {
@@ -320,13 +345,17 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
             })
         }
 
-        const result = await runRpc(() => engine.readGeneratedImage(sessionResult.sessionId, parsed.data.imageId))
+        const cached = await media.get(sessionResult.sessionId, 'deliverables', parsed.data.imageId)
+        const result = cached ? { success: true, content: cached.bytes.toString('base64'), ...cached.file }
+            : await runRpc(() => engine.readGeneratedImage(sessionResult.sessionId, parsed.data.imageId))
         if (!result.success || !result.content) {
             return c.json({ success: false, error: result.error ?? 'Generated image not found' }, 404)
         }
 
         const bytes = Uint8Array.from(Buffer.from(result.content, 'base64'))
-        const mimeType = result.mimeType ?? 'application/octet-stream'
+        const stored = cached?.file ?? await media.put(sessionResult.sessionId, 'deliverables', parsed.data.imageId,
+            result.fileName ?? 'generated-media', result.mimeType ?? 'application/octet-stream', bytes)
+        const mimeType = stored.mimeType
         const disposition = !result.mimeType || mimeType.startsWith('image/') || mimeType.startsWith('video/') || mimeType.startsWith('audio/')
             ? 'inline'
             : 'attachment'

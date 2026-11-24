@@ -21,6 +21,11 @@
 	<string>HAPI uses the camera to scan your hub's pairing QR code and to capture photos you attach to messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>HAPI uses the microphone to record voice dictation that is transcribed into your message.</string>
+    <key>CFBundleDocumentTypes</key>
+    <array><dict><key>CFBundleTypeName</key><string>Business Documents</string>
+    <key>CFBundleTypeRole</key><string>Viewer</string><key>LSHandlerRank</key><string>Alternate</string>
+    <key>LSItemContentTypes</key><array><string>public.data</string><string>public.content</string></array></dict></array>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

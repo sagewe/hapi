@@ -1,3 +1,4 @@
+import { validUploadName } from '../../sessionMedia/storage'
 import { PreviewTargetSchema, PreviewLeaseSchema } from '@hapi/protocol'
 import { compareSessionSummaries } from '@hapi/protocol'
 import {
@@ -487,6 +488,7 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ error: 'Invalid body' }, 400)
         }
 
+        if (!validUploadName(parsed.data.filename)) return c.json({ error: 'Invalid upload filename' }, 400)
         const estimatedBytes = estimateBase64Bytes(parsed.data.content)
         if (estimatedBytes > MAX_UPLOAD_BYTES) {
             return c.json({ success: false, error: 'File too large (max 50MB)' }, 413)
