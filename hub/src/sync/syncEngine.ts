@@ -2343,6 +2343,15 @@ export class SyncEngine {
     }
 
     private async archiveSessionUnlocked(sessionId: string): Promise<void> {
+        const builtinSession = this.sessionCache.getSession(sessionId)
+        if (this.builtinAgentLoop?.ownsSession(builtinSession)) {
+            this.builtinAgentLoop.abortSession(sessionId)
+            this.sessionCache.markSessionArchivedFromHub(sessionId, 'Archived built-in agent session')
+            this.releaseSessionEnumerations(sessionId)
+            this.handleSessionEnd({ sid: sessionId, time: Date.now() })
+            return
+        }
+
         // Windows may need longer than the ordinary 30s RPC timeout to prove a
         // complete tree exited. All PID fallbacks share this bounded operation
         // budget; an acknowledgement timeout must never become archive success.

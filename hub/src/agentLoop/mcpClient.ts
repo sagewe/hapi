@@ -50,6 +50,14 @@ function summarizeToolResult(toolName: string, ok: boolean, parsedData: unknown,
         if (typeof rec.message === 'string' && rec.message.trim()) {
             return rec.message.trim().slice(0, 160)
         }
+        if (toolName === 'get_home_overview') {
+            const count = Array.isArray(rec.entities)
+                ? rec.entities.length
+                : typeof rec.entity_count === 'number'
+                    ? rec.entity_count
+                    : null
+            return count !== null ? `已读取全屋概况（${count} 个设备）` : '已读取全屋概况'
+        }
         if (toolName === 'control_entity') {
             const name = typeof rec.name === 'string' ? rec.name : typeof rec.entity_id === 'string' ? rec.entity_id : '设备'
             const action = typeof rec.property === 'string' ? `${rec.property}=${String(rec.value ?? '')}` : '已控制'
@@ -57,6 +65,16 @@ function summarizeToolResult(toolName: string, ok: boolean, parsedData: unknown,
         }
         if (toolName === 'web_search' && Array.isArray(rec.results)) {
             return `搜索返回 ${rec.results.length} 条结果`
+        }
+        if (toolName === 'list_todos') {
+            const items = Array.isArray(rec.items) ? rec.items : Array.isArray(rec.todos) ? rec.todos : null
+            if (items) return `共 ${items.length} 条待办`
+            if (typeof rec.open_count === 'number') return `共 ${rec.open_count} 条未完成待办`
+            return '已读取待办列表'
+        }
+        if (toolName === 'list_schedules') {
+            const items = Array.isArray(rec.schedules) ? rec.schedules : Array.isArray(rec.items) ? rec.items : null
+            return items ? `共 ${items.length} 条定时任务` : '已读取定时任务'
         }
         if (Array.isArray(rec.entities)) {
             return `已读取 ${rec.entities.length} 个设备`
@@ -70,9 +88,19 @@ function summarizeToolResult(toolName: string, ok: boolean, parsedData: unknown,
         if (Array.isArray(rec.memories)) {
             return `共 ${rec.memories.length} 条记忆`
         }
+        if (Array.isArray(rec.items)) {
+            return `共 ${rec.items.length} 条记录`
+        }
+        return `${toolName} 执行完成`
+    }
+    if (Array.isArray(parsedData)) {
+        return `共 ${parsedData.length} 条记录`
     }
     const firstLine = text.trim().split('\n')[0] ?? ''
-    return firstLine.slice(0, 160) || `${toolName} 执行完成`
+    if (firstLine && firstLine !== '{' && firstLine !== '[') {
+        return firstLine.slice(0, 160)
+    }
+    return `${toolName} 执行完成`
 }
 
 export function buildToolReceipt(params: {

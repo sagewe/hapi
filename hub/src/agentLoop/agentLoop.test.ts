@@ -292,6 +292,11 @@ describe('BuiltinAgentLoopRuntime end-to-end with Model Gateway + Streamable HTT
         // Model switch works cleanly without RPC
         await engine.applySessionConfig(sessionId, { model: 'deepseek-chat' })
         expect(engine.getSession(sessionId)?.model).toBe('deepseek-chat')
+
+        // Archiving a built-in session completes locally without Runner RPC
+        await engine.archiveSession(sessionId)
+        expect(engine.getSession(sessionId)?.active).toBe(false)
+        expect(engine.getSession(sessionId)?.metadata?.lifecycleState).toBe('archived')
     })
 
     it('supports abortSession during an in-flight LLM request', async () => {
