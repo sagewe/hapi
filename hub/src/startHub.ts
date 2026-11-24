@@ -1,6 +1,8 @@
 import { createConfiguration, type ConfigSource } from './configuration'
 import { Store } from './store'
 import { SyncEngine, type SyncEvent } from './sync/syncEngine'
+import { BuiltinAgentLoopRuntime } from './agentLoop/runtime'
+import { readSettings } from './config/settings'
 import { NotificationHub } from './notifications/notificationHub'
 import type { NotificationChannel } from './notifications/notificationTypes'
 import { HappyBot } from './telegram/bot'
@@ -212,6 +214,11 @@ export async function startHub(options: StartHubOptions = {}): Promise<HubInstan
     syncEngine = new SyncEngine(store, socketServer.io, socketServer.rpcRegistry, sseManager)
     // Accountable principal for A2A work-graph notify ingest (P3).
     syncEngine.setHubOwnerUserId(await getOrCreateOwnerId())
+
+    const hubSettings = (await readSettings(config.settingsFile)) ?? {}
+    const builtinAgentLoop = new BuiltinAgentLoopRuntime(syncEngine.createBuiltinRuntimeHost(), hubSettings)
+    syncEngine.attachBuiltinAgentLoop(builtinAgentLoop)
+    builtinAgentLoop.start()
 
     const androidPushConfig = resolveAndroidPushConfig(config)
     const notificationChannels: NotificationChannel[] = []

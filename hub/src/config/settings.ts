@@ -15,6 +15,11 @@ export interface NamespaceSettings {
      * for clients authenticated in this namespace.
      */
     clientProfile?: import('@hapi/protocol/apiTypes').ClientProfile
+    /**
+     * Optional built-in lightweight Agent Loop execution backend for this namespace
+     * (runs inside HAPI Hub against standalone Model Gateway + Streamable HTTP MCP servers).
+     */
+    agentLoop?: import('../agentLoop/types').BuiltinAgentLoopConfig
 }
 
 export interface Settings {

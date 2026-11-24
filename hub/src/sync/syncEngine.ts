@@ -24,6 +24,7 @@ import { hasConversationMessageContent, unwrapRoleWrappedRecordEnvelope } from '
 import type { Server } from 'socket.io'
 import { randomUUID } from 'node:crypto'
 import type { Store, CancelQueuedMessageResult } from '../store'
+import type { BuiltinAgentLoopRuntime, BuiltinRuntimeHost } from '../agentLoop/runtime'
 import type {
     MessageContentSearchMatch,
     SessionMessageContentSearchResult
@@ -208,6 +209,7 @@ export class SyncEngine {
     /** Completed turns whose final chat message may still be in transit. */
     private readonly titleTurnCompletedIds = new Set<string>()
     private readonly rpcGateway: RpcGateway
+    private builtinAgentLoop: BuiltinAgentLoopRuntime | null = null
     private inactivityTimer: NodeJS.Timeout | null = null
     /** Sessions that emitted `session-ready` (Cursor ACP or validated Pi get_state). */
     private readonly sessionReadyIds = new Set<string>()
@@ -334,7 +336,91 @@ export class SyncEngine {
         this.hubOwnerUserId = String(ownerUserId)
     }
 
+    attachBuiltinAgentLoop(runtime: BuiltinAgentLoopRuntime): void {
+        this.builtinAgentLoop = runtime
+    }
+
+    createBuiltinRuntimeHost(): BuiltinRuntimeHost {
+        return {
+            store: this.store,
+            getSession: (sessionId) => this.getSession(sessionId),
+            getSessionsByNamespace: (namespace) => this.getSessionsByNamespace(namespace),
+            registerBuiltinMachine: ({ machineId, namespace, displayName, defaultDirectory }) => {
+                this.machineCache.getOrCreateMachine(
+                    machineId,
+                    {
+                        host: displayName,
+                        displayName,
+                        platform: 'builtin-agent-loop',
+                        happyCliVersion: '0.34.3-builtin',
+                        workspaceRoots: [defaultDirectory]
+                    },
+                    { status: 'running' },
+                    namespace
+                )
+                this.machineCache.handleMachineAlive({ machineId, time: Date.now() })
+            },
+            heartbeatBuiltinMachine: (machineId) => {
+                this.machineCache.handleMachineAlive({ machineId, time: Date.now() })
+            },
+            createBuiltinSession: ({ sessionId, namespace, machineId, host, directory, model }) => {
+                return this.sessionCache.getOrCreateSession(
+                    `builtin:${sessionId}`,
+                    {
+                        path: directory,
+                        host,
+                        flavor: 'pi',
+                        machineId,
+                        startedBy: 'runner',
+                        startedFromRunner: true,
+                        idleReconcileExempt: true
+                    },
+                    null,
+                    namespace,
+                    model,
+                    undefined,
+                    undefined,
+                    sessionId
+                )
+            },
+            markBuiltinSessionAlive: (sessionId, thinking) => {
+                this.handleSessionAlive({ sid: sessionId, time: Date.now(), thinking, mode: 'remote' })
+            },
+            markBuiltinSessionReady: (sessionId) => {
+                this.handleSessionReady({ sid: sessionId, time: Date.now() })
+            },
+            markBuiltinMessagesConsumed: (sessionId, localIds) => {
+                const invokedAt = Date.now()
+                this.store.messages.markMessagesInvoked(sessionId, localIds, invokedAt)
+                this.eventPublisher.emit({ type: 'messages-consumed', sessionId, localIds, invokedAt })
+                this.clearQueuedThinkingGrace(sessionId)
+            },
+            appendBuiltinAgentMessage: (sessionId, content) => {
+                const msg = this.store.messages.addMessage(sessionId, content, undefined, undefined, Date.now())
+                this.recordAgentProgress(sessionId, msg.createdAt)
+                this.recordSessionActivity(sessionId, msg.createdAt)
+                this.eventPublisher.emit({
+                    type: 'message-received',
+                    sessionId,
+                    message: {
+                        id: msg.id,
+                        seq: msg.seq,
+                        localId: msg.localId,
+                        content: msg.content,
+                        createdAt: msg.createdAt,
+                        invokedAt: msg.invokedAt,
+                        scheduledAt: msg.scheduledAt
+                    }
+                })
+            },
+            setBuiltinSessionModel: (sessionId, _namespace, model) => {
+                this.sessionCache.applySessionConfig(sessionId, { model })
+            }
+        }
+    }
+
     stop(): void {
+        this.builtinAgentLoop?.stop()
         this.automaticTitleSuggestionService.stop()
         this.titleTurnCompletedIds.clear()
         if (this.inactivityTimer) {
@@ -1350,9 +1436,13 @@ export class SyncEngine {
         if (!this.sessionCache.getSession(sessionId)?.thinking) {
             this.automaticTitleSuggestionService.onTurnStarted(sessionId)
         }
-        const { actualSessionId, createdAt: activeTurnStartedAt } = await this.messageService.sendMessage(sessionId, payload)
+        const { actualSessionId, createdAt: activeTurnStartedAt, localId } = await this.messageService.sendMessage(sessionId, payload)
         this.sessionCache.markMessageQueued(actualSessionId, Date.now(), activeTurnStartedAt)
         this.sessionCache.recordSessionActivity(actualSessionId, Date.now())
+        const isFutureScheduled = payload.scheduledAt != null && payload.scheduledAt > Date.now()
+        if (!isFutureScheduled) {
+            this.builtinAgentLoop?.enqueueUserMessage(actualSessionId, localId)
+        }
     }
 
     async cancelQueuedMessage(
@@ -1468,6 +1558,9 @@ export class SyncEngine {
     }
 
     async abortSession(sessionId: string): Promise<void> {
+        if (this.builtinAgentLoop?.abortSession(sessionId)) {
+            return
+        }
         await this.rpcGateway.abortSession(sessionId)
     }
 
@@ -2656,6 +2749,14 @@ export class SyncEngine {
             this.sessionCache.applySessionConfig(sessionId, config)
             return
         }
+        if (this.builtinAgentLoop?.ownsSession(session)) {
+            if (typeof config.model === 'string' && config.model.trim()) {
+                this.builtinAgentLoop.setModel(session, config.model)
+            } else {
+                this.sessionCache.applySessionConfig(sessionId, config)
+            }
+            return
+        }
 
         const result = await this.rpcGateway.requestSessionConfig(sessionId, config) as Record<string, unknown>
         if (!result || typeof result !== 'object') {
@@ -2713,6 +2814,16 @@ export class SyncEngine {
         namespace?: string,
         parentSessionId?: string
     ): ReturnType<RpcGateway['spawnSession']> {
+        if (namespace && this.builtinAgentLoop?.ownsMachine(machineId, namespace)) {
+            return this.builtinAgentLoop.spawnSession({
+                machineId,
+                namespace,
+                directory,
+                model,
+                existingSessionId
+            })
+        }
+
         // Fresh machine spawns historically omitted existingSessionId, so
         // buildCliArgs could not stamp --hapi-session-id / --existing-session-id.
         // A runner restart before the first webhook then left no persisted PID

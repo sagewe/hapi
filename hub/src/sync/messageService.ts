@@ -962,7 +962,7 @@ export class MessageService {
             scheduledAt?: number | null
             deliveryMode?: MessageDeliveryMode
         }
-    ): Promise<{ actualSessionId: string; createdAt: number }> {
+    ): Promise<{ actualSessionId: string; createdAt: number; localId: string | null }> {
         // Defence-in-depth invariant for non-REST callers (Telegram bot, MCP,
         // internal callers).  Attachment paths live under the CLI session's
         // upload directory which `cleanupUploadDir` purges on session end; a
@@ -1059,7 +1059,7 @@ export class MessageService {
                 ...(msg.deliveryPending ? { deliveryPending: true as const } : {})
             }
         })
-        return { actualSessionId, createdAt: msg.createdAt }
+        return { actualSessionId, createdAt: msg.createdAt, localId: msg.localId }
     }
 
     /**
