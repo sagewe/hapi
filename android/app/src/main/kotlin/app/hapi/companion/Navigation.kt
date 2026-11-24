@@ -334,8 +334,14 @@ fun HapiNavigation() {
     }
 
     if(pendingShare != null && assistantShareGuard != null && pendingShare.id == assistantShareGuard && profile?.mode == "assistant") {
+        val guardSessionId=currentEntry?.arguments?.getString("sessionId")
+        var guardTitle by remember(guardSessionId,activeHubGraph) { mutableStateOf(activeHubGraph?.sessionStore?.currentDetail(guardSessionId ?: "")?.metadata?.name) }
+        LaunchedEffect(guardSessionId,activeHubGraph) {
+            if(guardTitle==null && guardSessionId!=null) guardTitle=runCatching { activeHubGraph?.session?.api?.getSession(guardSessionId)?.session?.metadata?.name }.getOrNull()
+        }
         app.hapi.companion.feature.assistant.IncomingCaseGuard(
-            count=pendingShare.files.size,
+            files=pendingShare.files,
+            title=guardTitle,
             newCase={assistantShareGuard=null;navController.navigateClearingBackStack(Routes.HOME)},
             currentCase={ val id=currentEntry?.arguments?.getString("sessionId");val hub=activeHubGraph
                 if(id!=null && hub!=null) navigationScope.launch { graph.shareInbox.setTarget(pendingShare.id,ShareTarget(hub.hubUrl,id));assistantShareGuard=null }

@@ -15,6 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +45,10 @@ internal val LocalCaseFiles = staticCompositionLocalOf { CaseFilesAccess(emptyLi
         var drag=0f
         detectVerticalDragGestures(onDragStart={drag=0f},onVerticalDrag={change,dy->change.consume();drag+=dy},onDragEnd={if(drag < -24.dp.toPx()) open()})
     },shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerLow,border=BorderStroke(1.dp,MaterialTheme.colorScheme.primary.copy(alpha=.5f)),shadowElevation=2.dp) {
+        Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.padding(start=14.dp)) {
+        Icon(Icons.Default.Folder,null,Modifier.size(16.dp),tint=Color(0xFFC99556))
         Text("本案资料 · ${files.size}" + (if(files.any { !it.isUpload && it.isPdf }) " 含报告" else "") + " ▴",Modifier.padding(horizontal=18.dp,vertical=10.dp),style=MaterialTheme.typography.labelLarge,color=MaterialTheme.colorScheme.primary)
+        }
     }
 }
 internal fun primaryReport(files: List<CaseFile>) = files.filter { !it.isUpload && it.isPdf }.sortedBy { if(it.fileName.contains("报告") || it.fileName.contains("尽调")) 0 else 1 }.firstOrNull()
@@ -111,7 +117,16 @@ private fun mimeFor(name: String) = MimeTypeMap.getSingleton().getMimeTypeFromEx
         Column(Modifier.fillMaxWidth().fillMaxHeight(.9f).navigationBarsPadding()) {
             Column(Modifier.padding(horizontal=20.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) { Text(archive?.first?.fileName ?: "本案资料（${files.size}）",Modifier.weight(1f),style=MaterialTheme.typography.titleLarge,maxLines=2);if(archive==null) Text("持久留存",color=Color(0xFF238B80),style=MaterialTheme.typography.labelSmall) }
-                if(archive==null) Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) { listOf("全部","报告与证据","送审原件").forEachIndexed { i,label -> FilterChip(filter==i,{filter=i},{Text(label)},shape=RoundedCornerShape(50)) } }
+                if(archive==null) Surface(shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surfaceContainerHigh,modifier=Modifier.padding(vertical=12.dp)) {
+                    BoxWithConstraints(Modifier.fillMaxWidth().padding(4.dp)) {
+                        val segmentWidth=maxWidth/3
+                        val slide by animateDpAsState(segmentWidth*filter,label="case-filter-slide")
+                        Surface(Modifier.offset(x=slide).width(segmentWidth).height(38.dp),shape=RoundedCornerShape(50),color=MaterialTheme.colorScheme.surface,shadowElevation=1.dp) {}
+                        Row(Modifier.fillMaxWidth()) { listOf("全部","报告与证据","送审原件").forEachIndexed { i,label ->
+                            Box(Modifier.weight(1f).height(38.dp).clickable { filter=i },contentAlignment=Alignment.Center) { Text(label,style=MaterialTheme.typography.labelMedium,color=if(filter==i) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1) }
+                        } }
+                    }
+                }
                 else Text("${archive!!.second.members.size} 份文件 · 免解压直接查看",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=12.dp))
             }
             if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -121,11 +136,14 @@ private fun mimeFor(name: String) = MimeTypeMap.getSingleton().getMimeTypeFromEx
                 if(zip!=null) items(zip.second.members,key={it.name}) { member ->
                     FileRow(member.name,mimeFor(member.name),member.size,member.name in selected,{selected=if(member.name in selected) selected-member.name else selected+member.name},{task { val extracted=withContext(Dispatchers.IO) { zip.second.extract(member,File(root,UUID.randomUUID().toString())) };preview(extracted,mimeFor(member.name)) }},"预览")
                 } else {
-                    val visible=files.filter { filter==0 || if(filter==2) it.isUpload else !it.isUpload }
+                    val groups=if(filter==0) listOf(false,true) else listOf(filter==2)
+                    groups.forEach { uploads ->
+                    val visible=files.filter { it.isUpload==uploads }
+                    item(key="group-$uploads") { Text(if(uploads) "送审原件" else "报告与证据",style=MaterialTheme.typography.titleSmall,modifier=Modifier.padding(vertical=6.dp)) }
                     items(visible.filter { !it.isImage },key={it.key}) { file ->
                         FileRow(file.fileName,file.mimeType,file.size,file.key in selected,{selected=if(file.key in selected) selected-file.key else selected+file.key},{task { val local=materialize(file);if(file.isZip) { val parsed=withContext(Dispatchers.IO) { SafeCaseZip(local) };archive=file to parsed;selected=emptySet() } else preview(local,file.mimeType) }},if(file.isZip) "展开 ›" else "预览")
                     }
-                    items(visible.filter { it.isImage }.chunked(3)) { row ->
+                    items(visible.filter { it.isImage }.chunked(3),key={"images-"+it.first().key}) { row ->
                         Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                             row.forEach { file ->
                                 var thumb by remember(file.key) { mutableStateOf<File?>(null) }
@@ -136,6 +154,7 @@ private fun mimeFor(name: String) = MimeTypeMap.getSingleton().getMimeTypeFromEx
                             }
                             repeat(3-row.size) { Spacer(Modifier.weight(1f)) }
                         }
+                    }
                     }
                 }
             }

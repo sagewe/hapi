@@ -60,6 +60,27 @@ class HapiApiTest {
     private fun lastRequestBody() = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
 
     @Test
+    fun `ASR discovery context and websocket remain authenticated and same origin`() = runBlocking {
+        server.enqueue(ok("""{"available":true,"wsUrl":"wss://evil.example"}"""))
+        assertEquals(true,session.api.streamingAsrAvailable())
+        val config=server.takeRequest();assertEquals("/api/voice/asr-config",config.path);assertEquals("Bearer $jwt",config.getHeader("Authorization"))
+        server.enqueue(ok("""{"ok":true}"""))
+        session.api.prepareStreamingAsr("核验企业","take-1")
+        val context=server.takeRequest();assertEquals("/api/voice/asr-context",context.path);assertEquals("Bearer $jwt",context.getHeader("Authorization"));assertTrue(context.body.readUtf8().contains("核验企业"))
+        val done=java.util.concurrent.CountDownLatch(1)
+        server.enqueue(MockResponse().withWebSocketUpgrade(object: okhttp3.WebSocketListener() {
+            override fun onOpen(ws: okhttp3.WebSocket,response: okhttp3.Response) { ws.send("""{"type":"partial","text":"企业"}""");ws.send("""{"type":"final","text":"核验企业"}""") }
+        }))
+        val frames=java.util.Collections.synchronizedList(mutableListOf<String>())
+        val socket=session.api.openStreamingAsr("中文草稿",object: okhttp3.WebSocketListener() {
+            override fun onMessage(ws: okhttp3.WebSocket,text: String) { frames.add(text);if(frames.size==2) done.countDown() }
+        })
+        assertTrue(done.await(5,java.util.concurrent.TimeUnit.SECONDS))
+        val upgrade=server.takeRequest();assertEquals("/api/voice/asr-ws?sample_rate=16000",upgrade.path);assertEquals("Bearer $jwt",upgrade.getHeader("Authorization"));assertEquals("中文草稿",String(java.util.Base64.getDecoder().decode(upgrade.getHeader("X-ASR-Draft"))))
+        assertEquals(2,frames.size);socket.cancel()
+    }
+
+    @Test
     fun `case index and uploads stay authenticated on this origin`() = runBlocking {
         server.enqueue(ok("""{"files":[{"id":"f","category":"uploads","fileName":"单据.zip","mimeType":"application/zip","size":3,"createdAt":1,"downloadPath":"https://evil.example/steal"}]}"""))
         val file=session.api.getCaseFiles("case1").files.single()

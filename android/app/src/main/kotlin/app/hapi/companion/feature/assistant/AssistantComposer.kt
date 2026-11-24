@@ -83,11 +83,14 @@ internal fun recordingDuration(seconds: Long) = "%02d:%02d".format(seconds / 60,
     dictation: DictationState? = null, caretPosition: Int = -1,
     leading: @Composable () -> Unit = {}, presets: @Composable () -> Unit = {},
 ) {
+    val hold=rememberHoldVoice(text,onTextChange)
+    var voiceMode by remember { mutableStateOf(false) }
     var field by remember { mutableStateOf(TextFieldValue(text)) }
     LaunchedEffect(text) { if(field.text != text) field = TextFieldValue(text,TextRange(if(caretPosition >= 0) caretPosition.coerceIn(0,text.length) else text.length)) }
     val idle = dictation == null || dictation == DictationState.Idle
+    LaunchedEffect(busy) { if(busy) hold.cancel() }
     val hasDraft = text.isNotBlank() || attachments.isNotEmpty()
-    val canSend = hasDraft && !busy && idle && attachments.none { it.status != null }
+    val canSend = hasDraft && !busy && idle && !hold.active && attachments.none { it.status != null }
     Surface(modifier.fillMaxWidth(), color = assistantPaper(), shape = RoundedCornerShape(22.dp),
         border = BorderStroke(.5.dp,MaterialTheme.colorScheme.outlineVariant), tonalElevation = 1.dp, shadowElevation = 1.dp) {
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 44.dp) {
@@ -109,14 +112,15 @@ internal fun recordingDuration(seconds: Long) = "%02d:%02d".format(seconds / 60,
                 if(dictation == DictationState.Starting || dictation == DictationState.Transcribing) Row(Modifier.padding(8.dp),verticalAlignment=Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(14.dp),strokeWidth=2.dp); Text(if(dictation == DictationState.Starting) "正在准备录音…" else "正在转写，请稍候…",Modifier.padding(start=8.dp),style=MaterialTheme.typography.labelMedium)
                 }
-                BasicTextField(value = field, onValueChange = { value -> field = value; onTextChange(value.text,value.selection.start,value.selection.end) }, enabled = !busy,
+                if(voiceMode && hold.available) hold.input() else BasicTextField(value = field, onValueChange = { value -> field = value; onTextChange(value.text,value.selection.start,value.selection.end) }, enabled = !busy,
                     maxLines = 6, textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface), cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp,vertical = 12.dp), decorationBox = { inner -> Box { if(text.isEmpty()) Text(placeholder,color=MaterialTheme.colorScheme.onSurfaceVariant,style=MaterialTheme.typography.bodyLarge); inner() } })
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                     AssistantCircleAction(Icons.Default.Add,"添加资料",onAdd,enabled = !busy)
                     presets()
                     Spacer(Modifier.weight(1f))
-                    if(dictation != null && dictation !is DictationState.Recording) AssistantCircleAction(Icons.Default.Mic,"语音听写",onMic,enabled = idle && !busy)
+                    if(hold.available) TextButton({ if(!hold.active) voiceMode=!voiceMode },enabled=!busy && !hold.active,contentPadding=PaddingValues(4.dp)) { Text(if(voiceMode) "打字" else "语音",maxLines=1) }
+                    if(!hold.available && dictation != null && dictation !is DictationState.Recording) AssistantCircleAction(Icons.Default.Mic,"语音听写",onMic,enabled = idle && !busy)
                     if(busy) Box(Modifier.size(44.dp),contentAlignment=Alignment.Center) { CircularProgressIndicator(Modifier.size(22.dp),strokeWidth=2.dp) }
                     else AssistantCircleAction(if(running && !hasDraft) Icons.Default.Stop else Icons.Default.ArrowUpward,
                         if(running && !hasDraft) "停止调查" else "发送", if(running && !hasDraft) onStop else onSend,

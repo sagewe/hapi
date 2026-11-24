@@ -181,6 +181,20 @@ class HapiApi internal constructor(
     // ------------------------------------------------------ health & auth --
 
     /** `GET /health` — no auth, outside `/api`. */
+    suspend fun streamingAsrAvailable(): Boolean =
+        request<kotlinx.serialization.json.JsonObject>("GET", url("api", "voice", "asr-config").build())["available"].toString() == "true"
+
+    suspend fun prepareStreamingAsr(draft: String, recordingId: String) {
+        request<Unit>("POST", url("api", "voice", "asr-context").build(), jsonBody(kotlinx.serialization.json.buildJsonObject {
+            put("draft", kotlinx.serialization.json.JsonPrimitive(draft.take(8000)))
+            put("recordingId", kotlinx.serialization.json.JsonPrimitive(recordingId))
+        }))
+    }
+
+    fun openStreamingAsr(draft: String, listener: okhttp3.WebSocketListener): okhttp3.WebSocket =
+        client.newWebSocket(okhttp3.Request.Builder().url(url("api", "voice", "asr-ws").addQueryParameter("sample_rate", "16000").build())
+            .header("X-ASR-Draft", java.util.Base64.getEncoder().encodeToString(draft.take(2000).toByteArray())).build(), listener)
+
     suspend fun health(): HubHealthResponse =
         request("GET", url("health").build(), client = authClient)
 

@@ -436,7 +436,7 @@ spawn, upload and first send occur only on Send. Retries reuse the session,
 upload paths and message local ID. Incoming Android shares go to this workbench.
 Release signing uses an external keystore; no credentials belong in this tree.
 
-The compliance app is **琪琪工作**, version code 4 by default (override with
+The compliance app is **琪琪工作**, version code 5 by default (override with
 `-PhapiVersionCode` for later releases or isolated upgrade fixtures). Only this
 build declares `REQUEST_INSTALL_PACKAGES` and an isolated update FileProvider.
 It checks the active hub's authenticated `/api/app-updates/android/latest` on

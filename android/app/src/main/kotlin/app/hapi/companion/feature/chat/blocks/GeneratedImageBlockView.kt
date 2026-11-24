@@ -113,7 +113,7 @@ private fun GeneratedMediaCard(block: GeneratedImageBlock, modifier: Modifier = 
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(
-                text = stringResource(R.string.media_displayed_header, label, block.fileName),
+                text = if(app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") block.fileName.removePrefix("展示图片:").removePrefix("展示图片：").trim() else stringResource(R.string.media_displayed_header, label, block.fileName),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.hapi.hint,
                 maxLines = 1,

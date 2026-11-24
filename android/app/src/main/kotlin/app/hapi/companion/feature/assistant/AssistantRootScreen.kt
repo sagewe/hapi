@@ -114,12 +114,12 @@ private val sceneTitles = listOf("企业穿透", "自然人", "单据审核", "�
         AssistantHistoryDrawer(hub, { id -> scope.launch { drawer.close() }; onOpenSession(id) }, onSettings)
     }) {
         Scaffold(topBar = { TopAppBar(title = {}, navigationIcon = { IconButton({ scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu,"历史调查") } }, actions = {
-            if(draft.text.isNotBlank() || draft.scene != null || draft.files.isNotEmpty()) IconButton({ if(!busy) { draft.files.forEach { File(root,it.id).delete() }; save(Draft(preset=preset?.id)) } }) { Icon(Icons.Default.ClearAll,"清空草稿") }
+            if(draft.text.isNotBlank() || draft.scene != null || draft.files.isNotEmpty()) TextButton({ if(!busy) { draft.files.forEach { File(root,it.id).delete() }; save(Draft(preset=preset?.id)) } }) { Text("清空") }
         }) }, bottomBar = {
             AssistantComposer(text=draft.text,onTextChange={text,_,_->save(draft.copy(text=text))},onSend=::send,onAdd={picker=true},
                 onMic={if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) dictation.toggle() else microphone.launch(Manifest.permission.RECORD_AUDIO)},
                 onCancelRecording=dictation::cancel, modifier=Modifier.padding(horizontal=12.dp,vertical=8.dp).navigationBarsPadding().imePadding(),
-                placeholder=when(draft.scene) { "企业穿透"->"输入企业名称、注册地或线索";"自然人"->"输入姓名、国籍或身份线索";"单据审核"->"添加单据图片或 PDF，说明核验重点";"制裁筛查"->"输入主体名称、国家或名单线索";else->"输入调查对象或补充线索" },
+                placeholder=when(draft.scene) { "企业穿透"->"输入企业名称、注册地或线索";"自然人"->"输入姓名、国籍或身份线索";"单据审核"->"添加单据图片、PDF、ZIP 或 Office，说明核验重点";"制裁筛查"->"输入主体名称、国家或名单线索";else->"输入调查对象或补充线索" },
                 attachments=draft.files.map { AssistantAttachment(it.id,it.filename,it.mime,if(it.mime.startsWith("image/")) File(root,it.id) else null) },
                 onRemove={id->draft.files.find { it.id==id }?.let { file->save(draft.copy(files=draft.files-file));File(root,file.id).delete() }},
                 busy=busy,dictation=if(micAvailable) micState else null,
