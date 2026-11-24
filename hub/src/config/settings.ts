@@ -4,8 +4,23 @@ import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { withSettingsFileLock } from '@hapi/protocol/settingsFileLock'
 
+export interface NamespaceSettings {
+    /**
+     * Dedicated independent access token for this namespace (must not contain ':').
+     * Grants access ONLY to this namespace and never to 'default' or other namespaces.
+     */
+    token?: string
+    /**
+     * Per-namespace ClientProfile override returned by GET /api/hub-settings
+     * for clients authenticated in this namespace.
+     */
+    clientProfile?: import('@hapi/protocol/apiTypes').ClientProfile
+}
+
 export interface Settings {
     clientProfile?: import('@hapi/protocol/apiTypes').ClientProfile
+    /** Per-namespace independent access tokens and presentation profiles. */
+    namespaces?: Record<string, NamespaceSettings>
     machineId?: string
     machineIdConfirmedByServer?: boolean
     runnerAutoStartWhenRunningHappy?: boolean

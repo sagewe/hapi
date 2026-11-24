@@ -8,6 +8,7 @@ import type { WebAppEnv } from '../middleware/auth'
 import { createHubSettingsRoutes } from './hubSettings'
 import { writeSessionSummaryContractEnabled } from '../../config/sessionSummaryContract'
 import { writeSessionSummaryInChatEnabled } from '../../config/sessionSummaryInChat'
+import { getSettingsFile, writeSettings } from '../../config/settings'
 
 const directories: string[] = []
 const stockPeerSpawnDefaults = {
@@ -238,5 +239,54 @@ describe('GET/PUT /api/hub-settings', () => {
             sessionSummaryInChat: true,
             peerSpawnDefaults: stockPeerSpawnDefaults
         })
+    })
+
+    it('resolves per-namespace clientProfile without leaking namespace tokens', async () => {
+        const { app: defaultApp, dataDir } = await createApp('default')
+        const complianceProfile = {
+            mode: 'assistant' as const,
+            appTitle: '琪琪工作',
+            defaultAgent: 'agy' as const,
+            defaultPermissionMode: 'always-proceed' as const,
+            defaultDirectory: '/Users/sage/compliance-workspace'
+        }
+        const householdProfile = {
+            mode: 'assistant' as const,
+            appTitle: 'MyDots 家庭助手'
+        }
+        await writeSettings(getSettingsFile(dataDir), {
+            namespaces: {
+                compliance: {
+                    token: 'super-secret-compliance-token',
+                    clientProfile: complianceProfile
+                },
+                household: {
+                    token: 'super-secret-household-token',
+                    clientProfile: householdProfile
+                }
+            }
+        })
+
+        const mountFor = (ns: string) => {
+            const tenantApp = new Hono<WebAppEnv>()
+            tenantApp.use('*', async (c, next) => {
+                c.set('namespace', ns)
+                await next()
+            })
+            tenantApp.route('/api', createHubSettingsRoutes(dataDir))
+            return tenantApp
+        }
+
+        const defaultRes = await (await defaultApp.request('/api/hub-settings')).json() as Record<string, unknown>
+        expect(defaultRes.clientProfile).toBeUndefined()
+        expect(defaultRes.namespaces).toBeUndefined()
+
+        const complianceRes = await (await mountFor('compliance').request('/api/hub-settings')).json() as Record<string, unknown>
+        expect(complianceRes.clientProfile).toEqual(complianceProfile)
+        expect(complianceRes.namespaces).toBeUndefined()
+
+        const householdRes = await (await mountFor('household').request('/api/hub-settings')).json() as Record<string, unknown>
+        expect(householdRes.clientProfile).toEqual(householdProfile)
+        expect(householdRes.namespaces).toBeUndefined()
     })
 })

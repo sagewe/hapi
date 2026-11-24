@@ -2,8 +2,7 @@ import { Hono } from 'hono'
 import { SignJWT } from 'jose'
 import { AuthRequestSchema } from '@hapi/protocol'
 import { getConfiguration } from '../../configuration'
-import { constantTimeEquals } from '../../utils/crypto'
-import { parseAccessToken } from '../../utils/accessToken'
+import { authenticateAccessTokenFromSettings } from '../../utils/accessToken'
 import { validateTelegramInitData } from '../telegramInitData'
 import { getOrCreateOwnerId } from '../../config/ownerId'
 import type { WebAppEnv } from '../middleware/auth'
@@ -25,16 +24,19 @@ export function createAuthRoutes(jwtSecret: Uint8Array, store: Store): Hono<WebA
         let lastName: string | undefined
         let namespace: string
 
-        // Access Token authentication (CLI_API_TOKEN)
+        // Access Token authentication (CLI_API_TOKEN or per-namespace token)
         if ('accessToken' in parsed.data) {
             const configuration = getConfiguration()
-            const parsedToken = parseAccessToken(parsed.data.accessToken)
-            if (!parsedToken || !constantTimeEquals(parsedToken.baseToken, configuration.cliApiToken)) {
+            const authenticated = await authenticateAccessTokenFromSettings(
+                parsed.data.accessToken,
+                configuration
+            )
+            if (!authenticated) {
                 return c.json({ error: 'Invalid access token' }, 401)
             }
             userId = await getOrCreateOwnerId()
             firstName = 'Web User'
-            namespace = parsedToken.namespace
+            namespace = authenticated.namespace
         } else {
             const configuration = getConfiguration()
             if (!configuration.telegramEnabled || !configuration.telegramBotToken) {

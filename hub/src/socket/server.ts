@@ -4,8 +4,7 @@ import { jwtVerify } from 'jose'
 import { z } from 'zod'
 import type { Store } from '../store'
 import { getConfiguration } from '../configuration'
-import { constantTimeEquals } from '../utils/crypto'
-import { parseAccessToken } from '../utils/accessToken'
+import { authenticateAccessTokenFromSettings } from '../utils/accessToken'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
 import { RpcRegistry } from './rpcRegistry'
@@ -113,14 +112,16 @@ export function createSocketServer(deps: SocketServerDeps): {
         }
     })
 
-    cliNs.use((socket, next) => {
+    cliNs.use(async (socket, next) => {
         const auth = socket.handshake.auth as Record<string, unknown> | undefined
         const token = typeof auth?.token === 'string' ? auth.token : null
-        const parsedToken = token ? parseAccessToken(token) : null
-        if (!parsedToken || !constantTimeEquals(parsedToken.baseToken, configuration.cliApiToken)) {
+        const authenticated = token
+            ? await authenticateAccessTokenFromSettings(token, configuration)
+            : null
+        if (!authenticated) {
             return next(new Error('Invalid token'))
         }
-        socket.data.namespace = parsedToken.namespace
+        socket.data.namespace = authenticated.namespace
         next()
     })
     cliNs.on('connection', (socket) => registerCliHandlers(socket as CliSocketWithData, {

@@ -10,8 +10,7 @@ import {
 } from '@hapi/protocol'
 import { getConfiguration } from '../../configuration'
 import { readSessionSummaryContractEnabled } from '../../config/sessionSummaryContract'
-import { constantTimeEquals } from '../../utils/crypto'
-import { parseAccessToken } from '../../utils/accessToken'
+import { authenticateAccessTokenFromSettings } from '../../utils/accessToken'
 import type { Machine, Session, SyncEngine } from '../../sync/syncEngine'
 import { SessionIdentityConflictError, SessionNotAdoptableError } from '../../store/sessions'
 import { SessionTagsOperationError } from '../../sync/sessionCache'
@@ -85,12 +84,12 @@ export function createCliRoutes(getSyncEngine: () => SyncEngine | null): Hono<Cl
 
         const token = parsed.data.replace(/^Bearer\s+/i, '')
         const configuration = getConfiguration()
-        const parsedToken = parseAccessToken(token)
-        if (!parsedToken || !constantTimeEquals(parsedToken.baseToken, configuration.cliApiToken)) {
+        const authenticated = await authenticateAccessTokenFromSettings(token, configuration)
+        if (!authenticated) {
             return c.json({ error: 'Invalid token' }, 401)
         }
 
-        c.set('namespace', parsedToken.namespace)
+        c.set('namespace', authenticated.namespace)
         return await next()
     })
 

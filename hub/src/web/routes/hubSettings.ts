@@ -12,9 +12,10 @@ import type { WebAppEnv } from '../middleware/auth'
 
 const OWNER_ONLY_ERROR = 'Hub settings are only available to the hub owner'
 
-function toHubSettings(settings: Settings): HubSettingsResponse {
+function toHubSettings(settings: Settings, namespace = 'default'): HubSettingsResponse {
+    const clientProfile = settings.namespaces?.[namespace]?.clientProfile ?? settings.clientProfile
     return {
-        ...(settings.clientProfile ? { clientProfile: settings.clientProfile } : {}),
+        ...(clientProfile ? { clientProfile } : {}),
         sessionSummaryContract: settings.sessionSummaryContract === true,
         sessionSummaryInChat: settings.sessionSummaryInChat === true,
         peerSpawnDefaults: mergePeerSpawnDefaults(settings.peerSpawnDefaults)
@@ -25,11 +26,11 @@ export function createHubSettingsRoutes(dataDir: string): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
     // Authenticated readers (any namespace) can observe hub-wide display/emit
-    // flags. Mutations stay owner-only below.
+    // flags and their namespace's clientProfile. Mutations stay owner-only below.
     app.get('/hub-settings', async (c) => {
         c.header('Cache-Control', 'no-store')
         const settings = await readSettingsOrThrowCached(getSettingsFile(dataDir))
-        return c.json(toHubSettings(settings))
+        return c.json(toHubSettings(settings, c.get('namespace')))
     })
 
     app.put('/hub-settings', async (c) => {
