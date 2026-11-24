@@ -353,7 +353,8 @@ export class SyncEngine {
                         displayName,
                         platform: 'builtin-agent-loop',
                         happyCliVersion: '0.34.3-builtin',
-                        workspaceRoots: [defaultDirectory]
+                        workspaceRoots: [defaultDirectory],
+                        capabilities: [MACHINE_CAPABILITIES.AgentAvailability]
                     },
                     { status: 'running' },
                     namespace
@@ -4988,6 +4989,9 @@ export class SyncEngine {
     }
 
     async getAgentAvailability(machineId: string): ReturnType<RpcGateway['getAgentAvailability']> {
+        if (this.builtinAgentLoop?.ownsMachine(machineId)) {
+            return { agents: [{ agent: 'pi', available: true }] }
+        }
         return await this.rpcGateway.getAgentAvailability(machineId)
     }
 

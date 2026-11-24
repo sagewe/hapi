@@ -211,6 +211,10 @@ describe('BuiltinAgentLoopRuntime end-to-end with Model Gateway + Streamable HTT
         expect(householdMachines).toHaveLength(1)
         expect(householdMachines[0].id).toBe('builtin:household')
         expect(householdMachines[0].active).toBe(true)
+        expect(householdMachines[0].metadata?.capabilities).toContain('agent-availability')
+        expect(await engine.getAgentAvailability('builtin:household')).toEqual({
+            agents: [{ agent: 'pi', available: true }]
+        })
         expect(engine.getOnlineMachinesByNamespace('default')).toHaveLength(0)
 
         // Spawn built-in session without any Socket.IO Runner
