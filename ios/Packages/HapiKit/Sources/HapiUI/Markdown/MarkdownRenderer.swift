@@ -672,6 +672,7 @@ struct MarkdownTableView: View {
     @Environment(\.hapiPasteboard) private var pasteboard
     @Environment(\.hapiOpenURL) private var hapiOpenURL
     @State private var copied = false
+    @Environment(\.layoutDirection) private var direction
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -697,28 +698,15 @@ struct MarkdownTableView: View {
             Divider()
             #endif
             ScrollView(.horizontal, showsIndicators: false) {
-                Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    GridRow {
-                        ForEach(Array(model.header.enumerated()), id: \.offset) { index, cell in
-                            cellView(cell, isHeader: true)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .gridColumnAlignment(columnAlignment(index))
-                                .background(theme.tableHeaderBackground)
-                        }
-                    }
-                    ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
-                        Divider()
-                        GridRow {
-                            ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
-                                cellView(cell, isHeader: false)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .gridColumnAlignment(columnAlignment(index))
-                            }
-                        }
-                    }
+                #if targetEnvironment(macCatalyst)
+                if let table = MacSingleLineMarkdownTable.make(model: model, theme: theme, typography: typography, direction: direction) {
+                    MacSingleLineMarkdownTableView(table: table, theme: theme)
+                } else {
+                    cellGrid
                 }
+                #else
+                cellGrid
+                #endif
             }
         }
         .background(theme.surface)
@@ -726,6 +714,31 @@ struct MarkdownTableView: View {
         .contextMenu {
             Button("Copy Table (Markdown)", systemImage: "doc.on.doc") {
                 copyMarkdownTable()
+            }
+        }
+    }
+
+    private var cellGrid: some View {
+        Grid(alignment: .topLeading, horizontalSpacing: 0, verticalSpacing: 0) {
+            GridRow {
+                ForEach(Array(model.header.enumerated()), id: \.offset) { index, cell in
+                    cellView(cell, isHeader: true)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .gridColumnAlignment(columnAlignment(index))
+                        .background(theme.tableHeaderBackground)
+                }
+            }
+            ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
+                Divider()
+                GridRow {
+                    ForEach(Array(row.enumerated()), id: \.offset) { index, cell in
+                        cellView(cell, isHeader: false)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .gridColumnAlignment(columnAlignment(index))
+                    }
+                }
             }
         }
     }

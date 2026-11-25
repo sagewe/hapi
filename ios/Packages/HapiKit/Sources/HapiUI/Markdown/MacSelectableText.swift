@@ -42,6 +42,7 @@ public final class MacTextSelectionTracker {
 /// chat transcripts, code blocks, and user bubbles without redundant TextKit work.
 public struct MacSelectableText: UIViewRepresentable {
     public enum Content: Equatable {
+        case attributed(NSAttributedString)
         case markdown(
             AttributedString,
             baseSize: CGFloat,
@@ -70,6 +71,7 @@ public struct MacSelectableText: UIViewRepresentable {
         @MainActor
         func buildAttributedString() -> NSAttributedString {
             switch self {
+            case let .attributed(text): return text
             case let .markdown(source, baseSize, baseWeight, lineSpacing, theme, typography):
                 return MacSelectableText.markdownAttributedString(
                     source,

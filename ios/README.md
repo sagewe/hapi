@@ -786,6 +786,9 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
 - The Mac chat action menu uses a stable native button/menu and updates its
   capability snapshot only when the available actions change. Streaming/toast
   changes do not rebuild the toolbar's native menu.
+- Rectangular Markdown tables with single-line cells share one native selectable
+  text surface with aligned tab stops, preserving inline styles and links. Cells
+  containing line breaks or tabs, irregular rows and RTL layouts use the cell grid.
 - Offscreen-only transcript updates publish per-row values, including already
   prefetched cells, without applying a collection snapshot. Read-only native
   text views are recycled after detachment (at most 64, with a 16,384 UTF-16-unit
