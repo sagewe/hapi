@@ -39,9 +39,11 @@ public enum ComposerMentionSuggestions {
     }
 
     public static func query(in text: String, selection: NSRange) -> Query? {
-        guard selection.length == 0, selection.location > 0, text.utf8.contains(0x40) else { return nil }
+        guard selection.length == 0, selection.location > 0 else { return nil }
         let content = text as NSString
-        guard selection.location <= content.length else { return nil }
+        guard selection.location <= content.length,
+              content.range(of: "@", options: .literal, range: NSRange(location: 0, length: selection.location)).location != NSNotFound
+        else { return nil }
         // All mention delimiters are single UTF-16 units. Scan without
         // allocating substrings for every character before the caret.
         var index = selection.location - 1

@@ -212,6 +212,44 @@ final class ComposerMentionPresentationTests: XCTestCase {
         XCTAssertEqual(input.bounds.height, oneLine, accuracy: 1)
     }
 
+    #if targetEnvironment(macCatalyst)
+    func testLongDraftSizingAgreesWithNativeLayoutAcrossWidthFontAndEdits() {
+        let editor = ComposerTextView.NativeTextView()
+        editor.textContainerInset = .zero
+        editor.textContainer.lineFragmentPadding = 0
+        let drafts = [
+            String(repeating: "中文草稿", count: 3000),
+            String(repeating: "A long draft with words ", count: 1000),
+            String(repeating: "😀👨‍👩‍👧‍👦👍🏽", count: 800),
+            String(repeating: "first line\n", count: 1200),
+            String(repeating: " ", count: 8000),
+        ]
+        for draft in drafts {
+            for size in [CGFloat(12), 24] {
+                editor.font = .systemFont(ofSize: size)
+                editor.text = draft
+                let limit = ceil(editor.font!.lineHeight * 12)
+                for width in [CGFloat(160), 390, 1200] {
+                    let native = editor.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+                    let bounded = editor.measuredHeight(width: width, maximum: limit)
+                    XCTAssertEqual(min(native, limit), min(bounded, limit), accuracy: 1)
+                    editor.selectedRange = NSRange(location: 3, length: 0)
+                    _ = editor.measuredHeight(width: width, maximum: limit)
+                    XCTAssertEqual(editor.selectedRange.location, 3)
+                }
+            }
+        }
+        editor.text = "short"
+        XCTAssertLessThan(editor.measuredHeight(width: 390, maximum: 400), 400)
+        editor.text = String(repeating: "changed prefix\n", count: 700)
+        XCTAssertGreaterThan(editor.measuredHeight(width: 390, maximum: 200), 200)
+        editor.text = String(repeating: "x", count: 2100)
+        let width: CGFloat = 20000
+        XCTAssertEqual(editor.measuredHeight(width: width, maximum: 200),
+                       editor.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height, accuracy: 1)
+    }
+    #endif
+
     func testMentionListFitsNarrowAndAccessibleLayouts() throws {
         let hits = (0..<8).map { index in
             ComposerMentionSuggestion(id: "session:\(index)", text: "reference", label: "@很长的会话标题 / A long session title \(index)",

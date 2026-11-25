@@ -9,10 +9,11 @@ public enum SkillSuggestions {
     }
 
     public static func query(in text: String, selection: NSRange, composing: Bool = false) -> Query? {
-        guard !composing, selection.length == 0, selection.location > 0,
-              text.utf8.contains(0x24) else { return nil }
+        guard !composing, selection.length == 0, selection.location > 0 else { return nil }
         let source = text as NSString
-        guard selection.location <= source.length else { return nil }
+        guard selection.location <= source.length,
+              source.range(of: "$", options: .literal, range: NSRange(location: 0, length: selection.location)).location != NSNotFound
+        else { return nil }
         func isWhitespace(_ unit: unichar) -> Bool {
             UnicodeScalar(unit).map { $0.properties.isWhitespace } ?? false
         }

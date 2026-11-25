@@ -754,6 +754,10 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
   collaboration choices use the active session's catalog. The plus menu offers
   file and photo attachments, skills, mentions, commands, scratchlist actions
   and scheduled delivery. Microphone and send/stop stay on the trailing edge.
+- Long drafts use a cached, composed-character-safe prefix to determine when
+  the editor exceeds its 12-line viewport. Width, font and prefix edits trigger
+  fresh measurement. Autocomplete searches the NSString caret prefix directly,
+  keeping UIKit-backed text out of a per-character UTF-8 conversion loop.
 - Sidebar rows use smaller icons, up to two title lines and one visible tag;
   hover shows the complete title/project/tags and the context menu edits them.
 - Switching Mac sessions keeps the navigation container and up to three recent

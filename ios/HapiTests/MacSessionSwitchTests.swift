@@ -191,6 +191,52 @@ final class MacSessionSwitchTests: XCTestCase {
         return view.subviews.lazy.compactMap { self.textView(marker, in: $0) }.first
     }
 
+    /// Opt-in production chat benchmark. Flushes the UI transaction after each
+    /// native insertion, so timing includes text layout and SwiftUI updates.
+    func testProfileNativeDraftEdits() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HAPI_DRAFT_PROFILE"] == "1")
+        let credentials = InMemoryCredentialStore()
+        let origin = "http://127.0.0.1:1"
+        let payload = Data(#"{"uid":1,"exp":4102444800,"ns":"test"}"#.utf8).base64EncodedString()
+        try credentials.store(HubCredentials(hubUrl: origin, accessToken: "test", jwt: "e30.\(payload).test"))
+        let hub = try XCTUnwrap(HubSession(hubUrl: origin + "/draft-\(UUID())", credentialStore: credentials,
+                                         performer: SplitTestHTTP(sessionSwitchProfile: true)))
+        let navigation = SessionNavigationState()
+        let (window, _) = try mount(ChatShell(navigation: navigation, hub: hub, list: SessionListModel(session: hub)))
+        defer { window.isHidden = true; window.rootViewController = nil; hub.shutdown() }
+        navigation.open("a")
+        try await wait(seconds: 15) { self.hasText("switch:a:", in: window) }
+        var views: [UIView] = [window]
+        var editor: ComposerTextView.NativeTextView?
+        while let view = views.popLast() {
+            if let text = view as? ComposerTextView.NativeTextView { editor = text; break }
+            views.append(contentsOf: view.subviews)
+        }
+        let input = try XCTUnwrap(editor)
+        let interactor = hub.chatModel(for: "a").interactor
+        XCTAssertTrue(input.becomeFirstResponder())
+        for (label, draft) in [("short", "草稿"), ("paragraph", String(repeating: "测试长草稿", count: 4000)),
+                               ("multiline", String(repeating: "测试长草稿1234\n", count: 2000))] {
+            interactor.setComposerText(draft)
+            try await wait(seconds: 8) { input.text == draft }
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            try await Task.sleep(for: .milliseconds(250))
+            var times: [Double] = []
+            for index in 0..<22 {
+                let start = CACurrentMediaTime()
+                input.insertText("字")
+                window.layoutIfNeeded()
+                CATransaction.flush()
+                let elapsed = (CACurrentMediaTime() - start) * 1000
+                if index >= 2 { times.append(elapsed) }
+                XCTAssertEqual(interactor.composerText, input.text)
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            times.sort()
+            print("HAPI_DRAFT_PROFILE \(label) median=\((times[9] + times[10]) / 2) p95=\(times[18])")
+        }
+    }
+
     func testProfileColdAndWarmSelectionToReadableContent() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["HAPI_SWITCH_PROFILE"] == "1")
         let credentials = InMemoryCredentialStore()

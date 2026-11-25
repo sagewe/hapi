@@ -101,12 +101,13 @@ struct ComposerTextView: UIViewRepresentable {
 
     private func measureTextView(_ textView: NativeTextView, proposal: ProposedViewSize) -> CGSize? {
         guard let width = proposal.width, width > 0 else { return nil }
-        let height = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         #if targetEnvironment(macCatalyst)
         let minimum = ceil(font.lineHeight * 1.75)
         let maximum = ceil(font.lineHeight * 12)
+        let height = textView.measuredHeight(width: width, maximum: maximum)
         if !textView.showsVerticalScrollIndicator { textView.showsVerticalScrollIndicator = true }
         #else
+        let height = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
         let minimum = ceil(font.lineHeight)
         let maximum = ceil(font.lineHeight * 8)
         if textView.showsVerticalScrollIndicator != (height > maximum) {
@@ -484,6 +485,38 @@ struct ComposerTextView: UIViewRepresentable {
     #endif
 
     final class NativeTextView: UITextView {
+        #if targetEnvironment(macCatalyst)
+        private lazy var prefixSizer = UITextView()
+        private var measuredPrefix: NSAttributedString?
+        private var measuredPrefixWidth: CGFloat = 0
+        private var measuredPrefixHeight: CGFloat = 0
+
+        /// Once a prefix exceeds the visible limit, the rest cannot reduce the
+        /// height of this plain-text editor. Size that prefix in an independent
+        /// text view so measurement never moves the live editor's layout/caret.
+        func measuredHeight(width: CGFloat, maximum: CGFloat) -> CGFloat {
+            if textStorage.length > 2048 {
+                let range = (textStorage.string as NSString).rangeOfComposedCharacterSequences(
+                    for: NSRange(location: 0, length: 2048))
+                let prefix = textStorage.attributedSubstring(from: range)
+                if measuredPrefixWidth != width || measuredPrefix?.isEqual(to: prefix) != true {
+                    prefixSizer.textContainerInset = textContainerInset
+                    prefixSizer.textContainer.lineFragmentPadding = textContainer.lineFragmentPadding
+                    prefixSizer.attributedText = prefix
+                    measuredPrefixHeight = prefixSizer.sizeThatFits(
+                        CGSize(width: width, height: .greatestFiniteMagnitude)).height
+                    measuredPrefix = prefix
+                    measuredPrefixWidth = width
+                }
+                // Leave a line of margin for wrapping at the prefix boundary.
+                if measuredPrefixHeight > maximum + (font?.lineHeight ?? 0) { return maximum + 1 }
+            } else {
+                measuredPrefix = nil
+            }
+            return sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        }
+        #endif
+
         var wantsFocus = false
         var onReturn: (() -> Bool)?
         var onSteerReturn: (() -> Bool)?

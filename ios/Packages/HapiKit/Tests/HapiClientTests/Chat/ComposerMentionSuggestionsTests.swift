@@ -19,6 +19,21 @@ struct ComposerMentionSuggestionsTests {
             metadataVersion: 1, agentStateVersion: 1, todosUpdatedAt: 0, pendingRequestsCount: 0)
     }
 
+    @Test func triggerSearchUsesTheCaretPrefixOfFoundationText() {
+        let storage = NSMutableString(string: "😀 普通正文 @尾部 $later")
+        let text = storage as String
+        let prefix = "😀 普通正文".utf16.count
+        let caret = NSRange(location: prefix, length: 0)
+        #expect(ComposerMentionSuggestions.query(in: text, selection: caret) == nil)
+        #expect(SkillSuggestions.query(in: text, selection: caret) == nil)
+        #expect(ComposerMentionSuggestions.query(in: text, selection: NSRange(location: NSNotFound, length: 0)) == nil)
+        #expect(SkillSuggestions.query(in: text, selection: NSRange(location: NSNotFound, length: 0)) == nil)
+        let mention = NSRange(location: "😀 普通正文 @尾".utf16.count, length: 0)
+        #expect(ComposerMentionSuggestions.query(in: text, selection: mention)?.search == "尾")
+        let skill = NSRange(location: storage.length, length: 0)
+        #expect(SkillSuggestions.query(in: text, selection: skill)?.text == "later")
+    }
+
     @Test func triggersAtCaretWithWebBoundariesAndMultiwordSearch() {
         #expect(query("@")?.search == "")
         #expect(query("请参考 @项目")?.search == "项目")
