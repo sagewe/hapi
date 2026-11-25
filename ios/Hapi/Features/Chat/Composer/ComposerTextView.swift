@@ -86,6 +86,8 @@ struct ComposerTextView: UIViewRepresentable {
     private func makeConfiguredTextView(coordinator: Coordinator) -> NativeTextView {
         let view = NativeTextView()
         view.backgroundColor = .clear
+        view.textColor = .label
+        view.accessibilityIdentifier = "composer.text"
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.contentInset = .zero
@@ -103,13 +105,15 @@ struct ComposerTextView: UIViewRepresentable {
         #if targetEnvironment(macCatalyst)
         let minimum = ceil(font.lineHeight * 1.75)
         let maximum = ceil(font.lineHeight * 12)
-        textView.showsVerticalScrollIndicator = true
+        if !textView.showsVerticalScrollIndicator { textView.showsVerticalScrollIndicator = true }
         #else
         let minimum = ceil(font.lineHeight)
         let maximum = ceil(font.lineHeight * 8)
-        textView.showsVerticalScrollIndicator = height > maximum
+        if textView.showsVerticalScrollIndicator != (height > maximum) {
+            textView.showsVerticalScrollIndicator = height > maximum
+        }
         #endif
-        textView.isScrollEnabled = height > maximum
+        if textView.isScrollEnabled != (height > maximum) { textView.isScrollEnabled = height > maximum }
         return CGSize(width: width, height: min(maximum, max(minimum, height)))
     }
 
@@ -118,10 +122,8 @@ struct ComposerTextView: UIViewRepresentable {
         coordinator.owner = self
         coordinator.applying = true
         defer { coordinator.applying = false }
-        view.font = font
-        view.textColor = .label
-        view.accessibilityLabel = accessibilityLabel
-        view.accessibilityIdentifier = "composer.text"
+        if view.font != font { view.font = font }
+        if view.accessibilityLabel != accessibilityLabel { view.accessibilityLabel = accessibilityLabel }
         let changedText = view.text != text
         let changedSelection = selection != coordinator.lastBoundSelection
         // Native feedback may reach SwiftUI in the same turn as a prefill.
@@ -130,12 +132,12 @@ struct ComposerTextView: UIViewRepresentable {
         coordinator.lastBoundSelection = selection
         // Never reassign ordinary keystrokes: that would discard marked text.
         if changedText { view.text = text }
-        let desired = changedText && !requestedSelection
-            ? NSRange(location: text.utf16.count, length: 0) : selection
-        let start = min(desired.location, text.utf16.count)
-        let clamped = NSRange(location: start, length: min(desired.length, text.utf16.count - start))
-        if changedText || changedSelection, view.markedTextRange == nil, view.selectedRange != clamped {
-            view.selectedRange = clamped
+        if (changedText || changedSelection), view.markedTextRange == nil {
+            let length = view.textStorage.length
+            let desired = changedText && !requestedSelection ? NSRange(location: length, length: 0) : selection
+            let start = min(desired.location, length)
+            let clamped = NSRange(location: start, length: min(desired.length, length - start))
+            if view.selectedRange != clamped { view.selectedRange = clamped }
         }
         if changedText {
             // Programmatic prefill/send/mention edits can move the caret. Publish

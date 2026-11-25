@@ -38,6 +38,20 @@ struct SessionListStoreTests {
         #expect(SkillSuggestions.matches(skills, query: "depl").first?.name == "deploy")
     }
 
+    @Test func skillReplacementPreservesEmojiAndRanksEachDistinctName() throws {
+        let text = "📝　$dep🛠 后文"
+        let caret = "📝　$de".utf16.count
+        let query = try #require(SkillSuggestions.query(in: text, selection: NSRange(location: caret, length: 0)))
+        #expect(query.text == "de")
+        #expect(SkillSuggestions.insert("deploy", text: text, query: query).0 == "📝　$deploy 后文")
+        for invalid in ["word$dep", "$de$ploy", "$dep "] {
+            #expect(SkillSuggestions.query(in: invalid, selection: NSRange(location: invalid.utf16.count, length: 0)) == nil)
+        }
+        let names = ["deploy", "deployment", "deploy", "deplox", "re-deploy", "deploy2"]
+        let ranked = SkillSuggestions.matches(names.map { SkillSummary(name: $0) }, query: "deploy", recent: ["deployment": 3])
+        #expect(ranked.map(\.name) == ["deploy", "deployment", "deploy2", "re-deploy", "deplox"])
+    }
+
     @Test func titleLockSurvivesMetadataProjectionAndDecoding() throws {
         var detail = SessionMetadata(path: "/repo", host: "test")
         detail.titleLocked = true

@@ -25,6 +25,9 @@ public struct ComposerMentionSuggestion: Equatable, Sendable, Identifiable {
 /// Native counterpart of web `findActiveWord`, `matchSessionsForMention` and
 /// composer serialization. Offsets use UTF-16, like UIKit and the web editor.
 public enum ComposerMentionSuggestions {
+    private static let stops = Set("\n\r,()[]{}<>;!?\u{FFFC}".utf16)
+    private static let mentionBoundaries = Set(" \n\u{FFFC}".utf16)
+
     public struct Query: Equatable, Sendable {
         public var search: String
         public var range: NSRange
@@ -36,27 +39,26 @@ public enum ComposerMentionSuggestions {
     }
 
     public static func query(in text: String, selection: NSRange) -> Query? {
+        guard selection.length == 0, selection.location > 0, text.utf8.contains(0x40) else { return nil }
         let content = text as NSString
-        guard selection.length == 0, selection.location > 0,
-              selection.location <= content.length else { return nil }
-        let stops = CharacterSet(charactersIn: "\n\r,()[]{}<>;!?\u{FFFC}")
-        func char(_ index: Int) -> String { content.substring(with: NSRange(location: index, length: 1)) }
-        func isStop(_ value: String) -> Bool { value.rangeOfCharacter(from: stops) != nil }
+        guard selection.location <= content.length else { return nil }
+        // All mention delimiters are single UTF-16 units. Scan without
+        // allocating substrings for every character before the caret.
         var index = selection.location - 1
         var spaces = 0
         while index >= 0 {
-            let value = char(index)
-            if isStop(value) { return nil }
-            if value == " " {
+            let value = content.character(at: index)
+            if stops.contains(value) { return nil }
+            if value == 32 {
                 spaces += 1
                 if spaces > 1 { return nil }
             }
-            if value == "@", index == 0 || [" ", "\n", "\u{FFFC}"].contains(char(index - 1)) {
+            if value == 64, index == 0 || mentionBoundaries.contains(content.character(at: index - 1)) {
                 let active = content.substring(with: NSRange(location: index + 1, length: selection.location - index - 1))
                 guard !active.hasSuffix(" ") else { return nil }
                 var end = selection.location
                 // Dots/slashes remain part of file queries (including while typing).
-                while end < content.length, char(end) != " ", !isStop(char(end)) { end += 1 }
+                while end < content.length, content.character(at: end) != 32, !stops.contains(content.character(at: end)) { end += 1 }
                 return Query(search: active, range: NSRange(location: index, length: end - index))
             }
             index -= 1

@@ -18,6 +18,10 @@ struct MacComposerSessionControls: View {
                             Text(verbatim: modelLabel)
                             Image(systemName: "chevron.down").imageScale(.small)
                         }.fixedSize()
+                        // Keep the model recognizable when its full name and effort do not fit.
+                        Text(verbatim: model.modelLabel)
+                            .lineLimit(1).truncationMode(.middle)
+                            .frame(minWidth: 64, maxWidth: 96, alignment: .leading)
                         Image(systemName: "cpu")
                     }
                 }
@@ -51,7 +55,7 @@ struct MacComposerSessionControls: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "shield").foregroundStyle(permissionColor)
+                        Image(systemName: permissionSymbol).foregroundStyle(permissionColor)
                         ViewThatFits(in: .horizontal) {
                             Text(LocalizedStringKey(model.permission.label)).fixedSize()
                             Color.clear.frame(width: 0, height: 1)
@@ -59,6 +63,7 @@ struct MacComposerSessionControls: View {
                     }
                 }
                 .menuStyle(.button)
+                .layoutPriority(1)
                 .disabled(model.isApplying)
                 .accessibilityLabel("Permission mode")
                 .accessibilityValue(Text(LocalizedStringKey(model.permission.label)))
@@ -74,6 +79,14 @@ struct MacComposerSessionControls: View {
 
     private var modelLabel: String {
         model.showsEffort ? "\(model.modelLabel) · \(model.currentEffortLabel)" : model.modelLabel
+    }
+
+    private var permissionSymbol: String {
+        switch model.permission.tone {
+        case .danger: "exclamationmark.shield.fill"
+        case .warning: "exclamationmark.shield"
+        default: "shield"
+        }
     }
 
     private var permissionColor: Color {

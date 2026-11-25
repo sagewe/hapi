@@ -443,6 +443,11 @@ public final class ChatInteractor {
     public func mentionSuggestions(selection: NSRange) -> [ComposerMentionSuggestion] {
         guard composerDestination == .chat,
               let query = ComposerMentionSuggestions.query(in: composerText, selection: selection) else { return [] }
+        return mentionSuggestions(query: query)
+    }
+
+    public func mentionSuggestions(query: ComposerMentionSuggestions.Query) -> [ComposerMentionSuggestion] {
+        guard composerDestination == .chat else { return [] }
         let sessions = ComposerMentionSuggestions.sessions(sessionStore.sessions, query: query.search, excluding: sessionId) { id in
             guard let id else { return String(localized: "Unknown machine") }
             let metadata = self.machineStore?.machines.first { $0.id == id }?.metadata

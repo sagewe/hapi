@@ -152,17 +152,18 @@ struct ChatComposerView: View {
             : Color.black.opacity(0.32)
     }
 
-    private var mentionRequest: ComposerMentionFiles.Request? {
-        guard textFocused, !isComposing, !scratchlistMode,
-              let query = ComposerMentionSuggestions.query(in: interactor.composerText, selection: textSelection) else { return nil }
-        return .init(query: query.search, flavor: interactor.mentionFlavor)
+    private var activeMention: ComposerMentionSuggestions.Query? {
+        guard textFocused, !isComposing, !scratchlistMode else { return nil }
+        return ComposerMentionSuggestions.query(in: interactor.composerText, selection: textSelection)
     }
 
     var body: some View {
         let composer = interactor.composer
         let attachments = interactor.attachments.items
         let rawSlashSuggestions = isAssistantMode ? [] : interactor.slashSuggestions
-        let rawMentionSuggestions = mentionRequest == nil ? [] : interactor.mentionSuggestions(selection: textSelection)
+        let mention = activeMention
+        let mentionRequest = mention.map { ComposerMentionFiles.Request(query: $0.search, flavor: interactor.mentionFlavor) }
+        let rawMentionSuggestions = mention.map { interactor.mentionSuggestions(query: $0) } ?? []
         let rawSkillQuery = (scratchlistMode || isAssistantMode) ? nil : SkillSuggestions.query(in: interactor.composerText, selection: textSelection, composing: isComposing)
         let rawSkillMatches = rawSkillQuery.map { SkillSuggestions.matches(interactor.skills, query: $0.text, recent: interactor.recentSkills) } ?? []
         let suggestionKey: String? = {
@@ -1335,8 +1336,12 @@ struct ChatComposerView: View {
             selectedSuggestionIndex = (selectedSuggestionIndex + delta + count) % count
             return true
         }
-        // Up / Down arrow recalls sent message history when no popup is open
-        guard !sentHistory.isEmpty else { return false }
+        // Editing a recalled message makes it a new draft. Let the editor
+        // handle arrows instead of replacing those edits with another entry.
+        if let current = historyIndex, interactor.composerText != sentHistory[current] {
+            historyIndex = nil
+        }
+        guard textSelection.length == 0, !sentHistory.isEmpty else { return false }
         if delta < 0 {
             if let current = historyIndex {
                 guard textSelection.location == 0 || textSelection.location == (interactor.composerText as NSString).length else {

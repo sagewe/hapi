@@ -1,6 +1,11 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "More actions" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "更多操作"}}}},
+    "Choose Files…" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "选择文件…"}}}},
+    "Photo Library…" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "从照片图库选择…"}}}},
+    "Mention" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "引用会话或文件（@）"}}}},
+    "Commands" : {"extractionState": "manual", "localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "插入命令（/）"}}}},
     "Home network" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "家庭局域网"}}}, "extractionState": "manual"},
     "Not configured" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "未配置"}}}, "extractionState": "manual"},
     "Connected directly on your home network" : {"localizations": {"zh-Hans": {"stringUnit": {"state": "translated", "value": "正在通过家庭局域网直连"}}}, "extractionState": "manual"},

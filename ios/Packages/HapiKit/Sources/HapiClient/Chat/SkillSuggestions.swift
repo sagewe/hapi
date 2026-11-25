@@ -9,25 +9,37 @@ public enum SkillSuggestions {
     }
 
     public static func query(in text: String, selection: NSRange, composing: Bool = false) -> Query? {
+        guard !composing, selection.length == 0, selection.location > 0,
+              text.utf8.contains(0x24) else { return nil }
         let source = text as NSString
-        guard !composing, selection.length == 0, selection.location > 0, selection.location <= source.length else { return nil }
-        let before = source.substring(to: selection.location)
-        guard let range = before.range(of: #"(?:^|\s)(\$[^\s$]*)$"#, options: .regularExpression) else { return nil }
-        let matched = String(before[range])
-        guard let dollar = matched.firstIndex(of: "$") else { return nil }
-        let token = String(matched[dollar...])
-        let start = selection.location - token.utf16.count
-        var end = selection.location
-        while end < source.length, let scalar = UnicodeScalar(source.character(at: end)), !CharacterSet.whitespacesAndNewlines.contains(scalar) { end += 1 }
-        return Query(text: String(token.dropFirst()), range: NSRange(location: start, length: end - start))
+        guard selection.location <= source.length else { return nil }
+        func isWhitespace(_ unit: unichar) -> Bool {
+            UnicodeScalar(unit).map { $0.properties.isWhitespace } ?? false
+        }
+        var start = selection.location
+        while start > 0 {
+            start -= 1
+            let unit = source.character(at: start)
+            if isWhitespace(unit) { return nil }
+            guard unit == 0x24 else { continue }
+            guard start == 0 || isWhitespace(source.character(at: start - 1)) else { return nil }
+            var end = selection.location
+            while end < source.length, !isWhitespace(source.character(at: end)) { end += 1 }
+            let prefix = NSRange(location: start + 1, length: selection.location - start - 1)
+            return Query(text: source.substring(with: prefix), range: NSRange(location: start, length: end - start))
+        }
+        return nil
     }
 
     public static func matches(_ skills: [SkillSummary], query: String, recent: [String: Double] = [:]) -> [SkillSummary] {
         let term = query.lowercased()
-        func distance(_ a: String, _ b: String) -> Int {
-            let a = Array(a), b = Array(b)
+        let queryCharacters = Array(term)
+        let threshold = max(2, queryCharacters.count / 2)
+        func distance(to name: String) -> Int {
+            let b = Array(name)
+            guard abs(queryCharacters.count - b.count) <= threshold else { return Int.max }
             var previous = Array(0...b.count)
-            for (i, x) in a.enumerated() {
+            for (i, x) in queryCharacters.enumerated() {
                 var next = [i + 1]
                 for (j, y) in b.enumerated() { next.append(min(next[j] + 1, previous[j + 1] + 1, previous[j] + (x == y ? 0 : 1))) }
                 previous = next
@@ -39,15 +51,21 @@ public enum SkillSuggestions {
             if term.isEmpty || name == term { return 0 }
             if name.hasPrefix(term) { return 1 }
             if name.contains(term) { return 2 }
-            let d = distance(term, name)
-            return d <= max(2, term.count / 2) ? 3 + d : Int.max
+            let d = distance(to: name)
+            return d <= threshold ? 3 + d : Int.max
         }
         var seen = Set<String>()
-        return skills.filter { seen.insert($0.name).inserted && score($0) < Int.max }.sorted {
-            if score($0) != score($1) { return score($0) < score($1) }
-            if recent[$0.name, default: 0] != recent[$1.name, default: 0] { return recent[$0.name, default: 0] > recent[$1.name, default: 0] }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        let ranked = skills.compactMap { skill -> (skill: SkillSummary, score: Int, recent: Double)? in
+            guard seen.insert(skill.name).inserted else { return nil }
+            let rank = score(skill)
+            guard rank != Int.max else { return nil }
+            return (skill, rank, recent[skill.name, default: 0])
         }
+        return ranked.sorted {
+            if $0.score != $1.score { return $0.score < $1.score }
+            if $0.recent != $1.recent { return $0.recent > $1.recent }
+            return $0.skill.name.localizedStandardCompare($1.skill.name) == .orderedAscending
+        }.map(\.skill)
     }
 
     public static func insert(_ name: String, text: String, query: Query) -> (String, NSRange) {
