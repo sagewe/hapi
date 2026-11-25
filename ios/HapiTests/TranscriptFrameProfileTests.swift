@@ -111,14 +111,24 @@ final class TranscriptFrameProfileTests: XCTestCase {
             let window = UIWindow(windowScene: scene)
             let host = UIHostingController(rootView: Harness(driver: driver))
             window.rootViewController = host
+            #if targetEnvironment(macCatalyst)
+            window.frame = CGRect(x: 0, y: 0, width: 1200, height: 850)
+            #endif
             window.makeKeyAndVisible()
-            defer { window.isHidden = true }
+            defer { window.isHidden = true; window.rootViewController = nil }
             try await Task.sleep(for: .seconds(1))
             func find(_ view: UIView) -> UICollectionView? {
                 if let collection = view as? UICollectionView { return collection }
-                return view.subviews.lazy.compactMap(find).first
+                for child in view.subviews {
+                    if let match = find(child) { return match }
+                }
+                return nil
             }
             let collection = try XCTUnwrap(find(host.view))
+            if let mode = ProcessInfo.processInfo.environment["HAPI_SCROLL_PREFETCH"] {
+                XCTAssertTrue(["enabled", "disabled"].contains(mode))
+                collection.isPrefetchingEnabled = mode == "enabled"
+            }
             collection.delegate?.scrollViewWillBeginDragging?(collection)
             collection.scrollToItem(at: IndexPath(item: 350, section: 0), at: .top, animated: false)
             try await Task.sleep(for: .seconds(1))
@@ -158,6 +168,7 @@ final class TranscriptFrameProfileTests: XCTestCase {
                 record["scenario"] = scenario
                 record["repetition"] = repetition
                 record["rows"] = 800
+                record["prefetchingEnabled"] = collection.isPrefetchingEnabled
                 record["viewportWidth"] = collection.bounds.width
                 record["viewportHeight"] = collection.bounds.height
                 record["initialVisibleHeights"] = initialHeights
