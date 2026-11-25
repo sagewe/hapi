@@ -636,12 +636,10 @@ struct ChatComposerView: View {
                 }
             }
         } label: {
-            toolGlyph("clock", active: active ? AnyShapeStyle(.tint) : nil)
+            Label("Schedule send", systemImage: "clock")
         }
         // Menu labels inherit the accent as their foreground, which tints
         // the relative `.secondary` style and reads as "on".
-        .menuStyle(.button)
-        .buttonStyle(.plain)
         .disabled(hasAttachments || interactor.scratchlistBusy)
         .accessibilityLabel("Schedule send")
         .accessibilityIdentifier("chat.schedule-send")
@@ -674,25 +672,33 @@ struct ChatComposerView: View {
             } label: {
                 Label("Choose Files…", systemImage: "folder")
             }
+            .disabled(preparingAttachment)
             Button {
                 photosPickerOpen = true
             } label: {
                 Label("Photo Library…", systemImage: "photo.on.rectangle")
             }
+            .disabled(preparingAttachment)
             if !scratchlistMode && !isAssistantMode {
                 Divider()
+                Button("Skills", systemImage: "sparkles") { insertTrigger("$") }
                 Button("Mention", systemImage: "at") { insertTrigger("@") }
                 Button("Commands", systemImage: "slash.circle") { insertTrigger("/", atStartOnly: true) }
+            }
+            if !isAssistantMode {
+                Divider()
+                if interactor.scratchlist != nil { scratchlistButton }
+                if !scratchlistMode { scheduleButton(hasAttachments: !interactor.attachments.items.isEmpty) }
             }
         } label: {
             toolGlyph("plus")
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .disabled(preparingAttachment || interactor.scratchlistBusy)
-        .accessibilityLabel("Add attachment")
+        .disabled(interactor.scratchlistBusy)
+        .accessibilityLabel(isAssistantMode ? Text("Add attachment") : Text("More actions"))
         .accessibilityIdentifier("chat.add-attachment")
-        .help("Add attachment")
+        .help(isAssistantMode ? Text("Add attachment") : Text("More actions"))
         #else
         Button {
             togglePopup(.attachment)
@@ -784,9 +790,8 @@ struct ChatComposerView: View {
                     interactor.setComposerDestination(scratchlistMode ? .chat : .scratchlist)
                 }
             } label: {
-                scratchlistButtonLabel
+                Label(String(format: String(localized: "Scratchlist (%lld)"), Int64(interactor.scratchlistCount)), systemImage: "tray")
             }
-            .menuStyle(.button)
             #else
             Button {
                 if scratchlistMode {
@@ -991,8 +996,8 @@ struct ChatComposerView: View {
             }
             #if targetEnvironment(macCatalyst)
             .padding(.horizontal, collapsed ? 2 : 14)
-            .padding(.top, collapsed ? 0 : 12)
-            .padding(.bottom, collapsed ? 0 : 4)
+            .padding(.top, collapsed ? 0 : (interactor.composerText.isEmpty ? 7 : 12))
+            .padding(.bottom, collapsed ? 0 : (interactor.composerText.isEmpty ? 1 : 4))
             .contentShape(Rectangle())
             .onTapGesture {
                 if !textFocused {
@@ -1153,19 +1158,6 @@ struct ChatComposerView: View {
         #if targetEnvironment(macCatalyst)
         addAttachmentButton
         if !scratchlistMode {
-            Button {
-                insertTrigger("$")
-            } label: {
-                toolGlyph("sparkles")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Skills")
-            .accessibilityIdentifier("chat.skills")
-            .help("Insert skill ($)")
-        }
-        if interactor.scratchlist != nil { scratchlistButton }
-        if !scratchlistMode {
-            scheduleButton(hasAttachments: hasAttachments)
             if configModel.showsComposerModelMenu || configModel.showsComposerPermissionMenu || configModel.showsQuota {
                 MacComposerSessionControls(
                     model: configModel,

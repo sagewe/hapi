@@ -46,6 +46,7 @@ struct SessionConfigView: View {
     @State private var model: SessionConfigModel
     @State private var detent: PresentationDetent = .medium
     let notice: String?
+    let showsPermissions: Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -54,15 +55,16 @@ struct SessionConfigView: View {
         self.init(model: SessionConfigModel(interactor: interactor, api: api, machineId: machineId), notice: notice)
     }
 
-    init(model: SessionConfigModel, notice: String? = nil) {
+    init(model: SessionConfigModel, notice: String? = nil, showsPermissions: Bool = true) {
         _model = State(initialValue: model)
         self.notice = notice
+        self.showsPermissions = showsPermissions
     }
 
     var body: some View {
         NavigationStack {
             settingsForm
-                .navigationTitle("Session Settings")
+                .navigationTitle(showsPermissions ? Text("Session Settings") : Text("Model"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { doneButton }
         }
@@ -96,7 +98,7 @@ struct SessionConfigView: View {
                 }
                 .disabled(model.isApplying)
             }
-            if !model.config.permissionModes.isEmpty || model.showsCollaborationMode {
+            if showsPermissions && (!model.config.permissionModes.isEmpty || model.showsCollaborationMode) {
                 Section {
                     if !model.config.permissionModes.isEmpty { permissionMenu }
                     if model.showsCollaborationMode { collaborationMenu }

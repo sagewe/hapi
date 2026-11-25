@@ -749,12 +749,11 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
 - Return sends from the composer and picks the first `/` or `@` suggestion;
   Shift/Option-Return insert a newline, IME composition is never intercepted,
   and ⌘↩ still sends. Scratchlist drafts keep Return as a newline.
-- The composer shares the phone's single configuration form for model, effort,
-  fast mode, permissions, collaboration mode and quota. Its anchored popover
-  preserves the draft and restores editor focus when closed. The summary falls
-  back to symbols in narrow windows; permission risk and quota colors remain.
-  The attachment menu also offers `@` and `/` insertion. Keyboard guidance is
-  available on hover instead of occupying toolbar space.
+- The Mac composer displays the model and effort beside a separate permission
+  menu. The model popover includes fast mode and quota. Permission and
+  collaboration choices use the active session's catalog. The plus menu offers
+  file and photo attachments, skills, mentions, commands, scratchlist actions
+  and scheduled delivery. Microphone and send/stop stay on the trailing edge.
 - Sidebar rows use smaller icons, up to two title lines and one visible tag;
   hover shows the complete title/project/tags and the context menu edits them.
 - Switching Mac sessions keeps the navigation container and up to three recent

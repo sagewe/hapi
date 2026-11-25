@@ -1,9 +1,8 @@
 #if targetEnvironment(macCatalyst)
 import HapiClient
+import HapiProtocol
 import SwiftUI
 
-/// One settings entry point, shared with the phone's configuration form.
-/// Natural-width variants keep the send action reachable in narrow windows.
 struct MacComposerSessionControls: View {
     let model: SessionConfigModel
     @Binding var isPresented: Bool
@@ -11,75 +10,76 @@ struct MacComposerSessionControls: View {
     var notice: String?
 
     var body: some View {
-        Button { isPresented.toggle() } label: {
-            ViewThatFits(in: .horizontal) {
-                summary(includingPermission: true)
-                summary(includingPermission: false)
-                symbols
-                    .padding(.horizontal, 6)
-                    .frame(height: 32)
+        HStack(spacing: 4) {
+            if model.showsComposerModelMenu || model.showsQuota {
+                Button { isPresented = true } label: {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 4) {
+                            Text(verbatim: modelLabel)
+                            Image(systemName: "chevron.down").imageScale(.small)
+                        }.fixedSize()
+                        Image(systemName: "cpu")
+                    }
+                }
+                .accessibilityLabel("Model")
+                .accessibilityValue(Text(verbatim: model.modelSummaryValue))
+                .accessibilityIdentifier("chat.composer-controls")
+                .help(model.modelSummaryHelp)
+                .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                    SessionConfigView(model: model, notice: notice, showsPermissions: false)
+                        .frame(idealWidth: 400, maxWidth: 400, idealHeight: 460, maxHeight: 520)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
-        }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .accessibilityLabel("Session controls")
-        .accessibilityValue(Text(verbatim: "\(model.modelSummaryValue) · \(model.permissionSummaryValue)"))
-        .accessibilityIdentifier("chat.composer-controls")
-        .help(model.modelSummaryHelp + "\n" + model.permissionSummaryHelp)
-        .popover(isPresented: $isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-            SessionConfigView(model: model, notice: notice)
-                .frame(idealWidth: 400, maxWidth: 400, idealHeight: 520, maxHeight: 520)
-                .presentationCompactAdaptation(.popover)
-        }
-    }
-
-    private func summary(includingPermission: Bool) -> some View {
-        HStack(spacing: 6) {
-            symbols
-            Text(verbatim: model.modelSummaryValue)
-                .foregroundStyle(.primary)
-            if includingPermission, model.showsComposerPermissionMenu {
-                Text(LocalizedStringKey(model.permissionSummaryValue))
-                    .foregroundStyle(permissionColor)
+            if model.showsComposerPermissionMenu {
+                Menu {
+                    if !model.config.permissionModes.isEmpty {
+                        Picker("Permission mode", selection: Binding(get: { model.permission }, set: model.selectPermission)) {
+                            ForEach(model.config.permissionModes, id: \.mode) { option in
+                                Text(LocalizedStringKey(option.label)).tag(option.mode)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
+                    if model.showsCollaborationMode {
+                        Picker("Collaboration Mode", selection: Binding(get: { model.collaborationMode }, set: model.selectCollaborationMode)) {
+                            ForEach(CodexCollaborationMode.allCases, id: \.self) { mode in
+                                Text(LocalizedStringKey(mode.label)).tag(mode)
+                            }
+                        }
+                        .disabled(!model.config.canChangeCollaborationMode)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "shield").foregroundStyle(permissionColor)
+                        ViewThatFits(in: .horizontal) {
+                            Text(LocalizedStringKey(model.permission.label)).fixedSize()
+                            Color.clear.frame(width: 0, height: 1)
+                        }
+                    }
+                }
+                .menuStyle(.button)
+                .disabled(model.isApplying)
+                .accessibilityLabel("Permission mode")
+                .accessibilityValue(Text(LocalizedStringKey(model.permission.label)))
+                .accessibilityIdentifier("chat.composer-permission")
+                .help(model.permissionSummaryHelp)
             }
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.tertiary)
         }
         .font(.caption)
-        .fixedSize(horizontal: true, vertical: false)
-        .padding(.horizontal, 6)
+        .buttonStyle(.plain)
         .frame(height: 32)
-        .contentShape(Rectangle())
+        .disabled(isBusy)
     }
 
-    private var symbols: some View {
-        HStack(spacing: 6) {
-            ComposerQuotaGaugeIcon(usedPercent: model.quotaPeakUsedPercent, accentColor: quotaColor)
-            if model.permission.tone == .danger || model.permission.tone == .warning {
-                Image(systemName: "exclamationmark.shield")
-                    .foregroundStyle(permissionColor)
-            } else if model.showsCollaborationMode, model.collaborationMode != .default {
-                Image(systemName: "list.bullet.clipboard")
-                    .foregroundStyle(.tint)
-            }
-        }
-        .font(.system(size: 15))
-        .fixedSize()
+    private var modelLabel: String {
+        model.showsEffort ? "\(model.modelLabel) · \(model.currentEffortLabel)" : model.modelLabel
     }
 
     private var permissionColor: Color {
         switch model.permission.tone {
         case .danger: .red
         case .warning: .orange
-        default: .secondary
-        }
-    }
-
-    private var quotaColor: Color {
-        switch model.quotaPeakUsedPercent {
-        case let used? where used >= 90: .red
-        case let used? where used >= 75: .orange
         default: .secondary
         }
     }
