@@ -84,7 +84,13 @@ struct ComposerTextView: UIViewRepresentable {
     #endif
 
     private func makeConfiguredTextView(coordinator: Coordinator) -> NativeTextView {
+        #if targetEnvironment(macCatalyst)
+        // The Mac composer is a plain-text editor. Initialize its layout engine
+        // explicitly: switching after editing begins would discard input state.
+        let view = NativeTextView(usingTextLayoutManager: false)
+        #else
         let view = NativeTextView()
+        #endif
         view.backgroundColor = .clear
         view.textColor = .label
         view.accessibilityIdentifier = "composer.text"
@@ -118,6 +124,12 @@ struct ComposerTextView: UIViewRepresentable {
         return CGSize(width: width, height: min(maximum, max(minimum, height)))
     }
 
+    /// Editor offsets are UTF-16 positions, so compare the actual stored
+    /// representation instead of performing Swift's canonical normalization.
+    private static func textMatches(_ view: UITextView, _ value: String) -> Bool {
+        (view.textStorage.string as NSString).isEqual(to: value)
+    }
+
     /// Shared update path for SwiftUI echoes, programmatic edits and IME regression tests.
     func synchronize(_ view: NativeTextView, coordinator: Coordinator) {
         coordinator.owner = self
@@ -125,7 +137,7 @@ struct ComposerTextView: UIViewRepresentable {
         defer { coordinator.applying = false }
         if view.font != font { view.font = font }
         if view.accessibilityLabel != accessibilityLabel { view.accessibilityLabel = accessibilityLabel }
-        let changedText = view.text != text
+        let changedText = !Self.textMatches(view, text)
         let changedSelection = selection != coordinator.lastBoundSelection
         // Native feedback may reach SwiftUI in the same turn as a prefill.
         // Only an offset different from the live caret is a new edit intent.
@@ -145,7 +157,7 @@ struct ComposerTextView: UIViewRepresentable {
             // only after updateUIView, and only if no newer edit has overtaken it.
             let expected = text
             DispatchQueue.main.async { [weak view, weak coordinator] in
-                guard let view, let coordinator, view.text == expected,
+                guard let view, let coordinator, Self.textMatches(view, expected),
                       coordinator.owner.text == expected else { return }
                 coordinator.publishSelection(view)
             }
@@ -762,9 +774,7 @@ struct ComposerTextView: UIViewRepresentable {
                 return false
             }
             if owner.isComposing { owner.isComposing = false }
-            if owner.text != textView.text {
-                owner.text = textView.text
-            }
+            if !ComposerTextView.textMatches(textView, owner.text) { owner.text = textView.text }
             return true
         }
 
@@ -804,7 +814,7 @@ struct ComposerTextView: UIViewRepresentable {
             if textView.selectedRange.length > 0 {
                 MacTextSelectionTracker.shared.clear()
             }
-            guard !applying, textView.text == owner.text else { return }
+            guard !applying, ComposerTextView.textMatches(textView, owner.text) else { return }
             publishSelection(textView)
         }
 

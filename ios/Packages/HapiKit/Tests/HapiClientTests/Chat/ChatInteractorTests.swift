@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 #if canImport(FoundationNetworking)
 import FoundationNetworking  // URLSession types live here on Linux
 #endif
@@ -354,6 +355,21 @@ private func eventually(
 @Suite("ChatInteractor")
 @MainActor
 struct ChatInteractorTests {
+
+    @Test func canonicallyEquivalentDraftEditsKeepTheirUTF16Representation() async throws {
+        let h = try await ChatInteractionHarness()
+        defer { h.interactor.deactivate() }
+        h.interactor.setComposerText("\u{e9}")
+        var published = false
+        withObservationTracking { _ = h.interactor.composerText } onChange: {
+            MainActor.assumeIsolated { published = true }
+        }
+        h.interactor.setComposerText("e\u{301}")
+        #expect(published, "A different UTF-16 representation must be published to the editor")
+        #expect(Array(h.interactor.composerText.utf16) == [0x65, 0x301])
+        h.interactor.setComposerText("\u{e9}")
+        #expect(Array(h.interactor.composerText.utf16) == [0xe9])
+    }
 
     @Test func voiceDraftIsLocalAndOnlyFinalIsPostedOnceWithStableIdentity() async throws {
         let h = try await ChatInteractionHarness()

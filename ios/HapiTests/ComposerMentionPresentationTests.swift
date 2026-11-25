@@ -158,6 +158,20 @@ final class ComposerMentionPresentationTests: XCTestCase {
         }
     }
 
+    func testPrefillKeepsDistinctUnicodeRepresentationsAndCaret() async throws {
+        let driver = TextDriver()
+        let window = try host(VStack { EditorHarness(driver: driver); Spacer() })
+        defer { window.isHidden = true; window.rootViewController = nil }
+        driver.text = "\u{e9}"
+        try await settle()
+        let input = try textView(in: window)
+        driver.text = "e\u{301}"
+        driver.selection = NSRange(location: 2, length: 0)
+        try await settle()
+        XCTAssertEqual(Array(input.text.utf16), [0x65, 0x301])
+        XCTAssertEqual(input.selectedRange.location, 2)
+    }
+
     func testMentionEditHonorsTheExplicitMidDraftCaretAndSupportsAnotherMention() async throws {
         let driver = TextDriver()
         let window = try host(VStack { EditorHarness(driver: driver); Spacer() })
@@ -213,8 +227,55 @@ final class ComposerMentionPresentationTests: XCTestCase {
     }
 
     #if targetEnvironment(macCatalyst)
+    func testMacProductionEditorPreservesIMEUndoAndEmojiDeletion() async throws {
+        let driver = TextDriver()
+        let window = try host(VStack { EditorHarness(driver: driver); Spacer() })
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await settle()
+        let input = try XCTUnwrap(try textView(in: window) as? ComposerTextView.NativeTextView)
+        XCTAssertNil(input.textLayoutManager, "The production Mac composer must initialize its selected engine directly")
+        XCTAssertTrue(input.becomeFirstResponder())
+        input.insertText("前缀 😀 e\u{301} ")
+        input.setMarkedText("zhongwen", selectedRange: NSRange(location: 8, length: 0))
+        try await settle()
+        XCTAssertNotNil(input.markedTextRange)
+        XCTAssertTrue(driver.composing)
+        var submissions = 0
+        input.onReturn = { submissions += 1; return true }
+        XCTAssertFalse(input.handleMacKeyPress(keyCode: .keyboardReturnOrEnter, modifiers: []))
+        XCTAssertEqual(submissions, 0)
+        input.insertText("中文")
+        input.unmarkText()
+        try await settle()
+        let base = "前缀 😀 e\u{301} 中文"
+        XCTAssertEqual(input.text, base)
+        XCTAssertEqual(Array(driver.text.utf8), Array(base.utf8), "Snapshotting must preserve the original Unicode representation")
+        XCTAssertFalse(driver.composing)
+
+        let undo = try XCTUnwrap(input.undoManager)
+        undo.removeAllActions()
+        undo.beginUndoGrouping()
+        input.insertText("!")
+        undo.endUndoGrouping()
+        try await settle()
+        XCTAssertEqual(driver.text, base + "!")
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        try await settle()
+        XCTAssertEqual(driver.text, base)
+        undo.redo()
+        try await settle()
+        XCTAssertEqual(driver.text, base + "!")
+        input.selectedRange = NSRange(location: "前缀 😀".utf16.count, length: 0)
+        input.deleteBackward()
+        try await settle()
+        XCTAssertEqual(driver.text, "前缀  e\u{301} 中文!")
+        XCTAssertEqual(input.selectedRange.location, "前缀 ".utf16.count)
+        XCTAssertTrue(input.isFirstResponder)
+    }
+
     func testLongDraftSizingAgreesWithNativeLayoutAcrossWidthFontAndEdits() {
-        let editor = ComposerTextView.NativeTextView()
+        let editor = ComposerTextView.NativeTextView(usingTextLayoutManager: false)
         editor.textContainerInset = .zero
         editor.textContainer.lineFragmentPadding = 0
         let drafts = [

@@ -237,6 +237,46 @@ final class MacSessionSwitchTests: XCTestCase {
         }
     }
 
+    func testProfileNativeTextEngines() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HAPI_TEXT_ENGINE_PROFILE"] == "1")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.frame = CGRect(x: 0, y: 0, width: 1200, height: 850)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        for modern in [true, false] {
+            let input = UITextView(usingTextLayoutManager: modern)
+            input.frame = CGRect(x: 350, y: 400, width: 692, height: 240)
+            input.font = .systemFont(ofSize: 14)
+            input.textContainerInset = .zero
+            input.textContainer.lineFragmentPadding = 0
+            root.view.addSubview(input)
+            XCTAssertTrue(input.becomeFirstResponder())
+            for (label, draft) in [("short", "草稿"), ("paragraph", String(repeating: "测试长草稿", count: 4000)),
+                                   ("multiline", String(repeating: "测试长草稿1234\n", count: 2000))] {
+                input.text = draft
+                input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+                window.layoutIfNeeded()
+                CATransaction.flush()
+                try await Task.sleep(for: .milliseconds(250))
+                var times: [Double] = []
+                for index in 0..<22 {
+                    let start = CACurrentMediaTime()
+                    input.insertText("字")
+                    window.layoutIfNeeded()
+                    CATransaction.flush()
+                    if index >= 2 { times.append((CACurrentMediaTime() - start) * 1000) }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                times.sort()
+                print("HAPI_ENGINE_PROFILE modern=\(modern) \(label) median=\((times[9] + times[10]) / 2) p95=\(times[18])")
+            }
+            input.removeFromSuperview()
+        }
+    }
+
     func testProfileColdAndWarmSelectionToReadableContent() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["HAPI_SWITCH_PROFILE"] == "1")
         let credentials = InMemoryCredentialStore()

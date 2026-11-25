@@ -62,7 +62,19 @@ public final class ChatInteractor {
     // MARK: Observable storage
 
     /// Composer text (owned here so drafts and edit-prefill flow through it).
-    public private(set) var composerText = ""
+    @ObservationIgnored private var storedComposerText = ""
+    /// Match the editor's literal representation: canonically equivalent Unicode
+    /// strings can have different UTF-16 caret positions.
+    public private(set) var composerText: String {
+        get {
+            access(keyPath: \.composerText)
+            return storedComposerText
+        }
+        set {
+            guard !(storedComposerText as NSString).isEqual(to: newValue) else { return }
+            withMutation(keyPath: \.composerText) { storedComposerText = newValue }
+        }
+    }
     /// A send (or its resume recovery) is in flight.
     public private(set) var isSending = false
     /// Latest window state (feeds ``queuedRows``).

@@ -754,6 +754,12 @@ Mac-specific behavior, compiled with `targetEnvironment(macCatalyst)`:
   collaboration choices use the active session's catalog. The plus menu offers
   file and photo attachments, skills, mentions, commands, scratchlist actions
   and scheduled delivery. Microphone and send/stop stay on the trailing edge.
+- The plain-text Mac editor initializes TextKit 1 for lower single-paragraph
+  edit latency. Standard editing, IME composition, undo/redo and grapheme
+  deletion are covered by hosted UI checks. TextKit 2 Natural Selection is
+  unavailable in this editor; iOS retains its system text engine.
+- Draft change detection compares the literal UTF-16 representation, preserving
+  distinct canonically equivalent spellings and their corresponding caret offsets.
 - Long drafts use a cached, composed-character-safe prefix to determine when
   the editor exceeds its 12-line viewport. Width, font and prefix edits trigger
   fresh measurement. Autocomplete searches the NSString caret prefix directly,
