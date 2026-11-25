@@ -8,7 +8,7 @@ import type { VisibilityState } from '../../visibility/visibilityTracker'
 import type { VisibilityTracker } from '../../visibility/visibilityTracker'
 import type { WebAppEnv } from '../middleware/auth'
 import { compressSseResponse } from '../sseCompression'
-import { requireSession } from './guards'
+import { requireSession, requireSessionFromParam, requireSyncEngine } from './guards'
 
 function parseOptionalId(value: string | undefined): string | null {
     if (!value) {
@@ -143,6 +143,76 @@ export function createEventsRoutes(
         })
 
         return compressSseResponse(response, c.req.header('Accept-Encoding'))
+    })
+
+    app.get('/sessions/:id/stream', (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) {
+            return sessionResult
+        }
+        const sessionId = sessionResult.sessionId
+        if (!engine.isBuiltinSession(sessionId)) {
+            return c.json({ error: 'Real-time stream is only available for built-in agent loop sessions' }, 404)
+        }
+
+        c.header('Cache-Control', 'no-store')
+        c.header('X-Accel-Buffering', 'no')
+
+        return streamSSE(c, async (stream) => {
+            let closed = false
+            const pendingWrites: Promise<unknown>[] = []
+            const enqueueWrite = (payload: unknown) => {
+                if (closed || stream.aborted) return
+                const p = stream.writeSSE({ data: JSON.stringify(payload) }).catch(() => {
+                    closed = true
+                })
+                pendingWrites.push(p)
+                if (pendingWrites.length > 64) {
+                    pendingWrites.splice(0, pendingWrites.length - 64)
+                }
+            }
+
+            const unsubscribe = engine.subscribeBuiltinSessionStream(sessionId, (event) => {
+                enqueueWrite(event)
+            })
+            const heartbeat = setInterval(() => {
+                enqueueWrite({ type: 'heartbeat', timestamp: Date.now() })
+            }, 15_000)
+            heartbeat.unref?.()
+
+            try {
+                const session = engine.getSession(sessionId)
+                await stream.writeSSE({
+                    data: JSON.stringify({
+                        type: 'connected',
+                        sessionId,
+                        thinking: Boolean(session?.thinking)
+                    })
+                })
+
+                await new Promise<void>((resolve) => {
+                    const done = () => {
+                        closed = true
+                        resolve()
+                    }
+                    if (stream.aborted || c.req.raw.signal.aborted) {
+                        done()
+                        return
+                    }
+                    c.req.raw.signal.addEventListener('abort', done, { once: true })
+                    stream.onAbort(done)
+                })
+            } finally {
+                closed = true
+                clearInterval(heartbeat)
+                unsubscribe()
+            }
+        })
     })
 
     app.post('/visibility', async (c) => {

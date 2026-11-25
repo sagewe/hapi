@@ -14,9 +14,13 @@ const DEFAULT_SYSTEM_PROMPT = [
     '所有时间默认使用北京时间（Asia/Shanghai）。'
 ].join('\n')
 
+type OpenAiUserContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+
 type OpenAiChatMessage =
     | { role: 'system'; content: string }
-    | { role: 'user'; content: string }
+    | { role: 'user'; content: string | OpenAiUserContentPart[] }
     | {
         role: 'assistant'
         content: string | null
@@ -37,23 +41,32 @@ interface OpenAiToolSchema {
     }
 }
 
+interface OpenAiToolCallPayload {
+    index?: number
+    id?: string
+    type?: string
+    function?: { name?: string; arguments?: string }
+}
+
 interface OpenAiCompletionResponse {
     choices?: Array<{
         finish_reason?: string | null
         message?: {
             role?: string
             content?: string | Array<{ type?: string; text?: string }> | null
-            tool_calls?: Array<{
-                id?: string
-                type?: string
-                function?: { name?: string; arguments?: string }
-            }>
+            tool_calls?: OpenAiToolCallPayload[]
+        }
+        delta?: {
+            role?: string
+            content?: string | Array<{ type?: string; text?: string }> | null
+            tool_calls?: OpenAiToolCallPayload[]
         }
     }>
     error?: { message?: string } | string
 }
 
 export interface AgentLoopCallbacks {
+    onTextDelta?: (delta: string, meta: { round: number }) => void
     onToolUse: (event: { id: string; name: string; input: Record<string, unknown> }) => void
     onToolResult: (event: { id: string; name: string; content: string; isError: boolean; receipt: ToolReceipt }) => void
     onAssistantText: (text: string) => void
@@ -69,19 +82,195 @@ function extractMessageText(content: unknown): string {
         return content
             .map((part) => (isObject(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : ''))
             .filter(Boolean)
-            .join('\n')
+            .join('')
     }
     return ''
 }
 
+interface ConsumedCompletion {
+    text: string
+    toolCalls: Array<{
+        id?: string
+        function?: { name?: string; arguments?: string }
+    }>
+    streamedAnyText: boolean
+}
+
+function applyChunkPayload(
+    data: OpenAiCompletionResponse,
+    state: {
+        text: string
+        streamedAnyText: boolean
+        toolCallsByIndex: Map<number, { id: string; name: string; arguments: string }>
+        nextToolIndex: number
+    },
+    onTextDelta?: (delta: string) => void
+): void {
+    if (data.error) {
+        const msg = typeof data.error === 'string' ? data.error : data.error.message || 'Model Gateway error'
+        throw new Error(msg)
+    }
+    const choice = data.choices?.[0]
+    if (!choice) return
+
+    const delta = choice.delta
+    if (delta) {
+        const deltaText = extractMessageText(delta.content)
+        if (deltaText) {
+            state.text += deltaText
+            state.streamedAnyText = true
+            onTextDelta?.(deltaText)
+        }
+        if (Array.isArray(delta.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+                const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0
+                    ? tc.index
+                    : state.nextToolIndex++
+                let entry = state.toolCallsByIndex.get(idx)
+                if (!entry) {
+                    entry = { id: '', name: '', arguments: '' }
+                    state.toolCallsByIndex.set(idx, entry)
+                }
+                if (typeof tc.id === 'string' && tc.id.trim()) {
+                    entry.id = tc.id.trim()
+                }
+                if (typeof tc.function?.name === 'string' && tc.function.name) {
+                    entry.name += tc.function.name
+                }
+                if (typeof tc.function?.arguments === 'string' && tc.function.arguments) {
+                    entry.arguments += tc.function.arguments
+                }
+            }
+        }
+        return
+    }
+
+    // Defensive fallback if an SSE chunk carries a full message object
+    const message = choice.message
+    if (message) {
+        const msgText = extractMessageText(message.content)
+        if (msgText && !state.text) {
+            state.text = msgText
+            state.streamedAnyText = true
+            onTextDelta?.(msgText)
+        }
+        if (Array.isArray(message.tool_calls) && state.toolCallsByIndex.size === 0) {
+            message.tool_calls.forEach((tc, i) => {
+                state.toolCallsByIndex.set(i, {
+                    id: typeof tc.id === 'string' ? tc.id.trim() : '',
+                    name: typeof tc.function?.name === 'string' ? tc.function.name : '',
+                    arguments: typeof tc.function?.arguments === 'string' ? tc.function.arguments : ''
+                })
+            })
+        }
+    }
+}
+
+async function consumeChatCompletionResponse(
+    response: Response,
+    onTextDelta?: (delta: string) => void
+): Promise<ConsumedCompletion> {
+    const contentType = (response.headers.get('content-type') || '').toLowerCase()
+    if (!contentType.includes('text/event-stream') || !response.body) {
+        const data = (await response.json()) as OpenAiCompletionResponse
+        if (data.error) {
+            const msg = typeof data.error === 'string' ? data.error : data.error.message || 'Model Gateway error'
+            throw new Error(msg)
+        }
+        const choice = data.choices?.[0]
+        const assistantMsg = choice?.message
+        const text = extractMessageText(assistantMsg?.content)
+        const rawToolCalls = Array.isArray(assistantMsg?.tool_calls) ? assistantMsg.tool_calls : []
+        let streamedAnyText = false
+        if (text && rawToolCalls.length === 0) {
+            onTextDelta?.(text)
+            streamedAnyText = true
+        }
+        return { text, toolCalls: rawToolCalls, streamedAnyText }
+    }
+
+    const state = {
+        text: '',
+        streamedAnyText: false,
+        toolCallsByIndex: new Map<number, { id: string; name: string; arguments: string }>(),
+        nextToolIndex: 0
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    let done = false
+
+    const processLine = (rawLine: string): boolean => {
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine
+        if (!line || line.startsWith(':')) return false
+        if (!line.startsWith('data:')) return false
+        const payload = line.slice(5).trim()
+        if (!payload) return false
+        if (payload === '[DONE]') return true
+        let parsed: OpenAiCompletionResponse
+        try {
+            parsed = JSON.parse(payload) as OpenAiCompletionResponse
+        } catch {
+            return false
+        }
+        applyChunkPayload(parsed, state, onTextDelta)
+        return false
+    }
+
+    try {
+        while (!done) {
+            const { value, done: streamDone } = await reader.read()
+            if (streamDone) {
+                buffer += decoder.decode()
+                break
+            }
+            buffer += decoder.decode(value, { stream: true })
+            let newlineIdx = buffer.indexOf('\n')
+            while (newlineIdx !== -1) {
+                const line = buffer.slice(0, newlineIdx)
+                buffer = buffer.slice(newlineIdx + 1)
+                if (processLine(line)) {
+                    done = true
+                    break
+                }
+                newlineIdx = buffer.indexOf('\n')
+            }
+        }
+        if (!done && buffer.trim()) {
+            processLine(buffer)
+        }
+    } finally {
+        reader.releaseLock()
+    }
+
+    const toolCalls = [...state.toolCallsByIndex.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, tc]) => ({
+            id: tc.id || undefined,
+            function: {
+                name: tc.name,
+                arguments: tc.arguments || '{}'
+            }
+        }))
+        .filter((tc) => Boolean(tc.function.name.trim()))
+
+    return {
+        text: state.text,
+        toolCalls,
+        streamedAnyText: state.streamedAnyText
+    }
+}
+
 /**
  * Reconstruct clean OpenAI-compatible chat history from HAPI's canonical stored rows.
- * Only user prompts and assistant text / tool exchanges are projected; internal system
- * events are ignored so history stays compact and provider-portable.
+ * Only user prompts (plus resolved image attachments) and assistant text / tool exchanges
+ * are projected; internal system events are ignored so history stays compact and provider-portable.
  */
 export function buildChatHistoryFromStoredMessages(
     stored: readonly StoredMessage[],
-    systemPrompt: string
+    systemPrompt: string,
+    resolvedImages?: ReadonlyMap<string, string>
 ): OpenAiChatMessage[] {
     const messages: OpenAiChatMessage[] = [{ role: 'system', content: systemPrompt }]
     const slice = stored.slice(-MAX_HISTORY_MESSAGES)
@@ -92,8 +281,37 @@ export function buildChatHistoryFromStoredMessages(
 
         if (env.role === 'user' && isObject(env.content) && env.content.type === 'text') {
             const text = typeof env.content.text === 'string' ? env.content.text.trim() : ''
-            if (text) {
-                messages.push({ role: 'user', content: text })
+            const rawAttachments = Array.isArray(env.content.attachments) ? env.content.attachments : []
+            const imageParts: OpenAiUserContentPart[] = []
+            const fallbackNotes: string[] = []
+
+            for (const att of rawAttachments) {
+                if (!isObject(att)) continue
+                const mimeType = typeof att.mimeType === 'string' ? att.mimeType.toLowerCase() : ''
+                if (!mimeType.startsWith('image/')) continue
+                const attId = typeof att.id === 'string' ? att.id : ''
+                const attPath = typeof att.path === 'string' ? att.path : ''
+                const filename = typeof att.filename === 'string' && att.filename.trim() ? att.filename.trim() : 'image'
+                const dataUrl = (attId ? resolvedImages?.get(attId) : undefined)
+                    ?? (attPath ? resolvedImages?.get(attPath) : undefined)
+                if (dataUrl) {
+                    imageParts.push({ type: 'image_url', image_url: { url: dataUrl } })
+                } else {
+                    fallbackNotes.push(`[历史图片附件: ${filename}]`)
+                }
+            }
+
+            const combinedText = [text, ...fallbackNotes].filter(Boolean).join('\n').trim()
+            if (imageParts.length > 0) {
+                messages.push({
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: combinedText || '请帮我看看这张图' },
+                        ...imageParts
+                    ]
+                })
+            } else if (combinedText) {
+                messages.push({ role: 'user', content: combinedText })
             }
             continue
         }
@@ -295,11 +513,12 @@ export async function runBuiltinAgentTurn(options: {
     gatewayToken?: string
     model: string
     storedMessages: readonly StoredMessage[]
+    resolvedImages?: ReadonlyMap<string, string>
     mcpClients: readonly HttpMcpClient[]
     callbacks: AgentLoopCallbacks
     signal?: AbortSignal
 }): Promise<{ finalText: string; toolCallsExecuted: number }> {
-    const { config, gatewayUrl, gatewayToken, model, storedMessages, mcpClients, callbacks, signal } = options
+    const { config, gatewayUrl, gatewayToken, model, storedMessages, resolvedImages, mcpClients, callbacks, signal } = options
     const systemPrompt = config.systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT
     const maxRounds = Math.max(1, Math.min(20, config.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS))
     const enableWebSearch = config.enableWebSearch !== false
@@ -330,7 +549,7 @@ export async function runBuiltinAgentTurn(options: {
         })
     )
 
-    const chatMessages = buildChatHistoryFromStoredMessages(storedMessages, systemPrompt)
+    const chatMessages = buildChatHistoryFromStoredMessages(storedMessages, systemPrompt, resolvedImages)
     const completionsUrl = `${gatewayUrl.replace(/\/+$/, '')}/v1/ai/chat/completions`
     let toolCallsExecuted = 0
 
@@ -339,7 +558,10 @@ export async function runBuiltinAgentTurn(options: {
             throw new DOMException('Turn aborted', 'AbortError')
         }
 
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream, application/json'
+        }
         if (gatewayToken) {
             headers.Authorization = `Bearer ${gatewayToken}`
         }
@@ -347,7 +569,7 @@ export async function runBuiltinAgentTurn(options: {
         const reqBody: Record<string, unknown> = {
             model,
             messages: chatMessages,
-            stream: false
+            stream: true
         }
         if (allToolSchemas.length > 0) {
             reqBody.tools = allToolSchemas
@@ -369,19 +591,17 @@ export async function runBuiltinAgentTurn(options: {
             throw new Error(`Model Gateway HTTP ${response.status}: ${errText.slice(0, 300)}`)
         }
 
-        const data = (await response.json()) as OpenAiCompletionResponse
-        if (data.error) {
-            const msg = typeof data.error === 'string' ? data.error : data.error.message || 'Model Gateway error'
-            throw new Error(msg)
-        }
-
-        const choice = data.choices?.[0]
-        const assistantMsg = choice?.message
-        const text = extractMessageText(assistantMsg?.content).trim()
-        const rawToolCalls = Array.isArray(assistantMsg?.tool_calls) ? assistantMsg.tool_calls : []
+        const consumed = await consumeChatCompletionResponse(response, (delta) => {
+            callbacks.onTextDelta?.(delta, { round })
+        })
+        const text = consumed.text.trim()
+        const rawToolCalls = consumed.toolCalls
 
         if (rawToolCalls.length === 0) {
             const finalText = text || '已完成处理。'
+            if (!consumed.streamedAnyText) {
+                callbacks.onTextDelta?.(finalText, { round })
+            }
             callbacks.onAssistantText(finalText)
             return { finalText, toolCallsExecuted }
         }

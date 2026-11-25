@@ -3,12 +3,15 @@ import type { Session } from '@hapi/protocol/types'
 import { getProviderEnvironment } from '../config/providerCredentials'
 import type { Settings } from '../config/settings'
 import type { Store } from '../store'
+import type { StoredMessage } from '../store/types'
 import { runBuiltinAgentTurn } from './loop'
 import { HttpMcpClient } from './mcpClient'
-import type { BuiltinAgentLoopConfig, ToolReceipt } from './types'
+import type { BuiltinAgentLoopConfig, BuiltinAgentStreamEvent, BuiltinAttachmentRef, ToolReceipt } from './types'
 
 const BUILTIN_MACHINE_PREFIX = 'builtin:'
 const KEEPALIVE_INTERVAL_MS = 25_000
+const MAX_VISION_HISTORY_IMAGES = 4
+const MAX_VISION_IMAGE_BYTES = 15 * 1024 * 1024
 
 export interface BuiltinRuntimeHost {
     store: Store
@@ -34,6 +37,7 @@ export interface BuiltinRuntimeHost {
     markBuiltinMessagesConsumed(sessionId: string, localIds: string[]): void
     appendBuiltinAgentMessage(sessionId: string, content: unknown): void
     setBuiltinSessionModel(sessionId: string, namespace: string, model: string): void
+    readBuiltinAttachment?(sessionId: string, attachment: BuiltinAttachmentRef): Promise<Buffer | null>
 }
 
 interface NamespaceRuntimeState {
@@ -50,6 +54,7 @@ export class BuiltinAgentLoopRuntime {
     private readonly machineToNamespace = new Map<string, string>()
     private readonly activeAborts = new Map<string, AbortController>()
     private readonly turnChains = new Map<string, Promise<void>>()
+    private readonly streamSubscribers = new Map<string, Set<(event: BuiltinAgentStreamEvent) => void>>()
     private keepaliveTimer: ReturnType<typeof setInterval> | null = null
 
     constructor(
@@ -131,6 +136,39 @@ export class BuiltinAgentLoopRuntime {
             controller.abort()
         }
         this.activeAborts.clear()
+        this.streamSubscribers.clear()
+    }
+
+    subscribeSessionStream(
+        sessionId: string,
+        listener: (event: BuiltinAgentStreamEvent) => void
+    ): () => void {
+        let listeners = this.streamSubscribers.get(sessionId)
+        if (!listeners) {
+            listeners = new Set()
+            this.streamSubscribers.set(sessionId, listeners)
+        }
+        listeners.add(listener)
+        return () => {
+            const set = this.streamSubscribers.get(sessionId)
+            if (!set) return
+            set.delete(listener)
+            if (set.size === 0) {
+                this.streamSubscribers.delete(sessionId)
+            }
+        }
+    }
+
+    private emitStreamEvent(sessionId: string, event: BuiltinAgentStreamEvent): void {
+        const listeners = this.streamSubscribers.get(sessionId)
+        if (!listeners || listeners.size === 0) return
+        for (const listener of [...listeners]) {
+            try {
+                listener(event)
+            } catch {
+                // Keep turn execution isolated from subscriber transport failures
+            }
+        }
     }
 
     ownsMachine(machineId: string, namespace?: string): boolean {
@@ -236,12 +274,77 @@ export class BuiltinAgentLoopRuntime {
         return { url, token }
     }
 
+    private async resolveRecentVisionImages(
+        sessionId: string,
+        storedMessages: readonly StoredMessage[]
+    ): Promise<Map<string, string>> {
+        const resolved = new Map<string, string>()
+        if (!this.host.readBuiltinAttachment) {
+            return resolved
+        }
+
+        const candidates: BuiltinAttachmentRef[] = []
+        const recent = storedMessages.slice(-48)
+        for (let i = recent.length - 1; i >= 0 && candidates.length < MAX_VISION_HISTORY_IMAGES; i--) {
+            const env = recent[i]?.content
+            if (!env || typeof env !== 'object' || Array.isArray(env)) continue
+            const rec = env as Record<string, unknown>
+            if (rec.role !== 'user') continue
+            const inner = rec.content
+            if (!inner || typeof inner !== 'object' || Array.isArray(inner)) continue
+            const attachments = (inner as Record<string, unknown>).attachments
+            if (!Array.isArray(attachments)) continue
+            for (let j = attachments.length - 1; j >= 0 && candidates.length < MAX_VISION_HISTORY_IMAGES; j--) {
+                const raw = attachments[j]
+                if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+                const att = raw as Record<string, unknown>
+                const mimeType = typeof att.mimeType === 'string' ? att.mimeType.trim().toLowerCase() : ''
+                if (!mimeType.startsWith('image/')) continue
+                const id = typeof att.id === 'string' ? att.id : ''
+                const path = typeof att.path === 'string' ? att.path : ''
+                if (!id && !path) continue
+                candidates.push({
+                    id,
+                    filename: typeof att.filename === 'string' ? att.filename : 'image',
+                    mimeType,
+                    size: typeof att.size === 'number' ? att.size : 0,
+                    path,
+                    previewUrl: typeof att.previewUrl === 'string' ? att.previewUrl : undefined
+                })
+            }
+        }
+
+        await Promise.all(
+            candidates.map(async (att) => {
+                try {
+                    const bytes = await this.host.readBuiltinAttachment?.(sessionId, att)
+                    if (!bytes || bytes.length === 0 || bytes.length > MAX_VISION_IMAGE_BYTES) {
+                        return
+                    }
+                    const dataUrl = `data:${att.mimeType};base64,${bytes.toString('base64')}`
+                    if (att.id) resolved.set(att.id, dataUrl)
+                    if (att.path) resolved.set(att.path, dataUrl)
+                } catch (error) {
+                    console.warn(
+                        `[AgentLoop] Failed to load image attachment ${att.id || att.path} for session ${sessionId}:`,
+                        error instanceof Error ? error.message : String(error)
+                    )
+                }
+            })
+        )
+
+        return resolved
+    }
+
     private async runTurn(
         sessionId: string,
         state: NamespaceRuntimeState,
         localId: string | null
     ): Promise<void> {
         const controller = new AbortController()
+        const turnId = localId || randomUUID()
+        let aborted = false
+        let turnError: string | undefined
         this.activeAborts.set(sessionId, controller)
 
         if (localId) {
@@ -254,6 +357,7 @@ export class BuiltinAgentLoopRuntime {
             const currentSession = this.host.getSession(sessionId)
             const model = currentSession?.model?.trim() || state.config.defaultModel?.trim() || 'auto'
             const storedMessages = this.host.store.messages.getAllMessages(sessionId)
+            const resolvedImages = await this.resolveRecentVisionImages(sessionId, storedMessages)
 
             await runBuiltinAgentTurn({
                 config: state.config,
@@ -261,9 +365,19 @@ export class BuiltinAgentLoopRuntime {
                 gatewayToken: token,
                 model,
                 storedMessages,
+                resolvedImages,
                 mcpClients: state.mcpClients,
                 signal: controller.signal,
                 callbacks: {
+                    onTextDelta: (delta, { round }) => {
+                        this.emitStreamEvent(sessionId, {
+                            type: 'text_delta',
+                            sessionId,
+                            turnId,
+                            round,
+                            delta
+                        })
+                    },
                     onToolUse: ({ id, name, input }) => {
                         this.host.appendBuiltinAgentMessage(sessionId, {
                             role: 'agent',
@@ -278,6 +392,14 @@ export class BuiltinAgentLoopRuntime {
                                 }
                             }
                         })
+                        this.emitStreamEvent(sessionId, {
+                            type: 'tool_use',
+                            sessionId,
+                            turnId,
+                            id,
+                            name,
+                            input
+                        })
                     },
                     onToolResult: ({ id, name, content, isError, receipt }) => {
                         this.host.appendBuiltinAgentMessage(sessionId, buildToolResultEnvelope({
@@ -287,6 +409,16 @@ export class BuiltinAgentLoopRuntime {
                             isError,
                             receipt
                         }))
+                        this.emitStreamEvent(sessionId, {
+                            type: 'tool_result',
+                            sessionId,
+                            turnId,
+                            id,
+                            name,
+                            content,
+                            isError,
+                            receipt
+                        })
                     },
                     onAssistantText: (text) => {
                         this.host.appendBuiltinAgentMessage(sessionId, {
@@ -302,11 +434,19 @@ export class BuiltinAgentLoopRuntime {
                                 }
                             }
                         })
+                        this.emitStreamEvent(sessionId, {
+                            type: 'assistant_message',
+                            sessionId,
+                            turnId,
+                            text
+                        })
                     }
                 }
             })
         } catch (error) {
             if (controller.signal.aborted) {
+                aborted = true
+                const abortText = '已停止当前回复。'
                 this.host.appendBuiltinAgentMessage(sessionId, {
                     role: 'agent',
                     content: {
@@ -315,13 +455,21 @@ export class BuiltinAgentLoopRuntime {
                             type: 'assistant',
                             message: {
                                 role: 'assistant',
-                                content: [{ type: 'text', text: '已停止当前回复。' }]
+                                content: [{ type: 'text', text: abortText }]
                             }
                         }
                     }
                 })
+                this.emitStreamEvent(sessionId, {
+                    type: 'assistant_message',
+                    sessionId,
+                    turnId,
+                    text: abortText
+                })
             } else {
                 const msg = error instanceof Error ? error.message : String(error)
+                turnError = msg
+                const errText = `执行出错：${msg}`
                 console.error(`[AgentLoop] Turn failed for session ${sessionId}:`, msg)
                 this.host.appendBuiltinAgentMessage(sessionId, {
                     role: 'agent',
@@ -331,16 +479,29 @@ export class BuiltinAgentLoopRuntime {
                             type: 'assistant',
                             message: {
                                 role: 'assistant',
-                                content: [{ type: 'text', text: `执行出错：${msg}` }]
+                                content: [{ type: 'text', text: errText }]
                             }
                         }
                     }
+                })
+                this.emitStreamEvent(sessionId, {
+                    type: 'assistant_message',
+                    sessionId,
+                    turnId,
+                    text: errText
                 })
             }
         } finally {
             if (this.activeAborts.get(sessionId) === controller) {
                 this.activeAborts.delete(sessionId)
             }
+            this.emitStreamEvent(sessionId, {
+                type: 'turn_done',
+                sessionId,
+                turnId,
+                aborted,
+                ...(turnError ? { error: turnError } : {})
+            })
             this.host.markBuiltinSessionAlive(sessionId, false)
             this.host.markBuiltinSessionReady(sessionId)
         }

@@ -1,21 +1,32 @@
 import { afterEach, describe, expect, it } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Hono } from 'hono'
 import { Server as SocketIOServer } from 'socket.io'
 import { Store } from '../store'
+import { SessionMediaStore } from '../sessionMedia/storage'
 import { RpcRegistry } from '../socket/rpcRegistry'
 import { SSEManager } from '../sse/sseManager'
 import { VisibilityTracker } from '../visibility/visibilityTracker'
 import { SyncEngine, type SyncEvent } from '../sync/syncEngine'
+import { createEventsRoutes } from '../web/routes/events'
+import { createMessagesRoutes } from '../web/routes/messages'
+import type { WebAppEnv } from '../web/middleware/auth'
 import { BuiltinAgentLoopRuntime } from './runtime'
+import type { BuiltinAgentStreamEvent } from './types'
 import type { Settings } from '../config/settings'
 
 const servers: Array<ReturnType<typeof Bun.serve>> = []
 const runtimes: BuiltinAgentLoopRuntime[] = []
 const engines: SyncEngine[] = []
+const tempDirs: string[] = []
 
 afterEach(() => {
     for (const rt of runtimes.splice(0)) rt.stop()
     for (const eng of engines.splice(0)) eng.stop()
     for (const srv of servers.splice(0)) srv.stop(true)
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
 async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<void> {
@@ -360,5 +371,304 @@ describe('BuiltinAgentLoopRuntime end-to-end with Model Gateway + Streamable HTT
             content: { data: { message: { content: Array<{ text: string }> } } }
         }
         expect(last.content.data.message.content[0].text).toContain('已停止')
+    })
+
+    it('streams incremental SSE text_delta and tool_calls in real time over /api/sessions/:id/stream', async () => {
+        let llmCallCount = 0
+        const streamingGateway = Bun.serve({
+            port: 0,
+            async fetch(req) {
+                const url = new URL(req.url)
+                if (url.pathname !== '/v1/ai/chat/completions') {
+                    return new Response('not found', { status: 404 })
+                }
+                llmCallCount += 1
+                const body = (await req.json()) as { stream?: boolean }
+                expect(body.stream).toBe(true)
+
+                const encoder = new TextEncoder()
+                if (llmCallCount === 1) {
+                    // Stream a tool call split across multiple SSE delta chunks
+                    const stream = new ReadableStream({
+                        async start(controller) {
+                            controller.enqueue(encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [{
+                                        delta: {
+                                            tool_calls: [{
+                                                index: 0,
+                                                id: 'call_time_stream',
+                                                type: 'function',
+                                                function: { name: 'get_current', arguments: '' }
+                                            }]
+                                        }
+                                    }]
+                                })}\n\n`
+                            ))
+                            await new Promise((r) => setTimeout(r, 10))
+                            controller.enqueue(encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [{
+                                        delta: {
+                                            tool_calls: [{
+                                                index: 0,
+                                                function: { name: '_time', arguments: '{}' }
+                                            }]
+                                        }
+                                    }]
+                                })}\n\n`
+                            ))
+                            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+                            controller.close()
+                        }
+                    })
+                    return new Response(stream, {
+                        headers: { 'Content-Type': 'text/event-stream' }
+                    })
+                }
+
+                // Second round streams incremental Chinese tokens
+                const tokens = ['现在是', '北京', '时间', '下午', '六点半。']
+                const stream = new ReadableStream({
+                    async start(controller) {
+                        for (const tok of tokens) {
+                            controller.enqueue(encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [{ delta: { content: tok } }]
+                                })}\n\n`
+                            ))
+                            await new Promise((r) => setTimeout(r, 10))
+                        }
+                        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+                        controller.close()
+                    }
+                })
+                return new Response(stream, {
+                    headers: { 'Content-Type': 'text/event-stream' }
+                })
+            }
+        })
+        servers.push(streamingGateway)
+
+        const store = new Store(':memory:')
+        const io = new SocketIOServer()
+        const rpcRegistry = new RpcRegistry()
+        const sseManager = new SSEManager(0, new VisibilityTracker())
+        const engine = new SyncEngine(store, io as never, rpcRegistry, sseManager)
+        engines.push(engine)
+
+        const runtime = new BuiltinAgentLoopRuntime(engine.createBuiltinRuntimeHost(), {
+            namespaces: {
+                household: {
+                    agentLoop: {
+                        enabled: true,
+                        modelGatewayUrl: streamingGateway.url.origin,
+                        defaultModel: 'auto',
+                        enableWebSearch: false
+                    }
+                }
+            }
+        })
+        runtimes.push(runtime)
+        engine.attachBuiltinAgentLoop(runtime)
+        runtime.start()
+
+        const spawned = await engine.spawnSession(
+            'builtin:household', '/household', 'pi',
+            undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            'household'
+        )
+        if (spawned.type !== 'success') throw new Error('spawn failed')
+        const sessionId = spawned.sessionId
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'household')
+            await next()
+        })
+        app.route('/api', createEventsRoutes(() => sseManager, () => engine, () => null))
+        app.route('/api', createMessagesRoutes(() => engine))
+
+        const hubServer = Bun.serve({ port: 0, fetch: app.fetch })
+        servers.push(hubServer)
+
+        // Open real SSE stream BEFORE posting message
+        const abortCtrl = new AbortController()
+        const sseResp = await fetch(`${hubServer.url.origin}/api/sessions/${sessionId}/stream`, {
+            signal: abortCtrl.signal
+        })
+        expect(sseResp.status).toBe(200)
+        expect(sseResp.headers.get('content-type')).toContain('text/event-stream')
+        const reader = sseResp.body!.getReader()
+        const decoder = new TextDecoder()
+        const streamEvents: BuiltinAgentStreamEvent[] = []
+        let sseBuf = ''
+
+        const readNextEvent = async (): Promise<BuiltinAgentStreamEvent> => {
+            while (true) {
+                const idx = sseBuf.indexOf('\n\n')
+                if (idx !== -1) {
+                    const frame = sseBuf.slice(0, idx)
+                    sseBuf = sseBuf.slice(idx + 2)
+                    const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
+                    if (dataLine) {
+                        const ev = JSON.parse(dataLine.slice(5).trim()) as BuiltinAgentStreamEvent
+                        streamEvents.push(ev)
+                        return ev
+                    }
+                }
+                const { value, done } = await reader.read()
+                if (done) throw new Error('SSE stream closed prematurely')
+                sseBuf += decoder.decode(value, { stream: true })
+            }
+        }
+
+        const connected = await readNextEvent()
+        expect(connected).toEqual({ type: 'connected', sessionId, thinking: false })
+
+        // Post user message via HTTP route
+        const postResp = await fetch(`${hubServer.url.origin}/api/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: '现在几点了？', localId: 'turn-stream-1' })
+        })
+        expect(postResp.status).toBe(200)
+
+        while (true) {
+            const ev = await readNextEvent()
+            if (ev.type === 'turn_done') break
+        }
+        abortCtrl.abort()
+        reader.releaseLock()
+
+        const textDeltas = streamEvents
+            .filter((e): e is Extract<BuiltinAgentStreamEvent, { type: 'text_delta' }> => e.type === 'text_delta')
+            .map((e) => e.delta)
+        expect(textDeltas).toEqual(['现在是', '北京', '时间', '下午', '六点半。'])
+        expect(streamEvents.some((e) => e.type === 'tool_use' && e.name === 'get_current_time' && e.turnId === 'turn-stream-1')).toBe(true)
+        expect(streamEvents.some((e) => e.type === 'tool_result' && e.name === 'get_current_time' && e.receipt.kind === 'time')).toBe(true)
+        expect(streamEvents.some((e) => e.type === 'assistant_message' && e.text === '现在是北京时间下午六点半。')).toBe(true)
+        expect(streamEvents.some((e) => e.type === 'turn_done' && e.turnId === 'turn-stream-1' && !e.aborted)).toBe(true)
+    })
+
+    it('persists inline image_base64 in SessionMediaStore (not SQLite) and forwards OpenAI multimodal content', async () => {
+        // Minimal valid 1x1 red PNG
+        const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+        let capturedUserContent: unknown = null
+
+        const visionGateway = Bun.serve({
+            port: 0,
+            async fetch(req) {
+                const body = (await req.json()) as { messages: Array<{ role: string; content: unknown }> }
+                const userMsg = body.messages.find((m) => m.role === 'user')
+                capturedUserContent = userMsg?.content
+                const encoder = new TextEncoder()
+                const stream = new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode(
+                            `data: ${JSON.stringify({
+                                choices: [{ delta: { content: '这是一张 1x1 红色像素测试图。' } }]
+                            })}\n\n`
+                        ))
+                        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+                        controller.close()
+                    }
+                })
+                return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
+            }
+        })
+        servers.push(visionGateway)
+
+        const mediaRoot = mkdtempSync(join(tmpdir(), 'hapi-vision-test-'))
+        tempDirs.push(mediaRoot)
+        const mediaStore = new SessionMediaStore(mediaRoot)
+
+        const store = new Store(':memory:')
+        const io = new SocketIOServer()
+        const rpcRegistry = new RpcRegistry()
+        const sseManager = new SSEManager(0, new VisibilityTracker())
+        const engine = new SyncEngine(store, io as never, rpcRegistry, sseManager, mediaStore)
+        engines.push(engine)
+
+        const runtime = new BuiltinAgentLoopRuntime(engine.createBuiltinRuntimeHost(), {
+            namespaces: {
+                household: {
+                    agentLoop: {
+                        enabled: true,
+                        modelGatewayUrl: visionGateway.url.origin,
+                        defaultModel: 'auto',
+                        enableWebSearch: false
+                    }
+                }
+            }
+        })
+        runtimes.push(runtime)
+        engine.attachBuiltinAgentLoop(runtime)
+        runtime.start()
+
+        const spawned = await engine.spawnSession(
+            'builtin:household', '/household', 'pi',
+            undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            'household'
+        )
+        if (spawned.type !== 'success') throw new Error('spawn failed')
+        const sessionId = spawned.sessionId
+
+        const app = new Hono<WebAppEnv>()
+        app.use('*', async (c, next) => {
+            c.set('namespace', 'household')
+            await next()
+        })
+        app.route('/api', createMessagesRoutes(() => engine))
+
+        const postResp = await app.request(`/api/sessions/${sessionId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: '看看这张图是什么颜色',
+                localId: 'loc-vision-1',
+                image_base64: `data:image/png;base64,${pngBase64}`
+            })
+        })
+        expect(postResp.status).toBe(200)
+
+        await waitFor(() => store.messages.getAllMessages(sessionId).length >= 2 && engine.getSession(sessionId)?.thinking === false)
+
+        // 1. Verify OpenAI multimodal array sent to Model Gateway
+        expect(Array.isArray(capturedUserContent)).toBe(true)
+        const parts = capturedUserContent as Array<Record<string, unknown>>
+        expect(parts).toHaveLength(2)
+        expect(parts[0]).toEqual({ type: 'text', text: '看看这张图是什么颜色' })
+        expect(parts[1]).toEqual({
+            type: 'image_url',
+            image_url: { url: `data:image/png;base64,${pngBase64}` }
+        })
+
+        // 2. Verify SQLite row stores compact AttachmentMetadata without raw base64
+        const stored = store.messages.getAllMessages(sessionId)
+        const userRowJson = JSON.stringify(stored[0].content)
+        expect(userRowJson).not.toContain(pngBase64)
+        const userContent = stored[0].content as {
+            role: string
+            content: { type: string; text: string; attachments?: Array<{ id: string; mimeType: string; size: number; previewUrl?: string }> }
+        }
+        expect(userContent.content.attachments).toHaveLength(1)
+        expect(userContent.content.attachments?.[0].mimeType).toBe('image/png')
+        expect(userContent.content.attachments?.[0].previewUrl).toContain(`/api/sessions/${sessionId}/uploads/`)
+
+        // 3. Verify image is persisted in SessionMediaStore
+        const mediaId = userContent.content.attachments![0].id
+        const storedMedia = await mediaStore.get(sessionId, 'uploads', mediaId)
+        expect(storedMedia).not.toBeNull()
+        expect(storedMedia?.file.mimeType).toBe('image/png')
+        expect(storedMedia?.bytes.toString('base64')).toBe(pngBase64)
+
+        // 4. Verify assistant reply persisted cleanly
+        const assistantRow = stored[1].content as {
+            content: { data: { message: { content: Array<{ text: string }> } } }
+        }
+        expect(assistantRow.content.data.message.content[0].text).toBe('这是一张 1x1 红色像素测试图。')
     })
 })

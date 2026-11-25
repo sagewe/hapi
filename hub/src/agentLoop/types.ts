@@ -57,3 +57,63 @@ export interface McpToolDefinition {
     description: string
     inputSchema: Record<string, unknown>
 }
+
+export interface BuiltinAgentImageInput {
+    data: string
+    mimeType?: string
+    filename?: string
+}
+
+export interface BuiltinAttachmentRef {
+    id: string
+    filename: string
+    mimeType: string
+    size: number
+    path: string
+    previewUrl?: string
+}
+
+export type BuiltinAgentStreamEvent =
+    | {
+        type: 'connected'
+        sessionId: string
+        thinking: boolean
+    }
+    | {
+        type: 'text_delta'
+        sessionId: string
+        turnId: string
+        round: number
+        delta: string
+    }
+    | {
+        type: 'tool_use'
+        sessionId: string
+        turnId: string
+        id: string
+        name: string
+        input: Record<string, unknown>
+    }
+    | {
+        type: 'tool_result'
+        sessionId: string
+        turnId: string
+        id: string
+        name: string
+        content: string
+        isError: boolean
+        receipt: ToolReceipt
+    }
+    | {
+        type: 'assistant_message'
+        sessionId: string
+        turnId: string
+        text: string
+    }
+    | {
+        type: 'turn_done'
+        sessionId: string
+        turnId: string
+        aborted: boolean
+        error?: string
+    }

@@ -761,10 +761,20 @@ export type MessagesQuery = z.infer<typeof MessagesQuerySchema>
 export const MessageDeliveryModeSchema = z.enum(['queue', 'steer'])
 export type MessageDeliveryMode = z.infer<typeof MessageDeliveryModeSchema>
 
+export const InlineImageInputSchema = z.object({
+    data: z.string().min(1).max(20 * 1024 * 1024),
+    mimeType: z.string().min(1).max(128).optional(),
+    filename: z.string().min(1).max(255).optional()
+})
+
+export type InlineImageInput = z.infer<typeof InlineImageInputSchema>
+
 export const SendMessageRequestSchema = z.object({
     text: z.string(),
     localId: z.string().min(1).optional(),
     attachments: z.array(AttachmentMetadataSchema).optional(),
+    images: z.array(InlineImageInputSchema).max(4).optional(),
+    image_base64: z.string().min(1).max(20 * 1024 * 1024).optional(),
     scheduledAt: z.number().int().positive().nullable().optional(),
     deliveryMode: MessageDeliveryModeSchema.optional()
 }).refine(
@@ -774,7 +784,7 @@ export const SendMessageRequestSchema = z.object({
     (data) => data.scheduledAt == null || data.scheduledAt <= Date.now() + 7 * 24 * 60 * 60 * 1000,
     { message: 'scheduledAt must be within 7 days from now', path: ['scheduledAt'] }
 ).refine(
-    (data) => data.scheduledAt == null || !data.attachments?.length,
+    (data) => data.scheduledAt == null || (!data.attachments?.length && !data.images?.length && !data.image_base64),
     { message: 'scheduled messages with attachments are not supported', path: ['attachments'] }
 ).refine(
     (data) => data.scheduledAt == null || data.deliveryMode !== 'steer',

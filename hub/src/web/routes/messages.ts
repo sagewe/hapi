@@ -150,8 +150,9 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return c.json({ error: 'Invalid body', issues: parsed.error.flatten() }, 400)
         }
 
-        // Require text or attachments
-        if (!parsed.data.text && (!parsed.data.attachments || parsed.data.attachments.length === 0)) {
+        // Require text, attachments, or inline images
+        const hasImages = Boolean(parsed.data.images?.length) || Boolean(parsed.data.image_base64?.trim())
+        if (!parsed.data.text && (!parsed.data.attachments || parsed.data.attachments.length === 0) && !hasImages) {
             return c.json({ error: 'Message requires text or attachments' }, 400)
         }
 
@@ -159,6 +160,8 @@ export function createMessagesRoutes(getSyncEngine: () => SyncEngine | null): Ho
             text: parsed.data.text,
             localId: parsed.data.localId,
             attachments: parsed.data.attachments,
+            images: parsed.data.images,
+            image_base64: parsed.data.image_base64,
             sentFrom: 'webapp',
             scheduledAt: parsed.data.scheduledAt,
             deliveryMode: parsed.data.deliveryMode

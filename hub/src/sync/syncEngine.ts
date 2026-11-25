@@ -15,16 +15,17 @@ import {
     cliBinaryUpdatedOnDisk,
     isMachineCapabilitySkewed,
 } from '@hapi/protocol/runnerCapabilities'
-import type { CursorChatStoreStatus, CursorMigrateOutcome, CursorMigrateToAcpRequest, MessageContextResponse, MessageDeliveryMode, MessagesResponse, QueuedStateResponse, RewindConversationErrorCode, SlashCommandsResponse } from '@hapi/protocol/apiTypes'
+import type { CursorChatStoreStatus, CursorMigrateOutcome, CursorMigrateToAcpRequest, InlineImageInput, MessageContextResponse, MessageDeliveryMode, MessagesResponse, QueuedStateResponse, RewindConversationErrorCode, SlashCommandsResponse } from '@hapi/protocol/apiTypes'
 import type { UsageQueryAgent, UsageQueryAgentSettings, UsageQueryResult, UsageQuerySettingsResponse, UsageQueryTemplate } from '@hapi/protocol/usageQuery'
 import type { SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
 import type { ImplementCodexPlanResult } from '@hapi/protocol/apiTypes'
-import type { AgentFlavor, BackgroundTask, CodexCollaborationMode, CopilotAgentMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import type { AgentFlavor, AttachmentMetadata, BackgroundTask, CodexCollaborationMode, CopilotAgentMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
 import { hasConversationMessageContent, unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import { randomUUID } from 'node:crypto'
 import type { Store, CancelQueuedMessageResult } from '../store'
 import type { BuiltinAgentLoopRuntime, BuiltinRuntimeHost } from '../agentLoop/runtime'
+import type { BuiltinAgentStreamEvent } from '../agentLoop/types'
 import type {
     MessageContentSearchMatch,
     SessionMessageContentSearchResult
@@ -155,6 +156,38 @@ function asRecord(value: unknown): Record<string, unknown> | null {
         : null
 }
 
+function sniffImageMimeType(bytes: Buffer): string | null {
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+        return 'image/jpeg'
+    }
+    if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+        return 'image/png'
+    }
+    if (bytes.length >= 6) {
+        const header = bytes.subarray(0, 6).toString('ascii')
+        if (header === 'GIF87a' || header === 'GIF89a') return 'image/gif'
+    }
+    if (bytes.length >= 12
+        && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+        && bytes.subarray(8, 12).toString('ascii') === 'WEBP') {
+        return 'image/webp'
+    }
+    return null
+}
+
+function imageExtensionForMime(mimeType: string): string {
+    switch (mimeType.toLowerCase()) {
+        case 'image/png':
+            return 'png'
+        case 'image/webp':
+            return 'webp'
+        case 'image/gif':
+            return 'gif'
+        default:
+            return 'jpg'
+    }
+}
+
 function normalizeUserMessageText(value: string): string | undefined {
     const text = value.trim().replace(/\s+/g, ' ')
     return text.length > 0 ? text : undefined
@@ -277,7 +310,7 @@ export class SyncEngine {
      * Hub owner id for accountable work-graph principals (A2A P1/P3).
      * Defaults to "1" for unit tests; startHub overwrites with getOrCreateOwnerId().
      */
-    private readonly sessionMedia = new SessionMediaStore()
+    private readonly sessionMedia: SessionMediaStore
     private hubOwnerUserId: string = '1'
 
     constructor(
@@ -285,7 +318,9 @@ export class SyncEngine {
         private readonly io: Server,
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager,
+        sessionMedia: SessionMediaStore = new SessionMediaStore(),
     ) {
+        this.sessionMedia = sessionMedia
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(store, this.eventPublisher, {
             // mergeSessionData is the single choke point that deletes rows for
@@ -416,8 +451,33 @@ export class SyncEngine {
             },
             setBuiltinSessionModel: (sessionId, _namespace, model) => {
                 this.sessionCache.applySessionConfig(sessionId, { model })
+            },
+            readBuiltinAttachment: async (sessionId, attachment) => {
+                if (attachment.id) {
+                    const direct = await this.sessionMedia.get(sessionId, 'uploads', attachment.id)
+                    if (direct) return direct.bytes
+                }
+                if (attachment.path) {
+                    const byPath = await this.sessionMedia.get(sessionId, 'uploads', uploadMediaId(attachment.path))
+                    if (byPath) return byPath.bytes
+                }
+                return null
             }
         }
+    }
+
+    isBuiltinSession(sessionId: string): boolean {
+        return Boolean(this.builtinAgentLoop?.ownsSession(this.getSession(sessionId)))
+    }
+
+    subscribeBuiltinSessionStream(
+        sessionId: string,
+        listener: (event: BuiltinAgentStreamEvent) => void
+    ): () => void {
+        if (!this.builtinAgentLoop) {
+            return () => {}
+        }
+        return this.builtinAgentLoop.subscribeSessionStream(sessionId, listener)
     }
 
     stop(): void {
@@ -1413,19 +1473,65 @@ export class SyncEngine {
         return this.machineCache.getOrCreateMachine(id, metadata, runnerState, namespace)
     }
 
+    private async persistInlineImages(
+        sessionId: string,
+        images?: InlineImageInput[],
+        imageBase64?: string
+    ): Promise<AttachmentMetadata[]> {
+        const inputs: InlineImageInput[] = []
+        if (typeof imageBase64 === 'string' && imageBase64.trim()) {
+            inputs.push({ data: imageBase64.trim() })
+        }
+        if (Array.isArray(images)) {
+            for (const img of images) {
+                if (img && typeof img.data === 'string' && img.data.trim()) {
+                    inputs.push(img)
+                }
+            }
+        }
+        if (inputs.length === 0) return []
+
+        const persisted: AttachmentMetadata[] = []
+        for (const item of inputs.slice(0, 4)) {
+            const raw = item.data.trim()
+            let declaredMime = item.mimeType?.trim().toLowerCase()
+            let b64Payload = raw
+            const dataUrlMatch = /^data:([^;,]+);base64,(.+)$/is.exec(raw)
+            if (dataUrlMatch) {
+                declaredMime = declaredMime || dataUrlMatch[1].trim().toLowerCase()
+                b64Payload = dataUrlMatch[2].trim()
+            }
+            const bytes = Buffer.from(b64Payload.replace(/\s+/g, ''), 'base64')
+            if (bytes.length === 0 || bytes.length > 15 * 1024 * 1024) {
+                throw new Error('Invalid or oversized inline image (max 15MB)')
+            }
+            const sniffedMime = sniffImageMimeType(bytes)
+            const mimeType = sniffedMime || (declaredMime?.startsWith('image/') ? declaredMime : 'image/jpeg')
+            const ext = imageExtensionForMime(mimeType)
+            const mediaId = randomUUID().replace(/-/g, '')
+            const rawName = item.filename?.trim()
+            const filename = rawName && validUploadName(rawName) ? rawName : `image-${mediaId.slice(0, 8)}.${ext}`
+            const saved = await this.sessionMedia.put(sessionId, 'uploads', mediaId, filename, mimeType, bytes)
+            persisted.push({
+                id: saved.id,
+                filename: saved.fileName,
+                mimeType: saved.mimeType,
+                size: saved.size,
+                path: `builtin-upload://${saved.id}/${saved.fileName}`,
+                previewUrl: saved.downloadPath
+            })
+        }
+        return persisted
+    }
+
     async sendMessage(
         sessionId: string,
         payload: {
             text: string
             localId?: string | null
-            attachments?: Array<{
-                id: string
-                filename: string
-                mimeType: string
-                size: number
-                path: string
-                previewUrl?: string
-            }>
+            attachments?: AttachmentMetadata[]
+            images?: InlineImageInput[]
+            image_base64?: string
             sentFrom?: 'telegram-bot' | 'webapp'
             scheduledAt?: number | null
             deliveryMode?: MessageDeliveryMode
@@ -1437,7 +1543,20 @@ export class SyncEngine {
         if (!this.sessionCache.getSession(sessionId)?.thinking) {
             this.automaticTitleSuggestionService.onTurnStarted(sessionId)
         }
-        const { actualSessionId, createdAt: activeTurnStartedAt, localId } = await this.messageService.sendMessage(sessionId, payload)
+        const persistedImages = await this.persistInlineImages(sessionId, payload.images, payload.image_base64)
+        const mergedAttachments = [
+            ...(payload.attachments ?? []),
+            ...persistedImages
+        ]
+        const messagePayload = {
+            text: payload.text,
+            localId: payload.localId,
+            attachments: mergedAttachments.length > 0 ? mergedAttachments : undefined,
+            sentFrom: payload.sentFrom,
+            scheduledAt: payload.scheduledAt,
+            deliveryMode: payload.deliveryMode
+        }
+        const { actualSessionId, createdAt: activeTurnStartedAt, localId } = await this.messageService.sendMessage(sessionId, messagePayload)
         this.sessionCache.markMessageQueued(actualSessionId, Date.now(), activeTurnStartedAt)
         this.sessionCache.recordSessionActivity(actualSessionId, Date.now())
         const isFutureScheduled = payload.scheduledAt != null && payload.scheduledAt > Date.now()
@@ -5126,6 +5245,12 @@ export class SyncEngine {
         if (!validUploadName(filename)) throw new Error('Invalid upload filename')
         const bytes = Buffer.from(content, 'base64')
         if (bytes.length > 50 * 1024 * 1024) throw new Error('File too large')
+        if (this.isBuiltinSession(sessionId)) {
+            const mediaId = randomUUID().replace(/-/g, '')
+            const virtualPath = `builtin-upload://${mediaId}/${filename}`
+            await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(virtualPath), filename, mimeType, bytes)
+            return { success: true, path: virtualPath }
+        }
         const result = await this.rpcGateway.uploadFile(sessionId, filename, content, mimeType)
         if (result.success && result.path) await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(result.path), filename, mimeType, bytes)
         return result
@@ -5133,12 +5258,22 @@ export class SyncEngine {
 
     async uploadStagedFile(sessionId: string, metadata: InitChunkedUploadRequest, path: string): Promise<RpcUploadFileResponse> {
         if (!validUploadName(metadata.filename)) throw new Error('Invalid upload filename')
+        if (this.isBuiltinSession(sessionId)) {
+            const mediaId = randomUUID().replace(/-/g, '')
+            const virtualPath = `builtin-upload://${mediaId}/${metadata.filename}`
+            await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(virtualPath), metadata.filename, metadata.mimeType, await readFile(path))
+            return { success: true, path: virtualPath }
+        }
         const result = await this.rpcGateway.uploadStagedFile(sessionId, metadata, path)
         if (result.success && result.path) await this.sessionMedia.put(sessionId, 'uploads', uploadMediaId(result.path), metadata.filename, metadata.mimeType, await readFile(path))
         return result
     }
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
+        if (this.isBuiltinSession(sessionId)) {
+            await this.sessionMedia.remove(sessionId, 'uploads', uploadMediaId(path))
+            return { success: true }
+        }
         const result = await this.rpcGateway.deleteUploadFile(sessionId, path)
         if (result.success) await this.sessionMedia.remove(sessionId, 'uploads', uploadMediaId(path))
         return result
