@@ -39,7 +39,7 @@ extension APIClient {
     private func transferUpload(sessionId: String, filename: String, data: Data, mimeType: String,
                                 digest: String, uploadId: String,
                                 progress: @escaping AttachmentUploadProgressHandler) async throws -> UploadFileResponse {
-        let path = "/api/sessions/\(encodePathComponent(sessionId))/uploads/\(uploadId)"
+        let path = "/v1/sessions/\(encodePathComponent(sessionId))/uploads/\(uploadId)"
         let metadata = ResumableUploadRequest(filename: filename, mimeType: mimeType, size: data.count, sha256: digest)
         var failures = 0
         var acknowledged = 0

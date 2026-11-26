@@ -1,7 +1,16 @@
 package app.hapi.protocol.wire
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable data class AndroidRelease(
-    val packageName: String, val versionCode: Int, val versionName: String,
-    val fileName: String, val sha256: String, val size: Long,
-    val releaseNotes: String, val publishedAt: String, val downloadPath: String,
+    @JsonNames("package_name") val packageName: String,
+    @JsonNames("version_code") val versionCode: Int,
+    @JsonNames("version_name") val versionName: String,
+    @JsonNames("file_name") val fileName: String,
+    val sha256: String,
+    val size: Long,
+    @JsonNames("release_notes") val releaseNotes: String,
+    @JsonNames("published_at") val publishedAt: String,
+    @JsonNames("download_path") val downloadPath: String,
 )

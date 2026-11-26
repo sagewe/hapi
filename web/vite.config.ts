@@ -11,7 +11,7 @@ function spaFallback(): Plugin {
         configureServer(server) {
             server.middlewares.use((req, _res, next) => {
                 const url = (req.url ?? '').split('?')[0]
-                if (url === '/' || url === '' || url.includes('.') || url.startsWith('/@') || url.startsWith('/api') || url.startsWith('/socket.io') || url.startsWith('/src/')) {
+                if (url === '/' || url === '' || url.includes('.') || url.startsWith('/@') || url.startsWith('/v1') || url.startsWith('/src/')) {
                     next()
                     return
                 }
@@ -93,12 +93,9 @@ export default defineConfig({
         host: true,
         allowedHosts: ['hapidev.weishu.me'],
         proxy: {
-            '/api': {
+            '/v1': {
                 target: hubTarget,
-                changeOrigin: true
-            },
-            '/socket.io': {
-                target: hubTarget,
+                changeOrigin: true,
                 ws: true
             }
         }

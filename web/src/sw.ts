@@ -44,9 +44,9 @@ registerRoute(
 )
 
 registerRoute(
-    ({ url }) => url.pathname === '/api/sessions',
+    ({ url }) => url.pathname === '/v1/sessions',
     new NetworkFirst({
-        cacheName: 'api-sessions',
+        cacheName: 'v1-sessions',
         networkTimeoutSeconds: 10,
         plugins: [
             cacheOkResponsesOnly,
@@ -59,9 +59,9 @@ registerRoute(
 )
 
 registerRoute(
-    ({ url }) => /^\/api\/sessions\/[^/]+$/.test(url.pathname),
+    ({ url }) => /^\/v1\/sessions\/[^/]+$/.test(url.pathname),
     new NetworkFirst({
-        cacheName: 'api-session-detail',
+        cacheName: 'v1-session-detail',
         networkTimeoutSeconds: 10,
         plugins: [
             cacheOkResponsesOnly,
@@ -74,28 +74,15 @@ registerRoute(
 )
 
 registerRoute(
-    ({ url }) => url.pathname === '/api/machines',
+    ({ url }) => url.pathname === '/v1/machines',
     new NetworkFirst({
-        cacheName: 'api-machines',
+        cacheName: 'v1-machines',
         networkTimeoutSeconds: 10,
         plugins: [
             cacheOkResponsesOnly,
             new ExpirationPlugin({
                 maxEntries: 5,
                 maxAgeSeconds: 60 * 10
-            })
-        ]
-    })
-)
-
-registerRoute(
-    /^https:\/\/cdn\.socket\.io\/.*/,
-    new CacheFirst({
-        cacheName: 'cdn-socketio',
-        plugins: [
-            new ExpirationPlugin({
-                maxEntries: 5,
-                maxAgeSeconds: 60 * 60 * 24 * 30
             })
         ]
     })

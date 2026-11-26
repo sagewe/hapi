@@ -124,7 +124,7 @@ struct ScratchlistStoreTests {
         let exchanges = await performer.exchanges
         let request = try #require(exchanges.first)
         #expect(request.method == "GET")
-        #expect(request.path == "/api/sessions/s1/scratchlist")
+        #expect(request.path == "/v1/sessions/s1/scratchlist")
     }
 
     @Test func initialFetchFailureLandsInLoadFailedUntilARetrySucceeds() async throws {
@@ -170,7 +170,7 @@ struct ScratchlistStoreTests {
         let exchanges = await performer.exchanges
         let request = try #require(exchanges.last)
         #expect(request.method == "POST")
-        #expect(request.path == "/api/sessions/s1/scratchlist")
+        #expect(request.path == "/v1/sessions/s1/scratchlist")
         // Canonical encoder (sorted keys); also proves empty attachments are omitted.
         #expect(request.body == "{\"createdAt\":111,\"entryId\":\"opt-1\",\"text\":\"note\"}")
     }
@@ -246,7 +246,7 @@ struct ScratchlistStoreTests {
         let exchanges = await performer.exchanges
         let request = try #require(exchanges.last)
         #expect(request.method == "PUT")
-        #expect(request.path == "/api/sessions/s1/scratchlist/e1")
+        #expect(request.path == "/v1/sessions/s1/scratchlist/e1")
         #expect(request.body == "{\"text\":\"new\"}")
     }
 
@@ -391,7 +391,7 @@ struct ScratchlistStoreTests {
         let exchanges = await performer.exchanges
         let request = try #require(exchanges.first)
         #expect(request.method == "POST")
-        #expect(request.path == "/api/sessions/s1/scratchlist/upload")
+        #expect(request.path == "/v1/sessions/s1/uploads")
         let sent = try decodeBody(request.body)
         #expect(sent["filename"] == .string("pic.jpg"))
         #expect(sent["mimeType"] == .string("image/jpeg"))
@@ -444,7 +444,7 @@ struct ScratchlistStoreTests {
         let exchanges = await performer.exchanges
         let request = try #require(exchanges.first)
         #expect(request.method == "DELETE")
-        #expect(request.path == "/api/sessions/s1/scratchlist/attachments/a1")
+        #expect(request.path == "/v1/sessions/s1/uploads")
     }
 
     @Test func limitsDefaultOfflineAndCacheAfterTheFirstSuccess() async throws {

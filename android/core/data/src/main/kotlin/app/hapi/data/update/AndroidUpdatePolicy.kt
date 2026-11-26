@@ -7,7 +7,7 @@ object AndroidUpdatePolicy {
     fun validFilename(name: String) = name.length <= 160 && !name.contains("..") && Regex("[A-Za-z0-9][A-Za-z0-9._-]*\\.apk").matches(name)
     fun validate(release: AndroidRelease) {
         require(validFilename(release.fileName)) { "更新文件名无效" }
-        require(release.downloadPath == "/api/app-updates/android/download/${release.fileName}") { "更新下载路径无效" }
+        require(release.downloadPath == "/v1/app-updates/android/download/${release.fileName}") { "更新下载路径无效" }
         require(release.size in 1..MAX_BYTES && release.versionCode > 0) { "更新信息无效" }
         require(Regex("[a-f0-9]{64}").matches(release.sha256)) { "更新校验信息无效" }
     }

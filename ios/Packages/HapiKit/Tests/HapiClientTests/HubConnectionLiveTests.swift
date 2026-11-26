@@ -39,7 +39,7 @@ struct HubConnectionLiveTests {
         }
         let clock = LiveRoutingClock()
         let direct = try client(URLSessionHTTPPerformer.shared, clock: clock)
-        let info: Info = try await direct.request(.get, "/api/connection")
+        let info: Info = try await direct.request(.get, "/v1/connection")
         #expect(direct.baseURL == config.origin)
         await direct.connection?.refreshDiagnostics(force: true)
         let measurements = try #require(await direct.connection?.diagnostics())
@@ -52,14 +52,14 @@ struct HubConnectionLiveTests {
         for _ in 0..<3 {
             if await direct.connection?.status().isPrivate == true { break }
             clock.advance()
-            let _: Info = try await direct.request(.get, "/api/connection")
+            let _: Info = try await direct.request(.get, "/v1/connection")
         }
         #expect(await direct.connection?.status().isPrivate == true)
-        let _: JSONValue = try await direct.request(.get, "/api/sessions")
+        let _: JSONValue = try await direct.request(.get, "/v1/sessions")
         let socket = try await direct.connectionRequest(URLRequest(url: config.origin.appendingPathComponent("api/voice/asr-ws")))
         #expect(socket.url?.host == info.lanUrl.host)
         let fallback = try client(PrivateBlocked(host: try #require(info.lanUrl.host)))
-        let viaPublic: Info = try await fallback.request(.get, "/api/connection")
+        let viaPublic: Info = try await fallback.request(.get, "/v1/connection")
         #expect(viaPublic.hubId == info.hubId)
         #expect(await fallback.connection?.status().isPrivate == false)
         #expect(fallback.baseURL == direct.baseURL)

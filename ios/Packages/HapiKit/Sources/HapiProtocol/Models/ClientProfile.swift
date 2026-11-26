@@ -57,4 +57,19 @@ public struct ClientProfile: Codable, Equatable, Sendable {
 
 public struct HubSettingsResponse: Decodable, Sendable {
     public var clientProfile: ClientProfile?
+
+    private enum CodingKeys: String, CodingKey {
+        case clientProfile
+        case client_profile
+    }
+
+    public init(clientProfile: ClientProfile? = nil) {
+        self.clientProfile = clientProfile
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        clientProfile = try c.decodeIfPresent(ClientProfile.self, forKey: .client_profile)
+            ?? c.decodeIfPresent(ClientProfile.self, forKey: .clientProfile)
+    }
 }

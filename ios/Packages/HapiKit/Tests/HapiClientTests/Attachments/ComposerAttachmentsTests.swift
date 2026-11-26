@@ -54,12 +54,12 @@ private actor UploadRoutingPerformer: HTTPPerforming {
         }
     }
 
-    func bodies(pathSuffix: String) -> [String] {
-        exchanges.filter { $0.path.hasSuffix(pathSuffix) }.compactMap(\.body)
+    func bodies(method: String? = nil, pathSuffix: String) -> [String] {
+        exchanges.filter { (method == nil || $0.method == method) && $0.path.hasSuffix(pathSuffix) }.compactMap(\.body)
     }
 
-    func count(pathSuffix: String) -> Int {
-        exchanges.filter { $0.path.hasSuffix(pathSuffix) }.count
+    func count(method: String? = nil, pathSuffix: String) -> Int {
+        exchanges.filter { (method == nil || $0.method == method) && $0.path.hasSuffix(pathSuffix) }.count
     }
 
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -72,9 +72,9 @@ private actor UploadRoutingPerformer: HTTPPerforming {
 
         var status = 200
         let json: String
-        if path.hasSuffix("/upload/delete") {
+        if request.httpMethod == "DELETE" && path.hasSuffix("/uploads") {
             json = #"{"success":true}"#
-        } else if path.hasSuffix("/upload") {
+        } else if path.hasSuffix("/uploads") || path.hasSuffix("/scratchlist/upload") {
             if let code = uploadTransportError {
                 uploadTransportError = nil
                 throw URLError(code)
@@ -194,7 +194,7 @@ struct ComposerAttachmentsTests {
         #expect(harness.tray.allReady)
 
         let expectedBase64 = Data([10, 20, 30]).base64EncodedString()
-        let uploads = await harness.performer.bodies(pathSuffix: "/api/sessions/sess-att/upload")
+        let uploads = await harness.performer.bodies(method: "POST", pathSuffix: "/v1/sessions/sess-att/uploads")
         #expect(uploads == [
             "{\"content\":\"\(expectedBase64)\",\"filename\":\"shot.jpg\",\"mimeType\":\"image/jpeg\"}"
         ])
@@ -238,7 +238,7 @@ struct ComposerAttachmentsTests {
         #expect(await eventually {
             harness.tray.items.count == 1 && harness.tray.items[0].status == .ready
         })
-        let uploads = await harness.performer.bodies(pathSuffix: "/upload")
+        let uploads = await harness.performer.bodies(method: "POST", pathSuffix: "/uploads")
         #expect(uploads.count == 2)
         #expect(uploads[0] == uploads[1])
         #expect(harness.tray.items[0].errorMessage == nil)
@@ -275,7 +275,7 @@ struct ComposerAttachmentsTests {
         harness.tray.retry("att-1")
         #expect(await eventually { harness.tray.allReady })
         #expect(harness.tray.items.first?.errorMessage == nil)
-        let uploads = await harness.performer.bodies(pathSuffix: "/upload")
+        let uploads = await harness.performer.bodies(method: "POST", pathSuffix: "/uploads")
         #expect(uploads.count == 2)
         #expect(uploads[0] == uploads[1])
     }
@@ -321,7 +321,7 @@ struct ComposerAttachmentsTests {
 
         #expect(harness.tray.items.isEmpty)
         #expect(await eventually {
-            await harness.performer.bodies(pathSuffix: "/upload/delete") == [#"{"path":"/uploads/shot.jpg"}"#]
+            await harness.performer.bodies(method: "DELETE", pathSuffix: "/uploads") == [#"{"path":"/uploads/shot.jpg"}"#]
         })
     }
 
@@ -332,7 +332,7 @@ struct ComposerAttachmentsTests {
         harness.tray.add(prepared())
         // Upload started and parked on the gate.
         #expect(await eventually {
-            await harness.performer.count(pathSuffix: "/upload") == 1
+            await harness.performer.count(method: "POST", pathSuffix: "/uploads") == 1
         })
         harness.tray.remove("att-1")
         #expect(harness.tray.items.isEmpty)
@@ -340,7 +340,7 @@ struct ComposerAttachmentsTests {
 
         // The late-arriving path is deleted, and the chip never reappears.
         #expect(await eventually {
-            await harness.performer.count(pathSuffix: "/upload/delete") == 1
+            await harness.performer.count(method: "DELETE", pathSuffix: "/uploads") == 1
         })
         #expect(harness.tray.items.isEmpty)
     }
@@ -375,7 +375,7 @@ struct ComposerAttachmentsTests {
 
         #expect(harness.tray.items.isEmpty)
         #expect(await eventually {
-            let deletes = await harness.performer.bodies(pathSuffix: "/upload/delete")
+            let deletes = await harness.performer.bodies(method: "DELETE", pathSuffix: "/uploads")
             return Set(deletes) == Set([
                 #"{"path":"/uploads/a.jpg"}"#,
                 #"{"path":"/uploads/b.jpg"}"#,

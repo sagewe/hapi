@@ -360,7 +360,7 @@ struct ScratchlistComposerWorkflowTests {
 
     @Test func directQueueDoesNotConsumeComposerAndRemovalRetryDoesNotSendAgain() async throws {
         let h = try ScratchlistSeamHarness()
-        await h.performer.setRoutes([(pathPrefix: "/api/sessions/sess-1/messages", json: "{}")])
+        await h.performer.setRoutes([(pathPrefix: "/v1/sessions/sess-1/messages", json: "{}")])
         h.interactor.setComposerText("Unrelated input")
         h.scratchlist.deleteResult = false
         #expect(!(await h.interactor.queueScratchlistEntry(entry())))
@@ -383,7 +383,7 @@ struct ScratchlistComposerWorkflowTests {
         let h = try ScratchlistSeamHarness()
         #expect(!(await h.interactor.queueScratchlistEntry(entry())))
         #expect(h.scratchlist.deleteCalls.isEmpty)
-        await h.performer.setRoutes([(pathPrefix: "/api/sessions/sess-1/messages", json: "{}")])
+        await h.performer.setRoutes([(pathPrefix: "/v1/sessions/sess-1/messages", json: "{}")])
         #expect(await h.interactor.queueScratchlistEntry(entry()))
         let posts = await h.performer.requests.filter { $0.httpMethod == "POST" }
         #expect(posts.count == 2)

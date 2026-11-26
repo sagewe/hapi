@@ -201,9 +201,9 @@ class HubGraph(
     }
 
     /**
-     * Loads `/api/sessions/:id/generated-images/:imageId` (and any other hub
+     * Loads `/v1/sessions/:id/blobs/:imageId` (and any other hub
      * URL) through the authed image client: JWT interceptor + silent 401
-     * re-auth + the per-hub 256 MB disk cache (images are immutable + ETagged).
+     * re-auth + the per-hub 256 MB disk cache (blobs are immutable + ETagged).
      */
     val imageLoader: ImageLoader = ImageLoader.Builder(context)
         .okHttpClient(session.imageClient)
@@ -211,11 +211,11 @@ class HubGraph(
 
     /** Absolute URL of a generated image, for [imageLoader]. */
     fun generatedImageUrl(sessionId: String, imageId: String): String =
-        "${session.hubUrl}/api/sessions/$sessionId/generated-images/$imageId"
+        "${session.hubUrl}/v1/sessions/$sessionId/blobs/$imageId"
 
     /** Absolute URL of a scratchlist attachment's raw bytes, for [imageLoader]. */
     fun scratchlistAttachmentUrl(sessionId: String, attachmentId: String): String =
-        "${session.hubUrl}/api/sessions/$sessionId/scratchlist/attachments/$attachmentId"
+        "${session.hubUrl}/v1/sessions/$sessionId/blobs/$attachmentId"
 
     /** Per-session composer drafts, keyed under this hub (process-wide DataStore). */
     val chatDrafts: ChatDrafts = DataStoreChatDrafts(context.chatDraftsDataStore, hubKey = session.hubUrl)

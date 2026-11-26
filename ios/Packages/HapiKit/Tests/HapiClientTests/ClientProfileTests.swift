@@ -63,7 +63,7 @@ struct ClientProfileTests {
         await harness.performer.enqueue(json: #"{"clientProfile":{"mode":"assistant"}}"#)
         #expect(try await harness.client.hubSettings().clientProfile?.isAssistant == true)
         let request = await harness.performer.requests.first
-        #expect(request?.url?.path == "/api/hub-settings")
+        #expect(request?.url?.path == "/v1/settings")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)")
     }
 }

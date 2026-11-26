@@ -4,7 +4,7 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import kotlin.test.*
 class AndroidUpdatePolicyTest {
-    private fun release() = AndroidRelease("com.sagewe.hapi.compliance",2,"0.34.3","QiqiWork-2.apk",MessageDigest.getInstance("SHA-256").digest("apk".toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) },3,"notes","2026-11-23T00:00:00Z","/api/app-updates/android/download/QiqiWork-2.apk")
+    private fun release() = AndroidRelease("com.sagewe.hapi.compliance",2,"0.34.3","QiqiWork-2.apk",MessageDigest.getInstance("SHA-256").digest("apk".toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) },3,"notes","2026-11-23T00:00:00Z","/v1/app-updates/android/download/QiqiWork-2.apk")
     @Test fun versionAndPackageMustBothMatch() {
         assertTrue(AndroidUpdatePolicy.isNewer(release(),release().packageName,1))
         assertFalse(AndroidUpdatePolicy.isNewer(release(),release().packageName,2))

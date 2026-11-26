@@ -74,9 +74,8 @@ sealed interface SseSubscriptionKey {
 }
 
 /**
- * Builds `GET {base}/api/events?token=…&visibility=…&all=true|sessionId=…[&lastEventId=…]`
- * (`docs/api/client-contract/sse.md#endpoint`). `visibility` must be the
- * literal `visible` to count as visible; anything else is hidden.
+ * Builds `GET {base}/v1/events?token=…&visibility=…&all=true|sessionId=…[&lastEventId=…]`.
+ * `visibility` must be the literal `visible` to count as visible; anything else is hidden.
  */
 fun buildEventsUrl(
     baseUrl: String,
@@ -99,7 +98,7 @@ fun buildEventsUrl(
     val query = params.joinToString("&") { (name, value) ->
         "$name=${URLEncoder.encode(value, Charsets.UTF_8.name())}"
     }
-    return "${baseUrl.trimEnd('/')}/api/events?$query"
+    return "${baseUrl.trimEnd('/')}/v1/events?$query"
 }
 
 /**

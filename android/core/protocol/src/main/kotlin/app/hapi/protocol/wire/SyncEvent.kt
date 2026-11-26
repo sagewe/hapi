@@ -1,9 +1,14 @@
 package app.hapi.protocol.wire
 
 import kotlinx.serialization.DeserializationStrategy
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 /**
  * The SSE event union (`SyncEventSchema`, `shared/src/schemas.ts`;
@@ -82,15 +87,18 @@ sealed interface SyncEvent {
         val data: OptionalField<JsonElement> = OptionalField.Absent,
     ) : SyncEvent
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class Toast(
         override val namespace: String? = null,
         val data: Data,
     ) : SyncEvent {
+        @OptIn(ExperimentalSerializationApi::class)
         @Serializable
         data class Data(
             val title: String,
             val body: String,
+            @JsonNames("session_id")
             val sessionId: String,
             val url: String,
         )
@@ -140,15 +148,18 @@ sealed interface SyncEvent {
     }
 
     /** Subscribe handshake; carries no SSE `id`. */
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class ConnectionChanged(
         override val namespace: String? = null,
         val data: Data? = null,
     ) : SyncEvent {
+        @OptIn(ExperimentalSerializationApi::class)
         @Serializable
         data class Data(
             val status: String,
-            /** Needed for `POST /api/visibility` reporting. */
+            /** Needed for `POST /v1/visibility` reporting. */
+            @JsonNames("subscription_id")
             val subscriptionId: String? = null,
             /** `'ok'` = replay is complete, skip resync; `'gap'`/absent = full REST resync. */
             val resume: String? = null,
@@ -186,42 +197,151 @@ object SyncEvents {
     fun parse(element: JsonElement): SyncEvent {
         val obj = element as? JsonObject ?: return SyncEvent.Unknown(type = null, raw = null)
         val type = obj["type"].stringOrNull ?: return SyncEvent.Unknown(type = null, raw = obj)
-        val strategy: DeserializationStrategy<SyncEvent> = when (type) {
-            "session-added" -> SyncEvent.SessionAdded.serializer()
-            "session-updated" -> SyncEvent.SessionUpdated.serializer()
-            "session-removed" -> SyncEvent.SessionRemoved.serializer()
-            "message-received" -> SyncEvent.MessageReceived.serializer()
-            "messages-invalidated" -> SyncEvent.MessagesInvalidated.serializer()
-            "scheduled-matured" -> SyncEvent.ScheduledMatured.serializer()
-            "session-ended" -> SyncEvent.SessionEnded.serializer()
-            "machine-updated" -> return parseMachineUpdated(obj)
-            "toast" -> SyncEvent.Toast.serializer()
-            "messages-consumed" -> SyncEvent.MessagesConsumed.serializer()
-            "messages-indeterminate" -> SyncEvent.MessagesIndeterminate.serializer()
-            "messages-requeued" -> SyncEvent.MessagesRequeued.serializer()
-            "message-cancelled" -> SyncEvent.MessageCancelled.serializer()
-            "heartbeat" -> SyncEvent.Heartbeat.serializer()
-            "connection-changed" -> SyncEvent.ConnectionChanged.serializer()
-            else -> return SyncEvent.Unknown(type = type, raw = obj)
-        }
-        return try {
-            HapiJson.decodeFromJsonElement(strategy, obj)
-        } catch (_: Exception) {
-            SyncEvent.Unknown(type = type, raw = obj)
+        return when (type) {
+            "session_added", "session-added" -> parseSessionAdded(obj, type)
+            "session_updated", "session-updated" -> parseSessionUpdated(obj, type)
+            "session_removed", "session-removed" -> parseSessionRemoved(obj, type)
+            "message_received", "message-received" -> parseMessageReceived(obj, type)
+            "messages_invalidated", "messages-invalidated" -> parseSimpleSessionEvent(obj, type) { ns, sid ->
+                SyncEvent.MessagesInvalidated(namespace = ns, sessionId = sid)
+            }
+            "scheduled_matured", "scheduled-matured" -> parseSimpleSessionEvent(obj, type) { ns, sid ->
+                SyncEvent.ScheduledMatured(namespace = ns, sessionId = sid)
+            }
+            "session_ended", "session-ended" -> parseSessionEnded(obj, type)
+            "machine_updated", "machine-updated" -> parseMachineUpdated(obj, type)
+            "toast" -> decodeStrategy(obj, type, SyncEvent.Toast.serializer())
+            "messages_consumed", "messages-consumed" -> decodeStrategy(obj, type, SyncEvent.MessagesConsumed.serializer())
+            "messages_indeterminate", "messages-indeterminate" -> decodeStrategy(obj, type, SyncEvent.MessagesIndeterminate.serializer())
+            "messages_requeued", "messages-requeued" -> decodeStrategy(obj, type, SyncEvent.MessagesRequeued.serializer())
+            "message_cancelled", "message-cancelled" -> decodeStrategy(obj, type, SyncEvent.MessageCancelled.serializer())
+            "heartbeat" -> decodeStrategy(obj, type, SyncEvent.Heartbeat.serializer())
+            "connection_changed", "connection-changed" -> decodeStrategy(obj, type, SyncEvent.ConnectionChanged.serializer())
+            else -> SyncEvent.Unknown(type = type, raw = obj)
         }
     }
 
-    private fun parseMachineUpdated(obj: JsonObject): SyncEvent {
-        val machineId = obj["machineId"].stringOrNull
-            ?: return SyncEvent.Unknown(type = "machine-updated", raw = obj)
+    private fun decodeStrategy(
+        obj: JsonObject,
+        type: String,
+        strategy: DeserializationStrategy<SyncEvent>,
+    ): SyncEvent = try {
+        HapiJson.decodeFromJsonElement(strategy, obj)
+    } catch (_: Exception) {
+        SyncEvent.Unknown(type = type, raw = obj)
+    }
+
+    private fun parseSessionAdded(obj: JsonObject, type: String): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        return SyncEvent.SessionAdded(
+            namespace = obj["namespace"].stringOrNull,
+            sessionId = sessionId,
+            data = obj["session"] ?: obj["data"],
+        )
+    }
+
+    private fun parseSessionUpdated(obj: JsonObject, type: String): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        return SyncEvent.SessionUpdated(
+            namespace = obj["namespace"].stringOrNull,
+            sessionId = sessionId,
+            data = obj["session"] ?: obj["data"],
+        )
+    }
+
+    private fun parseSessionRemoved(obj: JsonObject, type: String): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        return SyncEvent.SessionRemoved(
+            namespace = obj["namespace"].stringOrNull,
+            sessionId = sessionId,
+        )
+    }
+
+    private fun parseSessionEnded(obj: JsonObject, type: String): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        val reasonElem = obj["reason"]
+        val reason = when {
+            reasonElem == null || reasonElem is JsonNull -> null
+            reasonElem is JsonPrimitive && reasonElem.isString -> reasonElem.content
+            else -> reasonElem.toString()
+        }
+        return SyncEvent.SessionEnded(
+            namespace = obj["namespace"].stringOrNull,
+            sessionId = sessionId,
+            reason = reason,
+        )
+    }
+
+    private fun parseMessageReceived(obj: JsonObject, type: String): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        val messageElem = obj["message"] ?: return SyncEvent.Unknown(type = type, raw = obj)
+        val message = try {
+            HapiJson.decodeFromJsonElement(DecryptedMessage.serializer(), messageElem)
+        } catch (_: Exception) {
+            return SyncEvent.Unknown(type = type, raw = obj)
+        }
+        return SyncEvent.MessageReceived(
+            namespace = obj["namespace"].stringOrNull,
+            sessionId = sessionId,
+            message = message,
+        )
+    }
+
+    private inline fun parseSimpleSessionEvent(
+        obj: JsonObject,
+        type: String,
+        factory: (String?, String) -> SyncEvent,
+    ): SyncEvent {
+        val sessionId = obj["session_id"].stringOrNull ?: obj["sessionId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        return factory(obj["namespace"].stringOrNull, sessionId)
+    }
+
+    private fun parseMachineUpdated(obj: JsonObject, type: String): SyncEvent {
+        val machineId = obj["machine_id"].stringOrNull ?: obj["machineId"].stringOrNull
+            ?: return SyncEvent.Unknown(type = type, raw = obj)
+        val data: OptionalField<JsonElement> = when {
+            obj.containsKey("data") -> OptionalField.Present(obj.getValue("data"))
+            obj.containsKey("machine") -> {
+                val m = obj.getValue("machine")
+                if (m !is JsonNull) {
+                    OptionalField.Present(m)
+                } else {
+                    val active = obj["active"].boolOrNull
+                    val updatedAt = obj["updated_at"].longOrNull
+                    if (active != null || updatedAt != null) {
+                        OptionalField.Present(buildJsonObject {
+                            active?.let { put("active", JsonPrimitive(it)) }
+                            updatedAt?.let {
+                                put("activeAt", JsonPrimitive(it))
+                                put("updatedAt", JsonPrimitive(it))
+                            }
+                        })
+                    } else {
+                        OptionalField.Present(JsonNull)
+                    }
+                }
+            }
+            obj.containsKey("active") || obj.containsKey("updated_at") -> {
+                OptionalField.Present(buildJsonObject {
+                    obj["active"].boolOrNull?.let { put("active", JsonPrimitive(it)) }
+                    obj["updated_at"].longOrNull?.let {
+                        put("activeAt", JsonPrimitive(it))
+                        put("updatedAt", JsonPrimitive(it))
+                    }
+                })
+            }
+            else -> OptionalField.Absent
+        }
         return SyncEvent.MachineUpdated(
             namespace = obj["namespace"].stringOrNull,
             machineId = machineId,
-            data = if (obj.containsKey("data")) {
-                OptionalField.Present(obj.getValue("data"))
-            } else {
-                OptionalField.Absent
-            },
+            data = data,
         )
     }
 }

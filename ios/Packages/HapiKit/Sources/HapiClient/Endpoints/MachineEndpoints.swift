@@ -3,13 +3,13 @@ import HapiProtocol
 
 /// Machines and spawning (`docs/api/client-contract/rest.md`).
 extension APIClient {
-    /// `GET /api/machines` — online machines in the caller's namespace.
+    /// `GET /v1/machines` — online machines in the caller's namespace.
     public func listMachines() async throws -> [Machine] {
-        let response: MachinesResponse = try await request(.get, "/api/machines")
+        let response: MachinesResponse = try await request(.get, "/v1/machines")
         return response.machines
     }
 
-    /// `PATCH /api/machines/:id` — rename (≤ 64 chars; empty string clears
+    /// `PATCH /v1/machines/:id` — rename (≤ 64 chars; empty string clears
     /// the custom name back to the hostname).
     public func renameMachine(id: String, displayName: String) async throws {
         struct RenameMachineRequest: Encodable {
@@ -17,30 +17,45 @@ extension APIClient {
         }
         try await requestVoid(
             .patch,
-            "/api/machines/\(encodePathComponent(id))",
+            "/v1/machines/\(encodePathComponent(id))",
             body: RenameMachineRequest(displayName: displayName)
         )
     }
 
-    /// `POST /api/machines/:id/spawn`. The response is discriminated on
-    /// `type`, not HTTP status — a failed spawn is still HTTP 200 with
-    /// `.error`.
+    /// `POST /v1/sessions` — spawns a session on `machineId`.
     public func spawnSession(machineId: String, _ spawn: SpawnRequest) async throws -> SpawnResponse {
-        try await request(
+        struct CreateSessionBody: Encodable {
+            let machine_id: String
+            let directory: String
+            let agent: AgentFlavor?
+            let model: String?
+            let effort: String?
+            let permission_mode: PermissionMode?
+        }
+        let effectivePermission: PermissionMode? = spawn.permissionMode ?? (spawn.yolo == true ? .yolo : nil)
+        let effectiveEffort = spawn.effort ?? spawn.modelReasoningEffort
+        return try await request(
             .post,
-            "/api/machines/\(encodePathComponent(machineId))/spawn",
-            body: spawn
+            "/v1/sessions",
+            body: CreateSessionBody(
+                machine_id: machineId,
+                directory: spawn.directory,
+                agent: spawn.agent,
+                model: spawn.model,
+                effort: effectiveEffort,
+                permission_mode: effectivePermission
+            )
         )
     }
 
-    /// `GET /api/machines/:id/agent-availability` — executable/static-config
+    /// `GET /v1/machines/:id/agent-availability` — executable/static-config
     /// availability for every supported Agent. A runner lacking the RPC
     /// answers 409 `runner_upgrade_required`.
     public func machineAgentAvailability(machineId: String) async throws -> AgentAvailabilityResponse {
-        try await request(.get, "/api/machines/\(encodePathComponent(machineId))/agent-availability")
+        try await request(.get, "/v1/machines/\(encodePathComponent(machineId))/agent-availability")
     }
 
-    /// `POST /api/machines/:id/list-directory` (RPC envelope — check
+    /// `POST /v1/machines/:id/list-directory` (RPC envelope — check
     /// `success`).
     public func listMachineDirectory(
         machineId: String,
@@ -53,12 +68,12 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/machines/\(encodePathComponent(machineId))/list-directory",
+            "/v1/machines/\(encodePathComponent(machineId))/list-directory",
             body: ListDirectoryRequest(path: path, includeHidden: includeHidden)
         )
     }
 
-    /// `POST /api/machines/:id/paths/exists` (≤ 1000 paths).
+    /// `POST /v1/machines/:id/paths/exists` (≤ 1000 paths).
     public func machinePathsExist(
         machineId: String,
         paths: [String]
@@ -68,33 +83,30 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/machines/\(encodePathComponent(machineId))/paths/exists",
+            "/v1/machines/\(encodePathComponent(machineId))/paths/exists",
             body: PathsExistsRequest(paths: paths)
         )
     }
 
-    /// `GET /api/machines/:id/codex-models` — pre-spawn codex model catalog
-    /// (RPC envelope — check `success`). A runner without the machine-scoped
-    /// RPC answers 503 `rpc_target_missing`, surfaced as an ``APIError``
-    /// whose `code` the new-session form uses to hide the picker. Added in
-    /// A-M3c (endpoint documented in `docs/api/client-contract/rest.md`).
+    /// `GET /v1/machines/:id/codex-models` — pre-spawn codex model catalog
+    /// (RPC envelope — check `success`).
     public func machineCodexModels(machineId: String) async throws -> CodexModelsResponse {
-        try await request(.get, "/api/machines/\(encodePathComponent(machineId))/codex-models")
+        try await request(.get, "/v1/machines/\(encodePathComponent(machineId))/codex-models")
     }
 
-    /// `GET /api/machines/:id/usage-query/settings?agent=...`
+    /// `GET /v1/machines/:id/usage-query/settings?agent=...`
     public func machineUsageQuerySettings(
         machineId: String,
         agent: UsageQueryAgent
     ) async throws -> UsageQuerySettingsResponse {
         try await request(
             .get,
-            "/api/machines/\(encodePathComponent(machineId))/usage-query/settings",
+            "/v1/machines/\(encodePathComponent(machineId))/usage-query/settings",
             query: [URLQueryItem(name: "agent", value: agent.rawValue)]
         )
     }
 
-    /// `PUT /api/machines/:id/usage-query/settings`
+    /// `PUT /v1/machines/:id/usage-query/settings`
     public func saveMachineUsageQuerySettings(
         machineId: String,
         agent: UsageQueryAgent,
@@ -110,12 +122,12 @@ extension APIClient {
         }
         return try await request(
             .put,
-            "/api/machines/\(encodePathComponent(machineId))/usage-query/settings",
+            "/v1/machines/\(encodePathComponent(machineId))/usage-query/settings",
             body: SaveRequest(agent: agent, enabled: enabled, templateId: templateId, template: template)
         )
     }
 
-    /// `POST /api/machines/:id/usage-query/test`
+    /// `POST /v1/machines/:id/usage-query/test`
     public func testMachineUsageQuery(
         machineId: String,
         agent: UsageQueryAgent,
@@ -127,12 +139,12 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/machines/\(encodePathComponent(machineId))/usage-query/test",
+            "/v1/machines/\(encodePathComponent(machineId))/usage-query/test",
             body: TestRequest(agent: agent, template: template)
         )
     }
 
-    /// `POST /api/machines/:id/usage-query/query`
+    /// `POST /v1/machines/:id/usage-query/query`
     public func queryMachineUsage(
         machineId: String,
         agent: UsageQueryAgent,
@@ -144,7 +156,7 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/machines/\(encodePathComponent(machineId))/usage-query/query",
+            "/v1/machines/\(encodePathComponent(machineId))/usage-query/query",
             body: QueryRequest(agent: agent, force: force)
         )
     }

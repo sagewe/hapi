@@ -216,7 +216,7 @@ public actor AuthManager {
         struct AuthRequestBody: Encodable {
             let accessToken: String
         }
-        let url = try HubRequestURL.make(baseURL: baseURL, path: "/api/auth", query: [])
+        let url = try HubRequestURL.make(baseURL: baseURL, path: "/v1/auth/login", query: [])
         var request = URLRequest(url: url)
         request.httpMethod = HTTPMethod.post.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

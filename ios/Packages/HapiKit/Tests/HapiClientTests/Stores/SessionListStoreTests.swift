@@ -93,7 +93,7 @@ struct SessionListStoreTests {
         await performer.enqueue(json: "{}")
         try await store.updateTags(sessionId: "s1", tags: ["  Frontend ", "frontend", "Urgent"])
         let requests = await performer.requests
-        let request = try #require(requests.first { $0.httpMethod == "PATCH" })
+        let request = try #require(requests.first { $0.httpMethod == "POST" && $0.url?.path == "/v1/sessions/s1/tags" })
         let payload = try #require(request.httpBody)
         let object = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         #expect(object["tags"] as? [String] == ["Frontend", "Urgent"])
@@ -354,7 +354,7 @@ struct SessionListStoreTests {
         let store = SessionListStore(api: api, refreshBatch: .milliseconds(1))
 
         await performer.setRoutes([
-            (pathPrefix: "/api/sessions", json: try sessionsResponseJSON(storeSummary("s1", updatedAt: 100))),
+            (pathPrefix: "/v1/sessions", json: try sessionsResponseJSON(storeSummary("s1", updatedAt: 100))),
         ])
         try await store.refresh()
         store.applySessionEvent(
@@ -362,8 +362,8 @@ struct SessionListStoreTests {
         )
 
         await performer.setRoutes([
-            (pathPrefix: "/api/sessions/s1", json: try sessionResponseJSON(storeSession("s1", updatedAt: 900))),
-            (pathPrefix: "/api/sessions", json: try sessionsResponseJSON(storeSummary("s1", updatedAt: 900))),
+            (pathPrefix: "/v1/sessions/s1", json: try sessionResponseJSON(storeSession("s1", updatedAt: 900))),
+            (pathPrefix: "/v1/sessions", json: try sessionsResponseJSON(storeSummary("s1", updatedAt: 900))),
         ])
         // `data` present but neither a Session nor a strict patch.
         store.applySessionEvent(try sessionUpdatedEvent("s1", dataJSON: "{\"unknownKey\":1}"))
@@ -656,7 +656,7 @@ private actor OrderedListRefreshPerformer: HTTPPerforming {
         return try await withCheckedThrowingContinuation { pending[id] = $0 }
     }
     func complete(_ id: Int, fails: Bool) {
-        let response = HTTPURLResponse(url: URL(string: "https://hub.test/api/sessions")!,
+        let response = HTTPURLResponse(url: URL(string: "https://hub.test/v1/sessions")!,
                                        statusCode: fails ? 503 : 200, httpVersion: nil, headerFields: nil)!
         pending.removeValue(forKey: id)?.resume(returning: (Data("{\"sessions\":[]}".utf8), response))
     }

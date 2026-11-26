@@ -33,7 +33,7 @@ struct EndpointRequestTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/s%201/messages?beforeAt=170&beforeSeq=42&limit=200"
+                == "\(testHubURLString)/v1/sessions/s%201/messages?beforeAt=170&beforeSeq=42&limit=200"
         )
         #expect(request?.httpMethod == "GET")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)")
@@ -50,7 +50,7 @@ struct EndpointRequestTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/messages?afterAt=99&afterSeq=10&epoch=3"
+                == "\(testHubURLString)/v1/sessions/abc/messages?afterAt=99&afterSeq=10&epoch=3"
         )
     }
 
@@ -65,7 +65,7 @@ struct EndpointRequestTests {
             deliveryMode: .steer
         )
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/sessions/abc/messages")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/sessions/abc/messages")
         #expect(request?.httpMethod == "POST")
         #expect(request?.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(bodyString(request) == "{\"deliveryMode\":\"steer\",\"localId\":\"L1\",\"text\":\"hi\"}")
@@ -83,7 +83,7 @@ struct EndpointRequestTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/permissions/r%2F1/approve"
+                == "\(testHubURLString)/v1/sessions/abc/permissions/r%2F1/approve"
         )
         #expect(bodyString(request) == "{\"answers\":{\"q1\":{\"answers\":[\"a\",\"b\"]}}}")
     }
@@ -93,7 +93,7 @@ struct EndpointRequestTests {
         await harness.performer.enqueue(json: "{\"ok\":true}")
         try await harness.client.implementCodexPlan(sessionId: "session/1", planId: "plan:thread:turn:item")
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/sessions/session%2F1/codex/plan/implement")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/sessions/session%2F1/codex/plan/implement")
         #expect(request?.httpMethod == "POST")
         #expect(bodyString(request) == #"{"planId":"plan:thread:turn:item"}"#)
     }
@@ -127,22 +127,24 @@ struct EndpointRequestTests {
             model: .catalogReference(provider: "openai", modelId: "gpt-5")
         )
         let second = await harness.performer.requests.last
-        #expect(bodyString(second) == "{\"model\":{\"modelId\":\"gpt-5\",\"provider\":\"openai\"}}")
+        #expect(second?.httpMethod == "PATCH")
+        #expect(second?.url?.absoluteString == "\(testHubURLString)/v1/sessions/abc")
+        #expect(bodyString(second) == "{\"model\":\"openai/gpt-5\"}")
     }
 
     @Test func spawnDiscriminatesOnType() async throws {
         let harness = try makeHarness(jwt: freshJWT())
-        await harness.performer.enqueue(json: "{\"type\":\"success\",\"sessionId\":\"new-id\"}")
+        await harness.performer.enqueue(json: "{\"session\":{\"id\":\"new-id\"}}")
         let spawned = try await harness.client.spawnSession(
             machineId: "m1",
             SpawnRequest(directory: "/work/repo", agent: .claude, sessionType: .worktree, worktreeName: "wt")
         )
         #expect(spawned == .success(sessionId: "new-id"))
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/machines/m1/spawn")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/sessions")
         #expect(
             bodyString(request)
-                == "{\"agent\":\"claude\",\"directory\":\"/work/repo\",\"sessionType\":\"worktree\",\"worktreeName\":\"wt\"}"
+                == "{\"agent\":\"claude\",\"directory\":\"/work/repo\",\"machine_id\":\"m1\"}"
         )
 
         await harness.performer.enqueue(json: "{\"type\":\"error\",\"message\":\"no runner\"}")
@@ -179,7 +181,7 @@ struct EndpointRequestTests {
         let availabilityRequest = await harness.performer.requests.first
         #expect(
             availabilityRequest?.url?.absoluteString
-                == "\(testHubURLString)/api/machines/m%201/agent-availability"
+                == "\(testHubURLString)/v1/machines/m%201/agent-availability"
         )
         #expect(availabilityRequest?.httpMethod == "GET")
 
@@ -194,7 +196,7 @@ struct EndpointRequestTests {
         #expect(paths.exists["/workspace"] == true)
         #expect(paths.outsideWorkspaceRoots == ["/outside"])
         let pathRequest = await harness.performer.requests.last
-        #expect(pathRequest?.url?.absoluteString == "\(testHubURLString)/api/machines/m1/paths/exists")
+        #expect(pathRequest?.url?.absoluteString == "\(testHubURLString)/v1/machines/m1/paths/exists")
         #expect(bodyString(pathRequest) == "{\"paths\":[\"/workspace\",\"/outside\"]}")
     }
 
@@ -213,7 +215,7 @@ struct EndpointRequestTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/machines/m%201/codex-models"
+                == "\(testHubURLString)/v1/machines/m%201/codex-models"
         )
         #expect(request?.httpMethod == "GET")
 
@@ -247,7 +249,7 @@ struct EndpointRequestTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/voice/transcription/providers"
+                == "\(testHubURLString)/v1/voice/transcription/providers"
         )
         #expect(request?.httpMethod == "GET")
     }
@@ -267,7 +269,7 @@ struct EndpointRequestTests {
         #expect(result.text == "hello world")
         #expect(result.language == "en")
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/voice/transcription")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/voice/transcription")
         #expect(request?.httpMethod == "POST")
         let contentType = request?.value(forHTTPHeaderField: "Content-Type") ?? ""
         #expect(contentType.hasPrefix("multipart/form-data; boundary="))

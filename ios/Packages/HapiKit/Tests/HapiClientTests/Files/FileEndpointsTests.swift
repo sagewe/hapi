@@ -23,7 +23,7 @@ struct FileEndpointsTests {
         #expect(response.exitCode == 0)
 
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/sessions/s%201/git-status")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/sessions/s%201/git-status")
         #expect(request?.httpMethod == "GET")
     }
 
@@ -38,11 +38,11 @@ struct FileEndpointsTests {
         let requests = await harness.performer.requests
         #expect(
             requests.first?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/git-diff-numstat?staged=true"
+                == "\(testHubURLString)/v1/sessions/abc/git-diff-numstat?staged=true"
         )
         #expect(
             requests.last?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/git-diff-numstat?staged=false"
+                == "\(testHubURLString)/v1/sessions/abc/git-diff-numstat?staged=false"
         )
     }
 
@@ -59,12 +59,12 @@ struct FileEndpointsTests {
         let requests = await harness.performer.requests
         #expect(
             requests.first?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/git-diff-file?path=src%2Fapp.ts&staged=false"
+                == "\(testHubURLString)/v1/sessions/abc/git-diff-file?path=src%2Fapp.ts&staged=false"
         )
         // Omitted staged flag stays off the URL (unstaged side).
         #expect(
             requests.last?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/git-diff-file?path=src%2Fapp.ts"
+                == "\(testHubURLString)/v1/sessions/abc/git-diff-file?path=src%2Fapp.ts"
         )
     }
 
@@ -82,7 +82,7 @@ struct FileEndpointsTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/file?path=a%20b%2Bc.txt"
+                == "\(testHubURLString)/v1/sessions/abc/file?path=a%20b%2Bc.txt"
         )
     }
 
@@ -96,7 +96,7 @@ struct FileEndpointsTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/file?path=images%2Fshot.png&maxBytes=10485760"
+                == "\(testHubURLString)/v1/sessions/abc/file?path=images%2Fshot.png&maxBytes=10485760"
         )
     }
 
@@ -119,9 +119,9 @@ struct FileEndpointsTests {
         let requests = await harness.performer.requests
         #expect(
             requests.first?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/files?query=app&limit=200"
+                == "\(testHubURLString)/v1/sessions/abc/files?query=app&limit=200"
         )
-        #expect(requests.last?.url?.absoluteString == "\(testHubURLString)/api/sessions/abc/files")
+        #expect(requests.last?.url?.absoluteString == "\(testHubURLString)/v1/sessions/abc/files")
     }
 
     @Test func listSessionDirectoryOmitsRootPathAndDecodesEntryTypes() async throws {
@@ -145,10 +145,10 @@ struct FileEndpointsTests {
         #expect(nested.error == "denied")
 
         let requests = await harness.performer.requests
-        #expect(requests.first?.url?.absoluteString == "\(testHubURLString)/api/sessions/abc/directory")
+        #expect(requests.first?.url?.absoluteString == "\(testHubURLString)/v1/sessions/abc/directory")
         #expect(
             requests.last?.url?.absoluteString
-                == "\(testHubURLString)/api/sessions/abc/directory?path=src%2Fapp"
+                == "\(testHubURLString)/v1/sessions/abc/directory?path=src%2Fapp"
         )
     }
 }

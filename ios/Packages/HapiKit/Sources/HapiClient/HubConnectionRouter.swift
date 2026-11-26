@@ -9,7 +9,40 @@ public enum HubConnectionRoute: String, Sendable { case lan, tailscale, relay }
 /// The paired origin remains the identity for authentication, drafts and caches.
 /// Alternate origins receive credentials only after TLS and Hub identity checks.
 public actor HubConnectionRouter {
-    private struct Advertisement: Codable, Equatable { let hubId: String; let privateUrl: URL?; let lanUrl: URL? }
+    private struct Advertisement: Codable, Equatable {
+        let hubId: String
+        let privateUrl: URL?
+        let lanUrl: URL?
+
+        private enum CodingKeys: String, CodingKey {
+            case hubId, hub_id
+            case privateUrl, private_url
+            case lanUrl, lan_url
+        }
+
+        init(hubId: String, privateUrl: URL?, lanUrl: URL?) {
+            self.hubId = hubId
+            self.privateUrl = privateUrl
+            self.lanUrl = lanUrl
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            hubId = try c.decodeIfPresent(String.self, forKey: .hub_id)
+                ?? c.decode(String.self, forKey: .hubId)
+            privateUrl = try c.decodeIfPresent(URL.self, forKey: .private_url)
+                ?? c.decodeIfPresent(URL.self, forKey: .privateUrl)
+            lanUrl = try c.decodeIfPresent(URL.self, forKey: .lan_url)
+                ?? c.decodeIfPresent(URL.self, forKey: .lanUrl)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(hubId, forKey: .hubId)
+            try c.encodeIfPresent(privateUrl, forKey: .privateUrl)
+            try c.encodeIfPresent(lanUrl, forKey: .lanUrl)
+        }
+    }
     public let canonicalURL: URL
     private let performer: any HTTPPerforming
     private let defaults: UserDefaults?
@@ -147,7 +180,7 @@ public actor HubConnectionRouter {
     func awaitBackgroundTasksForTesting() async { await discoveryFlight?.value }
     private func fetchAdvertisement(token: String) async -> Advertisement? {
         // A verified LAN can refresh discovery even when the relay is down.
-        var request = URLRequest(url: selected.appendingPathComponent("api/connection"))
+        var request = URLRequest(url: selected.appendingPathComponent("v1/connection"))
         request.timeoutInterval = 2
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -315,7 +348,7 @@ public struct RoutingHTTPPerformer: HTTPPerforming {
             await router.failed(origin)
             // Reads and auth exchanges are safe to repeat. Never replay an
             // uncertain message, approval, terminal command or other mutation.
-            let safe = request.httpMethod == "GET" || request.httpMethod == "HEAD" || request.url?.path == "/api/auth"
+            let safe = request.httpMethod == "GET" || request.httpMethod == "HEAD" || request.url?.path == "/v1/auth/login"
             let mode = await router.status().mode
             if safe, mode == .automatic {
                 let alternative = try await router.resolve(token: bearer)

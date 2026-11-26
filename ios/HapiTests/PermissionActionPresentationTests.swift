@@ -93,7 +93,7 @@ final class PermissionActionPresentationTests: XCTestCase {
                 if held { await withCheckedContinuation { waiters.append($0) } }
                 responseStatus = status
                 data = Data((status == 200 ? #"{"ok":true}"# : #"{"error":"Approval failed"}"#).utf8)
-            } else if request.httpMethod == "GET", url.path == "/api/sessions/approval-test" {
+            } else if request.httpMethod == "GET", url.path == "/v1/sessions/approval-test" {
                 data = try HapiJSON.encoder.encode(SessionResponse(session: session))
             } else {
                 throw URLError(.unsupportedURL)

@@ -1,6 +1,8 @@
 package app.hapi.protocol.wire
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 
 /*
  * Scratchlist wire surface (tiann/hapi#893, B-M4d).
@@ -55,8 +57,10 @@ data class ScratchlistAttachment(
  * One scratchlist entry (`ScratchlistEntrySchema`). Single-user notes —
  * last-write-wins, no version field.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ScratchlistEntry(
+    @JsonNames("id")
     val entryId: String,
     val text: String,
     val createdAt: Long,
@@ -145,6 +149,7 @@ data class ScratchlistLimitsResponse(
 data class ScratchlistUploadResponse(
     val success: Boolean,
     val attachment: ScratchlistAttachment? = null,
+    val path: String? = null,
     val error: String? = null,
     val code: String? = null,
 )

@@ -57,6 +57,69 @@ public struct MessagesPage: Codable, Equatable, Sendable {
         self.snapshotHeadAt = snapshotHeadAt
         self.hasMore = hasMore
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case readThroughRevision
+        case read_through_revision
+        case direction
+        case limit
+        case epoch
+        case reset
+        case nextBeforeSeq
+        case next_before_seq
+        case nextBeforeAt
+        case next_before_at
+        case nextAfterSeq
+        case next_after_seq
+        case nextAfterAt
+        case next_after_at
+        case snapshotHeadSeq
+        case snapshot_head_seq
+        case snapshotHeadAt
+        case snapshot_head_at
+        case hasMore
+        case has_more
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        readThroughRevision = try c.decodeIfPresent(Int.self, forKey: .read_through_revision)
+            ?? c.decodeIfPresent(Int.self, forKey: .readThroughRevision)
+        direction = try c.decode(Direction.self, forKey: .direction)
+        limit = try c.decode(Int.self, forKey: .limit)
+        epoch = try c.decode(Int.self, forKey: .epoch)
+        reset = try c.decode(Bool.self, forKey: .reset)
+        nextBeforeSeq = try c.decodeIfPresent(Int.self, forKey: .next_before_seq)
+            ?? c.decodeIfPresent(Int.self, forKey: .nextBeforeSeq)
+        nextBeforeAt = try c.decodeIfPresent(Int.self, forKey: .next_before_at)
+            ?? c.decodeIfPresent(Int.self, forKey: .nextBeforeAt)
+        nextAfterSeq = try c.decodeIfPresent(Int.self, forKey: .next_after_seq)
+            ?? c.decodeIfPresent(Int.self, forKey: .nextAfterSeq)
+        nextAfterAt = try c.decodeIfPresent(Int.self, forKey: .next_after_at)
+            ?? c.decodeIfPresent(Int.self, forKey: .nextAfterAt)
+        snapshotHeadSeq = try c.decodeIfPresent(Int.self, forKey: .snapshot_head_seq)
+            ?? c.decodeIfPresent(Int.self, forKey: .snapshotHeadSeq)
+        snapshotHeadAt = try c.decodeIfPresent(Int.self, forKey: .snapshot_head_at)
+            ?? c.decodeIfPresent(Int.self, forKey: .snapshotHeadAt)
+        hasMore = try c.decodeIfPresent(Bool.self, forKey: .has_more)
+            ?? c.decode(Bool.self, forKey: .hasMore)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(readThroughRevision, forKey: .readThroughRevision)
+        try c.encode(direction, forKey: .direction)
+        try c.encode(limit, forKey: .limit)
+        try c.encode(epoch, forKey: .epoch)
+        try c.encode(reset, forKey: .reset)
+        try c.encodeIfPresent(nextBeforeSeq, forKey: .nextBeforeSeq)
+        try c.encodeIfPresent(nextBeforeAt, forKey: .nextBeforeAt)
+        try c.encodeIfPresent(nextAfterSeq, forKey: .nextAfterSeq)
+        try c.encodeIfPresent(nextAfterAt, forKey: .nextAfterAt)
+        try c.encodeIfPresent(snapshotHeadSeq, forKey: .snapshotHeadSeq)
+        try c.encodeIfPresent(snapshotHeadAt, forKey: .snapshotHeadAt)
+        try c.encode(hasMore, forKey: .hasMore)
+    }
 }
 
 /// Envelope of `GET /api/sessions/:id/messages`.

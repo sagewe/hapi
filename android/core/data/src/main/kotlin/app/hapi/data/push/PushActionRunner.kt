@@ -115,7 +115,8 @@ class PushActionRunner(private val hubAccess: PushHubAccess) {
      * notice, never a false "already handled".
      */
     private fun classify(error: ApiError): HubVerdict = when {
-        error.status == 404 && error.code == REQUEST_NOT_FOUND -> HubVerdict.ALREADY_HANDLED
+        (error.status == 409 && error.code == V1_REQUEST_NOT_FOUND) ||
+            (error.status == 404 && error.code == REQUEST_NOT_FOUND) -> HubVerdict.ALREADY_HANDLED
         error.status == 404 -> HubVerdict.NOT_THIS_HUB
         error.status == 403 -> HubVerdict.NOT_THIS_HUB // session owned by another namespace there
         error.status == 409 && error.code == SESSION_INACTIVE_CODE -> HubVerdict.SESSION_INACTIVE
@@ -128,7 +129,7 @@ class PushActionRunner(private val hubAccess: PushHubAccess) {
     }
 
     private companion object {
-        /** Literal error strings from `hub/src/web/routes/{guards,permissions}.ts`. */
+        const val V1_REQUEST_NOT_FOUND = "request_not_found"
         const val REQUEST_NOT_FOUND = "Request not found"
         const val SESSION_INACTIVE_CODE = "session_inactive"
     }

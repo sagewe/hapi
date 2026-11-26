@@ -23,15 +23,51 @@ public struct AuthUser: Codable, Equatable, Sendable {
     }
 }
 
-/// Success body of `POST /api/auth`.
+/// Success body of `POST /v1/auth/login`.
 public struct AuthResponse: Codable, Equatable, Sendable {
     /// The JWT (HS256, `{uid, ns}`, 4 h expiry).
     public var token: String
-    public var user: AuthUser
+    public var namespace: String?
+    public var isOwner: Bool?
+    public var user: AuthUser?
 
     public init(token: String, user: AuthUser) {
         self.token = token
+        self.namespace = nil
+        self.isOwner = nil
         self.user = user
+    }
+
+    public init(token: String, namespace: String? = nil, isOwner: Bool? = nil, user: AuthUser? = nil) {
+        self.token = token
+        self.namespace = namespace
+        self.isOwner = isOwner
+        self.user = user
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case token
+        case namespace
+        case isOwner
+        case is_owner
+        case user
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        token = try container.decode(String.self, forKey: .token)
+        namespace = try container.decodeIfPresent(String.self, forKey: .namespace)
+        isOwner = try container.decodeIfPresent(Bool.self, forKey: .is_owner)
+            ?? container.decodeIfPresent(Bool.self, forKey: .isOwner)
+        user = try container.decodeIfPresent(AuthUser.self, forKey: .user)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(token, forKey: .token)
+        try container.encodeIfPresent(namespace, forKey: .namespace)
+        try container.encodeIfPresent(isOwner, forKey: .is_owner)
+        try container.encodeIfPresent(user, forKey: .user)
     }
 }
 
@@ -90,16 +126,42 @@ public struct MachinesResponse: Codable, Equatable, Sendable {
 
 // MARK: - Session lifecycle
 
-/// Body of `POST /api/sessions/:id/resume` — `{type: 'success', sessionId}`.
-/// Only `sessionId` is modeled; failures arrive as HTTP errors.
-///
-/// The returned id may differ from the one the call was made on (fresh spawn
-/// under a new id) — callers must follow it.
+/// Body of `POST /v1/sessions/:id/resume` — `{ok: true, session: {...}}` or `{type: 'success', sessionId}`.
 public struct ResumeSessionResponse: Codable, Equatable, Sendable {
     public var sessionId: String
 
     public init(sessionId: String) {
         self.sessionId = sessionId
+    }
+
+    private struct SessionIDBox: Decodable {
+        let id: String
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionId
+        case session_id
+        case session
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let id = try container.decodeIfPresent(String.self, forKey: .sessionId)
+            ?? container.decodeIfPresent(String.self, forKey: .session_id) {
+            self.sessionId = id
+        } else if let box = try container.decodeIfPresent(SessionIDBox.self, forKey: .session) {
+            self.sessionId = box.id
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.sessionId,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing sessionId or session.id")
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionId, forKey: .sessionId)
     }
 }
 
@@ -120,6 +182,38 @@ public struct ReopenSessionResponse: Codable, Equatable, Sendable {
         self.resumed = resumed
         self.cursorSessionProtocol = cursorSessionProtocol
     }
+
+    private struct SessionIDBox: Decodable { let id: String }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok, sessionId, session_id, session, resumed, cursorSessionProtocol
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try c.decodeIfPresent(Bool.self, forKey: .ok) ?? true
+        if let id = try c.decodeIfPresent(String.self, forKey: .sessionId)
+            ?? c.decodeIfPresent(String.self, forKey: .session_id) {
+            sessionId = id
+        } else if let box = try c.decodeIfPresent(SessionIDBox.self, forKey: .session) {
+            sessionId = box.id
+        } else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.sessionId,
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing sessionId or session.id")
+            )
+        }
+        resumed = try c.decodeIfPresent(Bool.self, forKey: .resumed) ?? true
+        cursorSessionProtocol = try c.decodeIfPresent(String.self, forKey: .cursorSessionProtocol)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(ok, forKey: .ok)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(resumed, forKey: .resumed)
+        try c.encodeIfPresent(cursorSessionProtocol, forKey: .cursorSessionProtocol)
+    }
 }
 
 // MARK: - Spawning
@@ -132,32 +226,59 @@ public enum SpawnResponse: Equatable, Sendable {
 }
 
 extension SpawnResponse: Decodable {
+    private struct SessionIDBox: Decodable {
+        let id: String
+    }
+
     private enum CodingKeys: String, CodingKey {
         case type
         case sessionId
+        case session_id
+        case session
         case message
+        case error
         case code
         case agent
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let type = try container.decode(String.self, forKey: .type)
-        switch type {
-        case "success":
-            self = .success(sessionId: try container.decode(String.self, forKey: .sessionId))
-        case "error":
+        if let type = try container.decodeIfPresent(String.self, forKey: .type) {
+            switch type {
+            case "success":
+                let id = try container.decodeIfPresent(String.self, forKey: .sessionId)
+                    ?? container.decode(String.self, forKey: .session_id)
+                self = .success(sessionId: id)
+            case "error":
+                self = .error(
+                    message: try container.decodeIfPresent(String.self, forKey: .message) ?? "",
+                    code: try container.decodeIfPresent(String.self, forKey: .code),
+                    agent: try container.decodeIfPresent(AgentFlavor.self, forKey: .agent)
+                )
+            default:
+                throw DecodingError.dataCorrupted(DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unknown SpawnResponse type '\(type)'"
+                ))
+            }
+            return
+        }
+        if let box = try container.decodeIfPresent(SessionIDBox.self, forKey: .session) {
+            self = .success(sessionId: box.id)
+            return
+        }
+        if let err = try container.decodeIfPresent(String.self, forKey: .error) {
             self = .error(
-                message: try container.decodeIfPresent(String.self, forKey: .message) ?? "",
+                message: err,
                 code: try container.decodeIfPresent(String.self, forKey: .code),
                 agent: try container.decodeIfPresent(AgentFlavor.self, forKey: .agent)
             )
-        default:
-            throw DecodingError.dataCorrupted(DecodingError.Context(
-                codingPath: decoder.codingPath,
-                debugDescription: "Unknown SpawnResponse type '\(type)'"
-            ))
+            return
         }
+        throw DecodingError.keyNotFound(
+            CodingKeys.session,
+            DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Missing session or type in SpawnResponse")
+        )
     }
 }
 

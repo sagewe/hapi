@@ -87,6 +87,7 @@ public struct ScratchlistEntry: Codable, Equatable, Sendable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case entryId
+        case id
         case text
         case createdAt
         case updatedAt
@@ -94,14 +95,22 @@ public struct ScratchlistEntry: Codable, Equatable, Sendable, Identifiable {
     }
 
     public init(from decoder: Decoder) throws {
-        // Hand-written only for the absent-`attachments` → `[]` default
-        // (synthesized Codable would throw on the missing key).
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        entryId = try container.decode(String.self, forKey: .entryId)
+        entryId = try container.decodeIfPresent(String.self, forKey: .entryId)
+            ?? container.decode(String.self, forKey: .id)
         text = try container.decode(String.self, forKey: .text)
         createdAt = try container.decode(Int.self, forKey: .createdAt)
         updatedAt = try container.decode(Int.self, forKey: .updatedAt)
         attachments = try container.decodeIfPresent([ScratchlistAttachment].self, forKey: .attachments) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(entryId, forKey: .entryId)
+        try container.encode(text, forKey: .text)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encode(attachments, forKey: .attachments)
     }
 }
 
@@ -214,17 +223,20 @@ public struct ScratchlistLimitsResponse: Codable, Equatable, Sendable {
 public struct ScratchlistUploadResponse: Codable, Equatable, Sendable {
     public var success: Bool
     public var attachment: ScratchlistAttachment?
+    public var path: String?
     public var error: String?
     public var code: String?
 
     public init(
         success: Bool,
         attachment: ScratchlistAttachment? = nil,
+        path: String? = nil,
         error: String? = nil,
         code: String? = nil
     ) {
         self.success = success
         self.attachment = attachment
+        self.path = path
         self.error = error
         self.code = code
     }

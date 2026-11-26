@@ -12,7 +12,7 @@ final class AssistantProfileTests: XCTestCase {
         var profile = #"{"clientProfile":{"mode":"assistant","appTitle":"合规调查助手","defaultAgent":"agy","defaultPermissionMode":"auto","defaultDirectory":"/test","modelPresets":[{"id":"quick","label":"快速","model":"gemini-4-hydrogen-medium","effort":"medium"},{"id":"deep","label":"深度","model":"gemini-4-neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"company","title":"企业主体与股权穿透","prompt":"请核查："}]}}"#
         func set(_ value: String) { profile = value }
         func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-            let body = request.url!.path.hasSuffix("/api/hub-settings") ? profile : #"{"machines":[]}"#
+            let body = request.url!.path.hasSuffix("/v1/settings") ? profile : #"{"machines":[]}"#
             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         }
     }

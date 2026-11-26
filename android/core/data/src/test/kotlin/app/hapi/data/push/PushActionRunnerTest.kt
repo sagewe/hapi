@@ -93,7 +93,7 @@ class PushActionRunnerTest {
         assertEquals(PushActionOutcome.Success(hubA), outcome)
         val request = serverA.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/sessions/s1/permissions/r1/approve", request.path)
+        assertEquals("/v1/sessions/s1/permissions/r1/approve", request.path)
         assertEquals("{}", request.body.readUtf8())
         assertEquals("Bearer $jwt", request.getHeader("Authorization"))
         assertEquals(0, serverB.requestCount) // active hub answered — B untouched
@@ -107,7 +107,7 @@ class PushActionRunnerTest {
 
         assertEquals(PushActionOutcome.Success(hubA), outcome)
         val request = serverA.takeRequest()
-        assertEquals("/api/sessions/s1/permissions/r1/deny", request.path)
+        assertEquals("/v1/sessions/s1/permissions/r1/deny", request.path)
         assertEquals("{}", request.body.readUtf8())
     }
 
@@ -119,7 +119,7 @@ class PushActionRunnerTest {
 
         assertEquals(PushActionOutcome.Success(hubA), outcome)
         val request = serverA.takeRequest()
-        assertEquals("/api/sessions/s1/messages", request.path)
+        assertEquals("/v1/sessions/s1/messages", request.path)
         assertEquals("""{"text":"looks good, ship it","localId":"local-42"}""", request.body.readUtf8())
     }
 
@@ -133,8 +133,8 @@ class PushActionRunnerTest {
         val outcome = runBlocking { runner.approve("s1", "r1") }
 
         assertEquals(PushActionOutcome.Success(hubB), outcome)
-        assertEquals("/api/sessions/s1/permissions/r1/approve", serverA.takeRequest().path)
-        assertEquals("/api/sessions/s1/permissions/r1/approve", serverB.takeRequest().path)
+        assertEquals("/v1/sessions/s1/permissions/r1/approve", serverA.takeRequest().path)
+        assertEquals("/v1/sessions/s1/permissions/r1/approve", serverB.takeRequest().path)
     }
 
     @Test

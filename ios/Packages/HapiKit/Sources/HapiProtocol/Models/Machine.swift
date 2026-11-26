@@ -176,6 +176,64 @@ public struct Machine: Codable, Equatable, Sendable {
         self.runnerStateVersion = runnerStateVersion
         self.health = health
     }
+
+    private enum V1CodingKeys: String, CodingKey {
+        case id
+        case namespace
+        case name
+        case platform
+        case capabilities
+        case active
+        case last_seen_at
+    }
+
+    public init(from decoder: Decoder) throws {
+        let legacy = try decoder.container(keyedBy: CodingKeys.self)
+        let v1 = try decoder.container(keyedBy: V1CodingKeys.self)
+        if !legacy.contains(.metadataVersion) && v1.contains(.last_seen_at) {
+            id = try v1.decode(String.self, forKey: .id)
+            namespace = try v1.decode(String.self, forKey: .namespace)
+            let name = try v1.decode(String.self, forKey: .name)
+            let platform = try v1.decode(String.self, forKey: .platform)
+            active = try v1.decode(Bool.self, forKey: .active)
+            let lastSeenAt = try v1.decode(Int.self, forKey: .last_seen_at)
+            seq = 1
+            createdAt = lastSeenAt
+            updatedAt = lastSeenAt
+            activeAt = lastSeenAt
+            metadataVersion = 1
+            runnerStateVersion = 1
+            runnerState = RunnerState(status: active ? "running" : "stopped")
+            health = nil
+            var capList: [String]? = nil
+            if let caps = try v1.decodeIfPresent(JSONValue.self, forKey: .capabilities) {
+                if case .array(let items) = caps {
+                    capList = items.compactMap(\.stringValue)
+                } else if case .object(let dict) = caps, case .array(let items)? = dict["capabilities"] {
+                    capList = items.compactMap(\.stringValue)
+                }
+            }
+            metadata = MachineMetadata(
+                host: name,
+                platform: platform,
+                happyCliVersion: "reins-v1",
+                capabilities: capList
+            )
+            return
+        }
+        id = try legacy.decode(String.self, forKey: .id)
+        namespace = try legacy.decode(String.self, forKey: .namespace)
+        seq = try legacy.decode(Int.self, forKey: .seq)
+        createdAt = try legacy.decode(Int.self, forKey: .createdAt)
+        updatedAt = try legacy.decode(Int.self, forKey: .updatedAt)
+        active = try legacy.decode(Bool.self, forKey: .active)
+        activeAt = try legacy.decode(Int.self, forKey: .activeAt)
+        metadata = try legacy.decodeIfPresent(MachineMetadata.self, forKey: .metadata)
+        metadataVersion = try legacy.decode(Int.self, forKey: .metadataVersion)
+        runnerState = try legacy.decodeIfPresent(RunnerState.self, forKey: .runnerState)
+        runnerStateVersion = try legacy.decode(Int.self, forKey: .runnerStateVersion)
+        health = try legacy.decodeIfPresent(MachineHealth.self, forKey: .health)
+    }
 }
 
 /// A flat `machine-updated` patch.

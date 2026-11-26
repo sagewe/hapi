@@ -10,9 +10,9 @@ public struct WebPreviewLease: Decodable, Sendable {
 extension APIClient {
     public func openWebPreview(sessionId: String, host: String, port: Int) async throws -> WebPreviewLease {
         struct Target: Encodable { let host: String; let port: Int }
-        return try await request(.post, "/api/sessions/\(encodePathComponent(sessionId))/preview", body: Target(host: host, port: port))
+        return try await request(.post, "/v1/sessions/\(encodePathComponent(sessionId))/preview", body: Target(host: host, port: port))
     }
     public func closeWebPreview(sessionId: String, id: String) async throws {
-        try await requestVoid(.delete, "/api/sessions/\(encodePathComponent(sessionId))/preview/\(encodePathComponent(id))")
+        try await requestVoid(.delete, "/v1/sessions/\(encodePathComponent(sessionId))/preview/\(encodePathComponent(id))")
     }
 }

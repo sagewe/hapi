@@ -67,7 +67,7 @@ class TokenAuthenticatorTest {
 
     private fun authOk(token: String) = MockResponse()
         .setHeader("Content-Type", "application/json")
-        .setBody("""{"token":"$token","user":{"id":1,"firstName":"Web User"}}""")
+        .setBody("""{"token":"$token","namespace":"default","is_owner":true}""")
 
     private fun sessionsOk() = MockResponse()
         .setHeader("Content-Type", "application/json")
@@ -91,18 +91,18 @@ class TokenAuthenticatorTest {
 
         assertEquals(3, server.requestCount)
         val first = server.takeRequest()
-        assertEquals("/api/sessions", first.path)
+        assertEquals("/v1/sessions", first.path)
         assertEquals("Bearer $jwt1", first.getHeader("Authorization"))
 
         val auth = server.takeRequest()
-        assertEquals("/api/auth", auth.path)
+        assertEquals("/v1/auth/login", auth.path)
         assertEquals("POST", auth.method)
         assertNull(auth.getHeader("Authorization"), "auth exchange must not carry a bearer header")
         val authBody = Json.parseToJsonElement(auth.body.readUtf8()).jsonObject
         assertEquals(accessToken, authBody.getValue("accessToken").jsonPrimitive.content)
 
         val retry = server.takeRequest()
-        assertEquals("/api/sessions", retry.path)
+        assertEquals("/v1/sessions", retry.path)
         assertEquals("Bearer $jwt2", retry.getHeader("Authorization"))
 
         val stored = store.get(hubUrl)
@@ -118,7 +118,7 @@ class TokenAuthenticatorTest {
         val authCalls = AtomicInteger()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
-                request.path == "/api/auth" -> {
+                request.path == "/v1/auth/login" -> {
                     authCalls.incrementAndGet()
                     authOk(jwt2)
                 }
@@ -143,7 +143,7 @@ class TokenAuthenticatorTest {
         val staleServed = CountDownLatch(parallel)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when {
-                request.path == "/api/auth" -> {
+                request.path == "/v1/auth/login" -> {
                     authCalls.incrementAndGet()
                     // Hold the exchange until every caller has hit its 401 so
                     // all of them are contending on the refresh mutex.
@@ -177,7 +177,7 @@ class TokenAuthenticatorTest {
         val sessionCalls = AtomicInteger()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/auth" -> {
+                "/v1/auth/login" -> {
                     authCalls.incrementAndGet()
                     authOk(jwt2)
                 }
@@ -203,7 +203,7 @@ class TokenAuthenticatorTest {
         val authCalls = AtomicInteger()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/auth" -> {
+                "/v1/auth/login" -> {
                     authCalls.incrementAndGet()
                     unauthorized("Invalid access token")
                 }
@@ -226,7 +226,7 @@ class TokenAuthenticatorTest {
         val hub = startSession()
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse = when (request.path) {
-                "/api/auth" -> MockResponse().setResponseCode(503)
+                "/v1/auth/login" -> MockResponse().setResponseCode(503)
                     .setBody("""{"error":"Not connected"}""")
                 else -> unauthorized()
             }
@@ -264,7 +264,7 @@ class TokenAuthenticatorTest {
 
         assertEquals(jwt2, token)
         assertEquals(1, server.requestCount)
-        assertEquals("/api/auth", server.takeRequest().path)
+        assertEquals("/v1/auth/login", server.takeRequest().path)
         assertEquals(jwt2, store.get(hubUrl)?.jwt)
     }
 

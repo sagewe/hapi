@@ -90,13 +90,13 @@ struct PairingLogicTests {
         #expect(world.registry.hubs == ["https://hub.example.com"])
         #expect(world.registry.activeHub == "https://hub.example.com")
 
-        // Wire order: unauthenticated GET /health, then POST /api/auth with
+        // Wire order: unauthenticated GET /health, then POST /v1/auth/login with
         // the token passed through verbatim (opaque, incl. the namespace).
         let requests = await world.performer.requests
         #expect(requests.count == 2)
         #expect(requests[0].url?.absoluteString == "https://hub.example.com/health")
         #expect(requests[0].value(forHTTPHeaderField: "Authorization") == nil)
-        #expect(requests[1].url?.absoluteString == "https://hub.example.com/api/auth")
+        #expect(requests[1].url?.absoluteString == "https://hub.example.com/v1/auth/login")
         let body = try #require(requests[1].httpBody)
         #expect(String(data: body, encoding: .utf8) == "{\"accessToken\":\"tok_9f8:default\"}")
     }

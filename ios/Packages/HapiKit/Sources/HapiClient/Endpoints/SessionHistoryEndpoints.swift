@@ -29,13 +29,13 @@ extension APIClient {
         }
         let response: ResumeSessionResponse = try await request(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/fork",
+            "/v1/sessions/\(encodePathComponent(sessionId))/fork",
             body: ForkRequest(messageLocalId: messageLocalId)
         )
         return response.sessionId
     }
 
-    /// `POST /api/sessions/:id/rewind` — drop the conversation from
+    /// `POST /v1/sessions/:id/rewind` — drop the conversation from
     /// `messageLocalId` on. A 409 `ambiguous_native_boundary_fork_safe`
     /// means only a fork can preserve the point.
     public func rewindConversation(sessionId: String, messageLocalId: String) async throws {
@@ -44,18 +44,18 @@ extension APIClient {
         }
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/rewind",
+            "/v1/sessions/\(encodePathComponent(sessionId))/rewind",
             body: RewindRequest(messageLocalId: messageLocalId)
         )
     }
 
-    /// `GET /api/sessions/:id/export[?force=true]`, saved as pretty JSON.
+    /// `GET /v1/sessions/:id/export[?force=true]`, saved as pretty JSON.
     public func exportSession(sessionId: String, force: Bool = false) async throws -> SessionExportResult {
         let data: Data
         do {
             (data, _) = try await send(
                 .get,
-                path: "/api/sessions/\(encodePathComponent(sessionId))/export",
+                path: "/v1/sessions/\(encodePathComponent(sessionId))/export",
                 query: force ? [URLQueryItem(name: "force", value: "true")] : []
             )
         } catch let error as APIError where error.status == 413 {

@@ -27,7 +27,7 @@ struct UsageEndpointTests {
         let request = await harness.performer.requests.first
         #expect(
             request?.url?.absoluteString
-                == "\(testHubURLString)/api/usage/summary?range=30d&timeZone=Asia%2FShanghai"
+                == "\(testHubURLString)/v1/usage/summary?range=30d&timeZone=Asia%2FShanghai"
         )
         #expect(request?.httpMethod == "GET")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)")
@@ -45,7 +45,7 @@ struct UsageEndpointTests {
         #expect(usage.totalBytes == 125)
 
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/storage/sqlite")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/storage/sqlite")
         #expect(request?.httpMethod == "GET")
     }
 

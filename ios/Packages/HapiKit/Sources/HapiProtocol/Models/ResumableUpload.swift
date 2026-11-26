@@ -19,4 +19,19 @@ public struct ResumableUploadStatus: Decodable, Sendable {
     public let offset: Int
     public let chunkSize: Int
     public let result: UploadFileResponse?
+
+    private enum CodingKeys: String, CodingKey {
+        case offset
+        case chunkSize
+        case chunk_size
+        case result
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        offset = try c.decode(Int.self, forKey: .offset)
+        chunkSize = try c.decodeIfPresent(Int.self, forKey: .chunk_size)
+            ?? c.decode(Int.self, forKey: .chunkSize)
+        result = try c.decodeIfPresent(UploadFileResponse.self, forKey: .result)
+    }
 }

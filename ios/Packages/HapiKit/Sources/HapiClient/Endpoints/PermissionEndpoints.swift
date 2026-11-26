@@ -7,7 +7,7 @@ import HapiProtocol
 /// request id is no longer pending and 409 `session_inactive` when the
 /// session is inactive.
 extension APIClient {
-    /// `POST /api/sessions/:id/permissions/:requestId/approve`.
+    /// `POST /v1/sessions/:id/permissions/:requestId/approve`.
     public func approvePermission(
         sessionId: String,
         requestId: String,
@@ -15,12 +15,12 @@ extension APIClient {
     ) async throws {
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/permissions/\(encodePathComponent(requestId))/approve",
+            "/v1/sessions/\(encodePathComponent(sessionId))/permissions/\(encodePathComponent(requestId))/approve",
             body: body
         )
     }
 
-    /// `POST /api/sessions/:id/permissions/:requestId/deny`.
+    /// `POST /v1/sessions/:id/permissions/:requestId/deny`.
     public func denyPermission(
         sessionId: String,
         requestId: String,
@@ -28,7 +28,7 @@ extension APIClient {
     ) async throws {
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/permissions/\(encodePathComponent(requestId))/deny",
+            "/v1/sessions/\(encodePathComponent(sessionId))/permissions/\(encodePathComponent(requestId))/deny",
             body: PermissionDenyRequest(decision: decision)
         )
     }

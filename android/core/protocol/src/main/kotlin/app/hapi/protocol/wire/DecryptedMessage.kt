@@ -7,12 +7,14 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 
 /**
@@ -58,6 +60,11 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
             ?: throw SerializationException("DecryptedMessage supports JSON only")
         val obj = input.decodeJsonElement() as? JsonObject
             ?: throw SerializationException("DecryptedMessage must be a JSON object")
+        val isV1 = obj.containsKey("created_at") ||
+            (obj.containsKey("role") && obj.containsKey("blocks") && !obj.containsKey("content"))
+        if (isV1) {
+            return decodeV1Message(obj)
+        }
         return DecryptedMessage(
             contentRevision = obj["contentRevision"]?.longOrNull,
             id = obj["id"].stringOrNull
@@ -75,6 +82,190 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
             scheduledAt = obj["scheduledAt"].longOrNull,
             deliveryState = obj["deliveryState"].stringOrNull,
         )
+    }
+
+    private fun decodeV1Message(obj: JsonObject): DecryptedMessage {
+        val id = obj["id"].stringOrNull
+            ?: throw SerializationException("DecryptedMessage.id must be a string")
+        val createdAt = obj["created_at"].longOrNull
+            ?: obj["createdAt"].longOrNull
+            ?: throw SerializationException("DecryptedMessage.created_at must be a number")
+        val role = obj["role"].stringOrNull ?: "user"
+        val deliveryState = obj["delivery_state"].stringOrNull ?: obj["deliveryState"].stringOrNull
+        val rawInvokedAt = obj["invoked_at"].longOrNull ?: obj["invokedAt"].longOrNull
+        val invokedAt = when {
+            rawInvokedAt != null -> OptionalField.Present(rawInvokedAt)
+            role == "user" && deliveryState in setOf("queued", "dispatching", "indeterminate") ->
+                OptionalField.Present(null)
+            else -> OptionalField.Present(createdAt)
+        }
+        val blocks = (obj["blocks"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+        val meta = obj["meta"] as? JsonObject
+        val content = obj["content"] ?: buildCompatEnvelope(id, role, blocks, meta)
+        return DecryptedMessage(
+            contentRevision = obj["content_rev"].longOrNull ?: obj["contentRevision"].longOrNull,
+            id = id,
+            seq = obj["seq"].longOrNull,
+            localId = obj["local_id"].stringOrNull ?: obj["localId"].stringOrNull,
+            content = content,
+            createdAt = createdAt,
+            invokedAt = invokedAt,
+            scheduledAt = obj["scheduled_at"].longOrNull ?: obj["scheduledAt"].longOrNull,
+            deliveryState = deliveryState,
+        )
+    }
+
+    /** Convert Reins Native v1 `StoredMessage` (role + blocks + meta) into the HAPI role-wrapped content envelope. */
+    private fun buildCompatEnvelope(
+        msgId: String,
+        role: String,
+        blocks: List<JsonObject>,
+        meta: JsonObject?,
+    ): JsonObject = when (role) {
+        "user" -> {
+            val texts = mutableListOf<String>()
+            val attachments = mutableListOf<JsonObject>()
+            for (blk in blocks) {
+                when (blk["type"].stringOrNull) {
+                    "text" -> blk["text"].stringOrNull?.let(texts::add)
+                    "attachment" -> {
+                        val filename = blk["filename"].stringOrNull ?: ""
+                        attachments.add(buildJsonObject {
+                            blk["id"]?.let { put("id", it) }
+                            put("filename", JsonPrimitive(filename))
+                            put("mimeType", JsonPrimitive(blk["mimeType"].stringOrNull ?: blk["mime_type"].stringOrNull ?: "application/octet-stream"))
+                            put("size", JsonPrimitive(blk["size"].longOrNull ?: 0L))
+                            put("path", JsonPrimitive(blk["previewUrl"].stringOrNull ?: blk["preview_url"].stringOrNull ?: filename))
+                        })
+                    }
+                }
+            }
+            val inner = buildJsonObject {
+                put("type", JsonPrimitive("text"))
+                put("text", JsonPrimitive(texts.joinToString("\n")))
+                if (attachments.isNotEmpty()) {
+                    put("attachments", JsonArray(attachments))
+                }
+            }
+            buildJsonObject {
+                put("role", JsonPrimitive("user"))
+                put("content", inner)
+                if (meta != null && meta.isNotEmpty()) put("meta", meta)
+            }
+        }
+        "assistant" -> {
+            val singleGenMedia = blocks.singleOrNull()?.takeIf { it["type"].stringOrNull == "generated_media" }
+            if (singleGenMedia != null) {
+                buildJsonObject {
+                    put("role", JsonPrimitive("agent"))
+                    put("content", buildJsonObject {
+                        put("type", JsonPrimitive("codex"))
+                        put("data", buildJsonObject {
+                            put("type", JsonPrimitive("generated-image"))
+                            put("id", JsonPrimitive(msgId))
+                            put("imageId", JsonPrimitive(singleGenMedia["id"].stringOrNull ?: msgId))
+                            put("fileName", JsonPrimitive(singleGenMedia["filename"].stringOrNull ?: "media"))
+                            put("mimeType", JsonPrimitive(singleGenMedia["mime_type"].stringOrNull ?: singleGenMedia["mimeType"].stringOrNull ?: "image/png"))
+                        })
+                    })
+                }
+            } else {
+                val contentBlocks = buildJsonArray {
+                    for (blk in blocks) {
+                        when (blk["type"].stringOrNull) {
+                            "text" -> add(buildJsonObject {
+                                put("type", JsonPrimitive("text"))
+                                put("text", JsonPrimitive(blk["text"].stringOrNull ?: ""))
+                            })
+                            "thinking" -> add(buildJsonObject {
+                                put("type", JsonPrimitive("thinking"))
+                                put("thinking", JsonPrimitive(blk["thinking"].stringOrNull ?: ""))
+                            })
+                            "tool_use" -> add(buildJsonObject {
+                                put("type", JsonPrimitive("tool_use"))
+                                put("id", JsonPrimitive(blk["id"].stringOrNull ?: ""))
+                                put("name", JsonPrimitive(blk["name"].stringOrNull ?: ""))
+                                put("input", blk["input"] ?: JsonObject(emptyMap()))
+                            })
+                        }
+                    }
+                }
+                buildJsonObject {
+                    put("role", JsonPrimitive("agent"))
+                    put("content", buildJsonObject {
+                        put("type", JsonPrimitive("output"))
+                        put("data", buildJsonObject {
+                            put("type", JsonPrimitive("assistant"))
+                            put("message", buildJsonObject {
+                                put("role", JsonPrimitive("assistant"))
+                                put("content", contentBlocks)
+                            })
+                        })
+                    })
+                    if (meta != null && meta.isNotEmpty()) put("meta", meta)
+                }
+            }
+        }
+        "tool" -> {
+            var firstToolName: String? = null
+            var firstReceipt: JsonElement? = null
+            val contentBlocks = buildJsonArray {
+                for (blk in blocks) {
+                    if (blk["type"].stringOrNull == "tool_result") {
+                        val name = blk["name"].stringOrNull
+                        val receipt = blk["receipt"]
+                        if (firstToolName == null && name != null) firstToolName = name
+                        if (firstReceipt == null && receipt != null && receipt !is JsonNull) firstReceipt = receipt
+                        add(buildJsonObject {
+                            put("type", JsonPrimitive("tool_result"))
+                            put("tool_use_id", JsonPrimitive(blk["tool_use_id"].stringOrNull ?: ""))
+                            put("content", JsonPrimitive(blk["content"].stringOrNull ?: ""))
+                            put("is_error", JsonPrimitive(blk["is_error"].boolOrNull ?: false))
+                            if (receipt != null && receipt !is JsonNull) put("tool_receipt", receipt)
+                        })
+                    }
+                }
+            }
+            val mergedMeta = buildJsonObject {
+                meta?.forEach { (k, v) -> put(k, v) }
+                if (firstToolName != null && (meta == null || !meta.containsKey("toolName"))) {
+                    put("toolName", JsonPrimitive(firstToolName))
+                }
+                if (firstReceipt != null && (meta == null || !meta.containsKey("toolReceipt"))) {
+                    put("toolReceipt", firstReceipt)
+                }
+            }
+            buildJsonObject {
+                put("role", JsonPrimitive("agent"))
+                put("content", buildJsonObject {
+                    put("type", JsonPrimitive("output"))
+                    put("data", buildJsonObject {
+                        put("type", JsonPrimitive("user"))
+                        put("message", buildJsonObject {
+                            put("role", JsonPrimitive("user"))
+                            put("content", contentBlocks)
+                        })
+                    })
+                })
+                if (mergedMeta.isNotEmpty()) put("meta", mergedMeta)
+            }
+        }
+        "system" -> {
+            val text = blocks.mapNotNull { blk ->
+                if (blk["type"].stringOrNull == "text") blk["text"].stringOrNull else null
+            }.joinToString("\n")
+            buildJsonObject {
+                put("role", JsonPrimitive("system"))
+                put("content", buildJsonObject {
+                    put("type", JsonPrimitive("text"))
+                    put("text", JsonPrimitive(text))
+                })
+            }
+        }
+        else -> buildJsonObject {
+            put("role", JsonPrimitive(role))
+            put("content", JsonArray(blocks))
+        }
     }
 
     override fun serialize(encoder: Encoder, value: DecryptedMessage) {

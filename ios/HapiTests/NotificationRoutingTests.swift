@@ -18,7 +18,7 @@ final class NotificationRoutingTests: XCTestCase {
         func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             let url = try XCTUnwrap(request.url)
             let host = url.host ?? ""
-            if url.path.hasPrefix("/api/sessions/") {
+            if url.path.hasPrefix("/v1/sessions/") {
                 sessionLookups.append(host)
             }
             if host == "c.example.com" { throw URLError(.cannotConnectToHost) }

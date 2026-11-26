@@ -55,7 +55,7 @@ import Testing
         await harness.performer.enqueue(json: "data")
         _ = try await harness.client.caseFileBytes(sessionId: "case1", file: files[0])
         let requests = await harness.performer.requests
-        #expect(requests.last?.url?.path == "/api/sessions/case1/uploads/u1")
+        #expect(requests.last?.url?.path == "/v1/sessions/case1/blobs/u1")
         #expect(requests.last?.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Bearer ") == true)
     }
 }

@@ -23,6 +23,7 @@ import type {
     SyncEvent
 } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
+import { adaptV1SyncEvent } from '@/api/v1Adapters'
 import { applyAgyCatalogAnnouncement } from '@/lib/agyCatalogAnnouncement'
 import { clearMessageWindow, getMessageWindowState, ingestIncomingMessages, markMessagesConsumed, markMessagesIndeterminate, markMessagesDispatching, markMessagesRequeued, removeOptimisticMessage, updateMessageStatus } from '@/lib/message-window-store'
 import { applySessionDetailPatch } from '@/lib/sessionPatch'
@@ -218,16 +219,16 @@ function buildEventsUrl(
         params.set('all', 'true')
     }
     if (subscription.sessionId) {
-        params.set('sessionId', subscription.sessionId)
+        params.set('session_id', subscription.sessionId)
     }
     if (subscription.machineId) {
-        params.set('machineId', subscription.machineId)
+        params.set('machine_id', subscription.machineId)
     }
     if (lastEventId) {
-        params.set('lastEventId', lastEventId)
+        params.set('last_event_id', lastEventId)
     }
 
-    const path = `/api/events?${params.toString()}`
+    const path = `/v1/events?${params.toString()}`
     try {
         return new URL(path, baseUrl).toString()
     } catch {
@@ -817,11 +818,12 @@ export function useSSE(options: {
             if (!isObject(parsed)) {
                 return
             }
-            if (typeof parsed.type !== 'string') {
+            const normalized = adaptV1SyncEvent(parsed)
+            if (!normalized) {
                 return
             }
 
-            handleSyncEvent(parsed as SyncEvent)
+            handleSyncEvent(normalized)
 
             // Track the hub's replay cursor - after handling, so a throwing
             // handler leaves the cursor behind the event and the hub replays

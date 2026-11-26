@@ -1,13 +1,26 @@
 package app.hapi.protocol.wire
 
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonEncoder
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 
 /**
- * Paging envelope of `GET /api/sessions/:id/messages` (`MessagesResponse.page`
+ * Paging envelope of `GET /v1/sessions/:id/messages` (`MessagesResponse.page`
  * in `shared/src/apiTypes.ts`; semantics in
  * `docs/api/client-contract/pagination.md`). Every cursor is a `(seq, at)`
  * pair — both halves always travel together.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MessagesPage(
     /** `'latest' | 'before' | 'after'`. */
@@ -17,16 +30,26 @@ data class MessagesPage(
     val epoch: Long,
     /** `true` ⇒ discard the local window, this page replaces it. */
     val reset: Boolean,
+    @JsonNames("next_before_seq")
     val nextBeforeSeq: Long? = null,
+    @JsonNames("next_before_at")
     val nextBeforeAt: Long? = null,
+    @JsonNames("next_after_seq")
     val nextAfterSeq: Long? = null,
+    @JsonNames("next_after_at")
     val nextAfterAt: Long? = null,
+    @JsonNames("snapshot_head_seq")
     val snapshotHeadSeq: Long? = null,
+    @JsonNames("snapshot_head_at")
     val snapshotHeadAt: Long? = null,
+    @JsonNames("has_more")
     val hasMore: Boolean,
+    @JsonNames("read_through_revision")
     val readThroughRevision: Long? = null,
+    @JsonNames("content_revision")
+    val contentRevision: Long? = null,
 )
-/** `GET /api/sessions/:id/messages` — messages in ascending display order. */
+/** `GET /v1/sessions/:id/messages` — messages in ascending display order. */
 @Serializable
 data class MessagesResponse(
     val messages: List<DecryptedMessage>,
@@ -34,62 +57,74 @@ data class MessagesResponse(
 )
 
 /**
- * Cursor block of `GET /api/sessions/:id/messages/:messageId/context`
+ * Cursor block of `GET /v1/sessions/:id/messages/:messageId/context`
  * (`MessageContextResponse['page']` in `shared/src/apiTypes.ts`): the bounded
  * context window carries no direction/limit/reset keys.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MessageContextPage(
     val epoch: Long,
+    @JsonNames("next_before_seq")
     val nextBeforeSeq: Long? = null,
+    @JsonNames("next_before_at")
     val nextBeforeAt: Long? = null,
+    @JsonNames("snapshot_head_seq")
     val snapshotHeadSeq: Long? = null,
+    @JsonNames("snapshot_head_at")
     val snapshotHeadAt: Long? = null,
+    @JsonNames("has_more")
     val hasMore: Boolean,
 )
 
 /**
- * `GET /api/sessions/:id/messages/:messageId/context` — a bounded history
+ * `GET /v1/sessions/:id/messages/:messageId/context` — a bounded history
  * window centered on one message. The hub answers a bare JSON `null` when the
  * message does not resolve (web `MessageContextResponse | null`).
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class MessageContextResponse(
     val messages: List<DecryptedMessage>,
+    @JsonNames("target_message_id")
     val targetMessageId: String,
     val page: MessageContextPage,
 )
 
-/** `GET /api/sessions`. */
+/** `GET /v1/sessions`. */
 @Serializable
 data class SessionsResponse(
     val sessions: List<SessionSummary>,
 )
 
-/** `GET /api/sessions/:id`. */
+/** `GET /v1/sessions/:id`. */
 @Serializable
 data class SessionResponse(
     val session: Session,
 )
 
-/** `GET /api/machines`. */
+/** `GET /v1/machines`. */
 @Serializable
 data class MachinesResponse(
     val machines: List<Machine>,
 )
 
-/** `POST /api/machines/:id/restart-runner` — hub ack (`{message}`). */
+/** `POST /v1/machines/:id/restart-runner` — hub ack (`{message}`). */
 @Serializable
 data class RestartRunnerResponse(
     val message: String,
 )
 
-/** `POST /api/auth` success body (`AuthResponse`, `shared/src/apiTypes.ts`). */
+/** `POST /v1/auth/login` success body (Reins v1 `{token, namespace, is_owner}` or legacy `{token, user}`). */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AuthResponse(
-    /** The 4-hour JWT — `Authorization: Bearer` on every `/api` request. */
+    /** The JWT — `Authorization: Bearer` on every `/v1` request. */
     val token: String,
-    val user: AuthUser,
+    val namespace: String? = null,
+    @JsonNames("is_owner")
+    val isOwner: Boolean? = null,
+    val user: AuthUser? = null,
 )
 
 @Serializable
@@ -118,20 +153,44 @@ data class HubCapabilities(
 )
 
 /**
- * `POST /api/sessions/:id/resume` — `{type: 'success', sessionId}`. The
- * returned [sessionId] **may differ** from the id the call was made on (fresh
- * spawn superseding the old row); callers must migrate drafts + navigation.
+ * `POST /v1/sessions/:id/resume` — `{ok: true, session: {id, ...}}` (Reins v1)
+ * or `{sessionId}` (legacy). The returned [sessionId] **may differ** from the id
+ * the call was made on (fresh spawn superseding the old row); callers must
+ * migrate drafts + navigation.
  */
-@Serializable
+@Serializable(with = ResumeSessionResponseSerializer::class)
 data class ResumeSessionResponse(
     val sessionId: String,
 )
 
+internal object ResumeSessionResponseSerializer : KSerializer<ResumeSessionResponse> {
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("app.hapi.protocol.wire.ResumeSessionResponse", JsonObject.serializer().descriptor)
+
+    override fun deserialize(decoder: Decoder): ResumeSessionResponse {
+        val input = decoder as? JsonDecoder
+            ?: throw SerializationException("ResumeSessionResponse supports JSON only")
+        val obj = input.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("ResumeSessionResponse must be a JSON object")
+        val sessionId = obj["sessionId"].stringOrNull
+            ?: obj["session_id"].stringOrNull
+            ?: (obj["session"] as? JsonObject)?.get("id").stringOrNull
+            ?: throw SerializationException("ResumeSessionResponse missing sessionId or session.id")
+        return ResumeSessionResponse(sessionId = sessionId)
+    }
+
+    override fun serialize(encoder: Encoder, value: ResumeSessionResponse) {
+        val output = encoder as? JsonEncoder
+            ?: throw SerializationException("ResumeSessionResponse supports JSON only")
+        output.encodeJsonElement(buildJsonObject { put("sessionId", JsonPrimitive(value.sessionId)) })
+    }
+}
+
 /**
- * `POST /api/sessions/:id/reopen` (`ReopenSessionResponseSchema`). Same
- * superseding-[sessionId] caveat as [ResumeSessionResponse].
+ * `POST /v1/sessions/:id/resume` (reopen path) — decodes both Reins v1
+ * `{ok: true, session: {id, ...}}` and legacy `{ok, sessionId, resumed}`.
  */
-@Serializable
+@Serializable(with = ReopenSessionResponseSerializer::class)
 data class ReopenSessionResponse(
     val ok: Boolean = true,
     val sessionId: String,
@@ -139,6 +198,42 @@ data class ReopenSessionResponse(
     /** `'acp' | 'stream-json'` (cursor only). */
     val cursorSessionProtocol: String? = null,
 )
+
+internal object ReopenSessionResponseSerializer : KSerializer<ReopenSessionResponse> {
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("app.hapi.protocol.wire.ReopenSessionResponse", JsonObject.serializer().descriptor)
+
+    override fun deserialize(decoder: Decoder): ReopenSessionResponse {
+        val input = decoder as? JsonDecoder
+            ?: throw SerializationException("ReopenSessionResponse supports JSON only")
+        val obj = input.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("ReopenSessionResponse must be a JSON object")
+        val sessionObj = obj["session"] as? JsonObject
+        val sessionId = obj["sessionId"].stringOrNull
+            ?: obj["session_id"].stringOrNull
+            ?: sessionObj?.get("id").stringOrNull
+            ?: throw SerializationException("ReopenSessionResponse missing sessionId or session.id")
+        val ok = obj["ok"].boolOrNull ?: true
+        val resumed = obj["resumed"].boolOrNull ?: (sessionObj != null)
+        return ReopenSessionResponse(
+            ok = ok,
+            sessionId = sessionId,
+            resumed = resumed,
+            cursorSessionProtocol = obj["cursorSessionProtocol"].stringOrNull,
+        )
+    }
+
+    override fun serialize(encoder: Encoder, value: ReopenSessionResponse) {
+        val output = encoder as? JsonEncoder
+            ?: throw SerializationException("ReopenSessionResponse supports JSON only")
+        output.encodeJsonElement(buildJsonObject {
+            put("ok", JsonPrimitive(value.ok))
+            put("sessionId", JsonPrimitive(value.sessionId))
+            put("resumed", JsonPrimitive(value.resumed))
+            value.cursorSessionProtocol?.let { put("cursorSessionProtocol", JsonPrimitive(it)) }
+        })
+    }
+}
 
 /**
  * `DELETE /api/sessions/:id/messages/:messageId`
@@ -190,10 +285,10 @@ data class InvokedLocalMessage(
 )
 
 /**
- * `POST /api/machines/:id/spawn` — discriminated on [type], **not** HTTP
- * status: a failed spawn is still HTTP 200 with `type: 'error'` + [message].
+ * `POST /v1/sessions` (Reins v1 `{session: {id, ...}}`) or legacy
+ * `POST /v1/machines/:id/spawn` (`{type: 'success'|'error', sessionId, message}`).
  */
-@Serializable
+@Serializable(with = SpawnResponseSerializer::class)
 data class SpawnResponse(
     /** `'success' | 'error'`. */
     val type: String,
@@ -203,6 +298,45 @@ data class SpawnResponse(
     val code: String? = null,
     val agent: String? = null,
 )
+
+internal object SpawnResponseSerializer : KSerializer<SpawnResponse> {
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("app.hapi.protocol.wire.SpawnResponse", JsonObject.serializer().descriptor)
+
+    override fun deserialize(decoder: Decoder): SpawnResponse {
+        val input = decoder as? JsonDecoder
+            ?: throw SerializationException("SpawnResponse supports JSON only")
+        val obj = input.decodeJsonElement() as? JsonObject
+            ?: throw SerializationException("SpawnResponse must be a JSON object")
+        val sessionObj = obj["session"] as? JsonObject
+        if (sessionObj != null) {
+            val id = sessionObj["id"].stringOrNull
+                ?: throw SerializationException("SpawnResponse.session missing id")
+            return SpawnResponse(type = "success", sessionId = id)
+        }
+        val type = obj["type"].stringOrNull
+            ?: throw SerializationException("SpawnResponse missing type or session")
+        return SpawnResponse(
+            type = type,
+            sessionId = obj["sessionId"].stringOrNull ?: obj["session_id"].stringOrNull,
+            message = obj["message"].stringOrNull ?: obj["error"].stringOrNull,
+            code = obj["code"].stringOrNull,
+            agent = obj["agent"].stringOrNull,
+        )
+    }
+
+    override fun serialize(encoder: Encoder, value: SpawnResponse) {
+        val output = encoder as? JsonEncoder
+            ?: throw SerializationException("SpawnResponse supports JSON only")
+        output.encodeJsonElement(buildJsonObject {
+            put("type", JsonPrimitive(value.type))
+            value.sessionId?.let { put("sessionId", JsonPrimitive(it)) }
+            value.message?.let { put("message", JsonPrimitive(it)) }
+            value.code?.let { put("code", JsonPrimitive(it)) }
+            value.agent?.let { put("agent", JsonPrimitive(it)) }
+        })
+    }
+}
 
 /** `GET /api/sessions/:id/slash-commands` (RPC-wrapped: check [success]). */
 @Serializable

@@ -12,10 +12,10 @@ public enum SessionsListOrder: String, Sendable {
 /// (`docs/api/client-contract/rest.md`).
 extension APIClient {
     public func updateSessionReadState(id: String, state: SessionReadStateRequest) async throws -> SessionReadStateResponse {
-        try await request(.put, "/api/sessions/\(encodePathComponent(id))/read-state", body: state)
+        try await request(.put, "/v1/sessions/\(encodePathComponent(id))/read-state", body: state)
     }
 
-    /// `GET /api/sessions`.
+    /// `GET /v1/sessions`.
     public func listSessions(
         limit: Int? = nil,
         order: SessionsListOrder? = nil
@@ -27,27 +27,27 @@ extension APIClient {
         if let order {
             query.append(URLQueryItem(name: "order", value: order.rawValue))
         }
-        let response: SessionsResponse = try await request(.get, "/api/sessions", query: query)
+        let response: SessionsResponse = try await request(.get, "/v1/sessions", query: query)
         return response.sessions
     }
 
-    /// `GET /api/sessions/:id`.
+    /// `GET /v1/sessions/:id`.
     public func session(id: String) async throws -> Session {
         let response: SessionResponse = try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(id))"
+            "/v1/sessions/\(encodePathComponent(id))"
         )
         return response.session
     }
 
-    /// `POST /api/sessions/:id/resume`. The returned session id **may differ**
+    /// `POST /v1/sessions/:id/resume`. The returned session id **may differ**
     /// from `id` (fresh spawn superseding the old row) — navigate to it and
     /// migrate composer drafts.
     public func resumeSession(id: String, permissionMode: PermissionMode? = nil) async throws -> String {
         struct ResumeSessionRequest: Encodable {
             let permissionMode: PermissionMode
         }
-        let path = "/api/sessions/\(encodePathComponent(id))/resume"
+        let path = "/v1/sessions/\(encodePathComponent(id))/resume"
         let response: ResumeSessionResponse
         if let permissionMode {
             response = try await request(.post, path, body: ResumeSessionRequest(permissionMode: permissionMode))
@@ -57,19 +57,19 @@ extension APIClient {
         return response.sessionId
     }
 
-    /// `POST /api/sessions/:id/reopen`. As with resume, follow the returned
-    /// session id. Incomplete metadata answers `422 {error, missing[]}`.
+    /// `POST /v1/sessions/:id/resume` (reopen). As with resume, follow the returned
+    /// session id.
     public func reopenSession(id: String) async throws -> ReopenSessionResponse {
         try await request(
             .post,
-            "/api/sessions/\(encodePathComponent(id))/reopen",
+            "/v1/sessions/\(encodePathComponent(id))/resume",
             body: EmptyRequestBody()
         )
     }
 
     /// Create a new shared root; only the caller follows the returned ID.
     public func clearConversation(id: String) async throws -> ResumeSessionResponse {
-        try await request(.post, "/api/sessions/\(encodePathComponent(id))/clear", body: EmptyRequestBody())
+        try await request(.post, "/v1/sessions/\(encodePathComponent(id))/clear", body: EmptyRequestBody())
     }
 
     /// Shared Codex client action, NOT a tool approval. The CLI
@@ -82,97 +82,111 @@ extension APIClient {
         }
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/codex/plan/implement",
+            "/v1/sessions/\(encodePathComponent(sessionId))/codex/plan/implement",
             body: ImplementPlanRequest(planId: planId)
         )
     }
 
-    /// `POST /api/sessions/:id/abort` (active sessions only).
+    /// `POST /v1/sessions/:id/abort` (active sessions only).
     public func abortSession(id: String) async throws {
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(id))/abort",
+            "/v1/sessions/\(encodePathComponent(id))/abort",
             body: EmptyRequestBody()
         )
     }
 
-    /// `POST /api/sessions/:id/switch` — hands a terminal-controlled session
+    /// `POST /v1/sessions/:id/switch` — hands a terminal-controlled session
     /// over to remote control.
     public func switchSession(id: String) async throws {
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(id))/switch",
+            "/v1/sessions/\(encodePathComponent(id))/switch",
             body: EmptyRequestBody()
         )
     }
 
-    /// `POST /api/sessions/:id/archive` (409 for a plain inactive session).
+    /// `POST /v1/sessions/:id/archive` (409 for a plain inactive session).
     public func archiveSession(id: String) async throws {
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(id))/archive",
+            "/v1/sessions/\(encodePathComponent(id))/archive",
             body: EmptyRequestBody()
         )
     }
 
-    /// `DELETE /api/sessions/:id` (409 while active — archive first).
+    /// `DELETE /v1/sessions/:id` (409 while active — archive first).
     public func deleteSession(id: String) async throws {
-        try await requestVoid(.delete, "/api/sessions/\(encodePathComponent(id))")
+        try await requestVoid(.delete, "/v1/sessions/\(encodePathComponent(id))")
     }
 
-    /// `PATCH /api/sessions/:id` — rename / lock / tags (1–255 chars).
+    /// `PATCH /v1/sessions/:id` — rename / lock (plus `POST /v1/sessions/:id/tags` when tags are non-empty).
     public func renameSession(id: String, name: String? = nil, titleLocked: Bool? = nil, tags: [String]? = nil) async throws {
-        struct RenameSessionRequest: Encodable {
-            let name: String?
+        struct PatchSessionRequest: Encodable {
+            let title: String?
             let titleLocked: Bool?
             let tags: [String]?
         }
-        try await requestVoid(
-            .patch,
-            "/api/sessions/\(encodePathComponent(id))",
-            body: RenameSessionRequest(name: name, titleLocked: titleLocked, tags: tags)
-        )
+        let encodedId = encodePathComponent(id)
+        if name != nil || titleLocked != nil || tags == nil {
+            try await requestVoid(
+                .patch,
+                "/v1/sessions/\(encodedId)",
+                body: PatchSessionRequest(title: name, titleLocked: titleLocked, tags: tags)
+            )
+        }
+        if let tags, !tags.isEmpty {
+            struct TagsRequest: Encodable { let tags: [String] }
+            try await requestVoid(
+                .post,
+                "/v1/sessions/\(encodedId)/tags",
+                body: TagsRequest(tags: Array(tags.prefix(3)))
+            )
+        }
     }
 
-    /// `PATCH /api/sessions/:id/summary` (1–255 chars).
+    /// `PATCH /v1/sessions/:id` (`title`, 1–255 chars).
     public func updateSessionSummary(id: String, text: String) async throws {
         struct UpdateSummaryRequest: Encodable {
-            let text: String
+            let title: String
         }
         try await requestVoid(
             .patch,
-            "/api/sessions/\(encodePathComponent(id))/summary",
-            body: UpdateSummaryRequest(text: text)
+            "/v1/sessions/\(encodePathComponent(id))",
+            body: UpdateSummaryRequest(title: text)
         )
     }
 
-    /// `PUT /api/sessions/:id/pin`.
+    /// `PATCH /v1/sessions/:id` (`pin_mode`).
     public func setSessionPinMode(id: String, mode: SessionPinMode) async throws {
         struct PinRequest: Encodable {
-            let mode: SessionPinMode
+            let pinMode: SessionPinMode
+            enum CodingKeys: String, CodingKey {
+                case pinMode = "pin_mode"
+            }
         }
         try await requestVoid(
-            .put,
-            "/api/sessions/\(encodePathComponent(id))/pin",
-            body: PinRequest(mode: mode)
+            .patch,
+            "/v1/sessions/\(encodePathComponent(id))",
+            body: PinRequest(pinMode: mode)
         )
     }
 
     // MARK: - Session catalogs (RPC-wrapped — check `success`)
 
-    /// `GET /api/sessions/:id/slash-commands`.
+    /// `GET /v1/sessions/:id/slash-commands`.
     public func slashCommands(sessionId: String) async throws -> SlashCommandsResponse {
-        try await request(.get, "/api/sessions/\(encodePathComponent(sessionId))/slash-commands")
+        try await request(.get, "/v1/sessions/\(encodePathComponent(sessionId))/slash-commands")
     }
 
-    /// `GET /api/sessions/:id/skills`.
+    /// `GET /v1/sessions/:id/skills`.
     public func skills(sessionId: String) async throws -> SkillsResponse {
-        try await request(.get, "/api/sessions/\(encodePathComponent(sessionId))/skills")
+        try await request(.get, "/v1/sessions/\(encodePathComponent(sessionId))/skills")
     }
 
-    /// `GET /api/sessions/:id/codex-models` — the per-session codex model
+    /// `GET /v1/sessions/:id/codex-models` — the per-session codex model
     /// catalog for the config sheet's model picker (A-M3ab).
     public func sessionCodexModels(sessionId: String) async throws -> CodexModelsResponse {
-        try await request(.get, "/api/sessions/\(encodePathComponent(sessionId))/codex-models")
+        try await request(.get, "/v1/sessions/\(encodePathComponent(sessionId))/codex-models")
     }
 }

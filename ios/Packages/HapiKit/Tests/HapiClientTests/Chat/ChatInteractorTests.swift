@@ -256,16 +256,16 @@ private final class ChatInteractionHarness {
             }
             return (200, "{\"queuedLocalIds\":\(queued),\"invokedLocalMessages\":[]}")
         }
-        await performer.serve("GET", "/api/sessions", json: "{\"sessions\":[]}")
+        await performer.serve("GET", "/v1/sessions", json: "{\"sessions\":[]}")
         // Uploads succeed with a filename-derived path (Android fake parity).
-        await performer.serveSuffix("POST", "/upload") { request in
+        await performer.serveSuffix("POST", "/uploads") { request in
             struct UploadBody: Decodable { let filename: String }
             let filename = request.httpBody
                 .flatMap { try? JSONDecoder().decode(UploadBody.self, from: $0) }?
                 .filename ?? "file"
             return (200, "{\"success\":true,\"path\":\"/uploads/\(filename)\"}")
         }
-        await performer.serveSuffix("POST", "/upload/delete") { _ in
+        await performer.serveSuffix("DELETE", "/uploads") { _ in
             (200, "{\"success\":true}")
         }
 
@@ -314,13 +314,13 @@ private final class ChatInteractionHarness {
         }
     }
 
-    /// Sets the detail `GET /api/sessions/:id` will answer from now on (the
+    /// Sets the detail `GET /v1/sessions/:id` will answer from now on (the
     /// "server truth" for rollbacks and settle-patches), without loading it.
     func serveDetail(_ detail: Session) async throws {
         let data = try HapiJSON.encoder.encode(SessionResponse(session: detail))
         await performer.serve(
             "GET",
-            "/api/sessions/\(detail.id)",
+            "/v1/sessions/\(detail.id)",
             json: String(decoding: data, as: UTF8.self)
         )
     }
@@ -403,7 +403,7 @@ struct ChatInteractorTests {
         let h = try await ChatInteractionHarness()
         h.interactor.attachments.add(preparedShot())
         #expect(await eventually { h.interactor.attachments.allReady })
-        await h.performer.script("POST", "/api/sessions/sess-1/messages", status: 500)
+        await h.performer.script("POST", "/v1/sessions/sess-1/messages", status: 500)
         #expect(h.interactor.beginVoiceSend(id: "with-image", partialText: "初稿"))
         #expect(h.interactor.attachments.items.isEmpty)
         let preview = try #require(h.interactor.voicePreview)
@@ -426,7 +426,7 @@ struct ChatInteractorTests {
         #expect(h.interactor.beginVoiceSend(id: "cancel", partialText: "取消"))
         h.interactor.cancelVoiceSend(id: "cancel")
         h.interactor.finishVoiceSend(id: "cancel", finalText: "迟到")
-        #expect(await eventually { await h.performer.count("POST", pathSuffix: "/upload/delete") == 1 })
+        #expect(await eventually { await h.performer.count("DELETE", pathSuffix: "/uploads") == 1 })
         #expect(await h.performer.count("POST", pathSuffix: "/sess-1/messages") == 0)
         h.interactor.deactivate()
     }
@@ -483,7 +483,7 @@ struct ChatInteractorTests {
         #expect(await eventually {
             await harness.row(localId: "local-1")?.status == .sent
         })
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends == [#"{"deliveryMode":"queue","localId":"local-1","text":"hello agent"}"#])
         // Optimistic until the SSE echo replaces it.
         #expect(await harness.row(localId: "local-1")?.id == "local-1")
@@ -503,7 +503,7 @@ struct ChatInteractorTests {
         #expect(await eventually {
             await harness.row(localId: "local-1")?.status == .queued
         })
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends == [#"{"deliveryMode":"steer","localId":"local-1","text":"steer this"}"#])
         #expect(await eventually { harness.interactor.queuedRows.first?.awaitingSteer == true })
     }
@@ -568,7 +568,7 @@ struct ChatInteractorTests {
             agentState: AgentState(steeringActive: true))
         detail.metadata?.agySessionProtocol = "acp"
         let harness = try await ChatInteractionHarness(detail: detail)
-        await harness.performer.script("POST", "/api/sessions/sess-1/messages", status: 500,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/messages", status: 500,
             json: #"{"error":"boom"}"#)
         harness.interactor.setComposerText("retry")
         harness.interactor.sendMessage()
@@ -586,7 +586,7 @@ struct ChatInteractorTests {
     @Test func failedSendMarksTheRowFailedAndRetryRefiresWithTheSameLocalId() async throws {
         let harness = try await ChatInteractionHarness()
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/messages",
+            "POST", "/v1/sessions/sess-1/messages",
             status: 500, json: #"{"error":"boom"}"#
         )
 
@@ -600,7 +600,7 @@ struct ChatInteractorTests {
         #expect(await eventually {
             await harness.row(localId: "local-1")?.status == .sent
         })
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends.count == 2)
         // Retry never re-binds a steer intent; durable queue only.
         #expect(sends[1] == #"{"deliveryMode":"queue","localId":"local-1","text":"try me"}"#)
@@ -611,11 +611,11 @@ struct ChatInteractorTests {
             detail: chatDetail(active: false, permissionMode: .acceptEdits)
         )
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/messages",
+            "POST", "/v1/sessions/sess-1/messages",
             status: 409, json: #"{"error":"Session is inactive","code":"session_inactive"}"#
         )
         await harness.performer.serve(
-            "POST", "/api/sessions/sess-1/resume",
+            "POST", "/v1/sessions/sess-1/resume",
             json: #"{"sessionId":"sess-1"}"#
         )
 
@@ -627,7 +627,7 @@ struct ChatInteractorTests {
         })
         let resumes = await harness.performer.bodies("POST", pathSuffix: "/resume")
         #expect(resumes == [#"{"permissionMode":"acceptEdits"}"#])
-        let sendCount = await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sendCount = await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sendCount == 2)
         // Resume success reflects activity locally.
         #expect(harness.store.detail(for: chatSessionID)?.active == true)
@@ -636,11 +636,11 @@ struct ChatInteractorTests {
     @Test func sessionInactiveResumeWithASupersedingIdMigratesTheSendAndEmitsTheEvent() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(active: false))
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/messages",
+            "POST", "/v1/sessions/sess-1/messages",
             status: 409, json: #"{"error":"Session is inactive","code":"session_inactive"}"#
         )
         await harness.performer.serve(
-            "POST", "/api/sessions/sess-1/resume",
+            "POST", "/v1/sessions/sess-1/resume",
             json: #"{"sessionId":"sess-2"}"#
         )
 
@@ -651,7 +651,7 @@ struct ChatInteractorTests {
             harness.events.contains(.sessionSuperseded(sessionId: "sess-2"))
         })
         // The retry targeted the superseding session…
-        let targetSends = await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-2/messages")
+        let targetSends = await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-2/messages")
         #expect(targetSends == 1)
         // …and the optimistic row lives (settled) in the new window only.
         #expect(await eventually {
@@ -685,42 +685,42 @@ struct ChatInteractorTests {
 
     @Test func inactiveAttachmentResumesAndRetriesEvenWithStaleActiveState() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(permissionMode: .acceptEdits))
-        await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 409,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 409,
             json: #"{"error":"Session is inactive","code":"session_inactive"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
         harness.interactor.attachments.add(preparedShot())
         #expect(await eventually { harness.interactor.attachments.allReady })
         #expect(await harness.performer.bodies("POST", pathSuffix: "/resume") == [#"{"permissionMode":"acceptEdits"}"#])
-        #expect(await harness.performer.count("POST", pathSuffix: "/upload") == 2)
+        #expect(await harness.performer.count("POST", pathSuffix: "/uploads") == 2)
         #expect(harness.events.isEmpty)
     }
 
     @Test func concurrentInactiveAttachmentsShareOneResume() async throws {
         let harness = try await ChatInteractionHarness()
         for _ in 0..<2 {
-            await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 409,
+            await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 409,
                 json: #"{"code":"session_inactive"}"#)
         }
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
         await harness.performer.gate("POST", pathSuffix: "/resume")
         harness.interactor.attachments.add(preparedShot())
         harness.interactor.attachments.add(preparedShot(id: "att-2", filename: "second.jpg"))
-        #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/upload") == 2 })
+        #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/uploads") == 2 })
         #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/resume") == 1 })
         await harness.performer.openGates()
         #expect(await eventually { harness.interactor.attachments.allReady })
         #expect(await harness.performer.count("POST", pathSuffix: "/resume") == 1)
-        #expect(await harness.performer.count("POST", pathSuffix: "/upload") == 4)
+        #expect(await harness.performer.count("POST", pathSuffix: "/uploads") == 4)
     }
 
     @Test func supersedingUploadHandsOffDraftAndTrayAndReuploadsReadyPaths() async throws {
         let harness = try await ChatInteractionHarness()
         harness.interactor.attachments.add(preparedShot())
         #expect(await eventually { harness.interactor.attachments.allReady })
-        await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 409,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 409,
             json: #"{"code":"session_inactive"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", json: #"{"sessionId":"sess-2"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-2/upload",
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", json: #"{"sessionId":"sess-2"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-2/uploads",
             json: #"{"success":true,"path":"/new-session/upload"}"#)
         await harness.performer.gate("POST", pathSuffix: "/resume")
         var replacement: ChatInteractor?
@@ -743,27 +743,27 @@ struct ChatInteractorTests {
         let next = try #require(replacement)
         #expect(next.attachments === harness.interactor.attachments)
         #expect(next.attachments.items.map(\.id) == ["att-1", "att-2"])
-        #expect(await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-2/upload") == 2)
+        #expect(await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-2/uploads") == 2)
         #expect(harness.drafts.storage["sess-1"] == nil)
         #expect(harness.drafts.storage["sess-2"] == "latest typing")
         #expect(harness.events.contains(.sessionSuperseded(sessionId: "sess-2")))
         next.sendMessage()
-        #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-2/messages") == 1 })
-        let body = try #require(await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-2/messages").first)
+        #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-2/messages") == 1 })
+        let body = try #require(await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-2/messages").first)
         let request = try HapiJSON.decoder.decode(SendMessageRequest.self, from: Data(body.utf8))
         #expect(request.attachments?.map(\.path) == ["/new-session/upload", "/new-session/upload"])
         #expect(request.text == "latest typing")
         #expect(harness.drafts.storage["sess-2"] == nil)
-        #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/upload/delete") == 1 })
-        #expect(await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-2/upload/delete") == 0)
+        #expect(await eventually { await harness.performer.count("DELETE", pathSuffix: "/v1/sessions/sess-1/uploads") == 1 })
+        #expect(await harness.performer.count("DELETE", pathSuffix: "/v1/sessions/sess-2/uploads") == 0)
         next.deactivate()
     }
 
     @Test func removingAttachmentDuringResumeDoesNotUploadItAgain() async throws {
         let harness = try await ChatInteractionHarness()
-        await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 409,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 409,
             json: #"{"code":"session_inactive"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
         await harness.performer.gate("POST", pathSuffix: "/resume")
         var recovering = false
         harness.interactor.onAttachmentSessionRecovery = { recovering = $0 }
@@ -773,14 +773,14 @@ struct ChatInteractorTests {
         await harness.performer.openGates()
         #expect(await eventually { !recovering })
         #expect(harness.interactor.attachments.items.isEmpty)
-        #expect(await harness.performer.count("POST", pathSuffix: "/upload") == 1)
+        #expect(await harness.performer.count("POST", pathSuffix: "/uploads") == 1)
     }
 
     @Test func failedResumeRetainsPayloadAndAllowsManualRetry() async throws {
         let harness = try await ChatInteractionHarness()
-        await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 409,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 409,
             json: #"{"code":"session_inactive"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", status: 503,
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", status: 503,
             json: #"{"error":"Machine is offline"}"#)
         harness.interactor.attachments.add(preparedShot())
         #expect(await eventually { harness.interactor.attachments.items.first?.status == .failed })
@@ -792,19 +792,19 @@ struct ChatInteractorTests {
 
     @Test func stillInactiveAfterResumeFailsWithoutRecoveryLoop() async throws {
         let harness = try await ChatInteractionHarness()
-        await harness.performer.serve("POST", "/api/sessions/sess-1/upload", status: 409,
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/uploads", status: 409,
             json: #"{"code":"session_inactive"}"#)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/resume", json: #"{"sessionId":"sess-1"}"#)
         harness.interactor.attachments.add(preparedShot())
         #expect(await eventually { harness.interactor.attachments.items.first?.status == .failed })
         #expect(await harness.performer.count("POST", pathSuffix: "/resume") == 1)
-        #expect(await harness.performer.count("POST", pathSuffix: "/upload") == 2)
+        #expect(await harness.performer.count("POST", pathSuffix: "/uploads") == 2)
         #expect(harness.interactor.attachments.items.first?.errorMessage == "HTTP 409 (session_inactive)")
     }
 
     @Test func ordinaryUploadFailureDoesNotResumeSession() async throws {
         let harness = try await ChatInteractionHarness()
-        await harness.performer.script("POST", "/api/sessions/sess-1/upload", status: 413,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/uploads", status: 413,
             json: #"{"error":"File too large"}"#)
         harness.interactor.attachments.add(preparedShot())
         #expect(await eventually { harness.interactor.attachments.items.first?.status == .failed })
@@ -822,7 +822,7 @@ struct ChatInteractorTests {
         #expect(await eventually {
             await harness.row(localId: "local-1")?.status == .sent
         })
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends == [attachmentSendBody(text: "see the screenshot")])
 
         // The optimistic row carries the attachments — thumbnails render
@@ -847,21 +847,21 @@ struct ChatInteractorTests {
         harness.interactor.sendMessage()
 
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/messages") == 1
+            await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/messages") == 1
         })
         // Wire allows text OR attachments — empty text rides along.
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends == [attachmentSendBody(text: "")])
     }
 
     @Test func sendRefusesWhileAnAttachmentUploadIsUnsettled() async throws {
         let harness = try await ChatInteractionHarness()
-        await harness.performer.gate("POST", pathSuffix: "/upload")
+        await harness.performer.gate("POST", pathSuffix: "/uploads")
 
         harness.interactor.attachments.add(preparedShot())
         // Upload started and parked on the gate.
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/upload") == 1
+            await harness.performer.count("POST", pathSuffix: "/uploads") == 1
         })
         harness.interactor.setComposerText("hold on")
         harness.interactor.sendMessage()
@@ -872,7 +872,7 @@ struct ChatInteractorTests {
                 return false
             }
         })
-        let refusedSends = await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let refusedSends = await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(refusedSends == 0)
         // The draft text and the chip both survive the refused send.
         #expect(harness.interactor.composerText == "hold on")
@@ -883,16 +883,16 @@ struct ChatInteractorTests {
         #expect(await eventually { harness.interactor.attachments.allReady })
         harness.interactor.sendMessage()
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/messages") == 1
+            await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/messages") == 1
         })
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends == [attachmentSendBody(text: "hold on")])
     }
 
     @Test func failedSendRetryReSendsTheSameAttachmentsFromTheWireRow() async throws {
         let harness = try await ChatInteractionHarness()
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/messages",
+            "POST", "/v1/sessions/sess-1/messages",
             status: 500, json: #"{"error":"boom"}"#
         )
 
@@ -909,7 +909,7 @@ struct ChatInteractorTests {
             await harness.row(localId: "local-1")?.status == .sent
         })
 
-        let sends = await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages")
+        let sends = await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages")
         #expect(sends.count == 2)
         // Attachments round-tripped through the optimistic row's wire JSON —
         // the retry body is byte-identical (canonical sorted keys).
@@ -924,7 +924,7 @@ struct ChatInteractorTests {
         #expect(await eventually { harness.interactor.attachments.allReady })
         harness.interactor.attachments.remove("att-1")
         #expect(await eventually {
-            await harness.performer.bodies("POST", pathSuffix: "/upload/delete")
+            await harness.performer.bodies("DELETE", pathSuffix: "/uploads")
                 == [#"{"path":"/uploads/a.jpg"}"#]
         })
         #expect(harness.interactor.attachments.items.isEmpty)
@@ -934,7 +934,7 @@ struct ChatInteractorTests {
         #expect(await eventually { harness.interactor.attachments.allReady })
         harness.interactor.discardAttachments()
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/upload/delete") == 2
+            await harness.performer.count("DELETE", pathSuffix: "/uploads") == 2
         })
         #expect(harness.interactor.attachments.items.isEmpty)
     }
@@ -981,7 +981,7 @@ struct ChatInteractorTests {
         })
 
         await harness.performer.script(
-            "DELETE", "/api/sessions/sess-1/messages/srv-1",
+            "DELETE", "/v1/sessions/sess-1/messages/srv-1",
             json: #"{"status":"invoked","message":\#(messageJSON(id: "srv-1", localId: "l-1", text: "queued text", invokedAt: 900))}"#
         )
         harness.interactor.cancelQueuedMessage("srv-1")
@@ -1025,7 +1025,7 @@ struct ChatInteractorTests {
         })
 
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/messages/srv-2/steer",
+            "POST", "/v1/sessions/sess-1/messages/srv-2/steer",
             json: #"{"status":"invoked","message":\#(messageJSON(id: "srv-2", localId: "l-2", text: "steer me", invokedAt: 950))}"#
         )
         harness.interactor.steerQueuedMessage("srv-2")
@@ -1047,7 +1047,7 @@ struct ChatInteractorTests {
         })
 
         await harness.performer.script(
-            "DELETE", "/api/sessions/sess-1/messages/srv-3",
+            "DELETE", "/v1/sessions/sess-1/messages/srv-3",
             json: #"{"status":"cancelled","localId":"l-3"}"#
         )
         harness.interactor.editQueuedMessage("srv-3")
@@ -1087,9 +1087,9 @@ struct ChatInteractorTests {
         ])
         let approvePaths = await harness.performer.paths("POST", pathSuffix: "/approve")
         #expect(approvePaths == [
-            "/api/sessions/sess-1/permissions/r-allow/approve",
-            "/api/sessions/sess-1/permissions/r-session/approve",
-            "/api/sessions/sess-1/permissions/r-edits/approve",
+            "/v1/sessions/sess-1/permissions/r-allow/approve",
+            "/v1/sessions/sess-1/permissions/r-session/approve",
+            "/v1/sessions/sess-1/permissions/r-edits/approve",
         ])
         let denyBodies = await harness.performer.bodies("POST", pathSuffix: "/deny")
         #expect(denyBodies == [#"{}"#])
@@ -1120,7 +1120,7 @@ struct ChatInteractorTests {
         let denyBodies = await harness.performer.bodies("POST", pathSuffix: "/deny")
         #expect(denyBodies == [#"{"decision":"abort"}"#])
         let denyPaths = await harness.performer.paths("POST", pathSuffix: "/deny")
-        #expect(denyPaths == ["/api/sessions/sess-1/permissions/r-abort/deny"])
+        #expect(denyPaths == ["/v1/sessions/sess-1/permissions/r-abort/deny"])
     }
 
     @Test func answersPostFlatForAskUserQuestionAndNestedForRequestUserInput() async throws {
@@ -1155,7 +1155,7 @@ struct ChatInteractorTests {
             detail: chatDetail(agentState: AgentState(requests: ["r-gone": bashRequest()]))
         )
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/permissions/r-gone/approve",
+            "POST", "/v1/sessions/sess-1/permissions/r-gone/approve",
             status: 404, json: #"{"error":"Request not found"}"#
         )
 
@@ -1204,7 +1204,7 @@ struct ChatInteractorTests {
         interactor.setCollaborationMode(.default)
         interactor.setModel("other")
         #expect(await eventually { await harness.performer.count("POST", pathSuffix: "/collaboration-mode") == 1 })
-        #expect(await harness.performer.count("POST", pathSuffix: "/model") == 0)
+        #expect(await harness.performer.count("PATCH", pathSuffix: "/v1/sessions/sess-1") == 0)
         await harness.performer.openGates()
         #expect(await eventually { !interactor.configOpPending })
         interactor.setCollaborationMode(.plan)
@@ -1249,7 +1249,7 @@ struct ChatInteractorTests {
 
     @Test func rejectedCollaborationModeReloadsServerTruthAndReportsFailure() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(flavor: "codex"), activate: false)
-        await harness.performer.script("POST", "/api/sessions/sess-1/collaboration-mode", status: 409, json: #"{"error":"Config rejected"}"#)
+        await harness.performer.script("POST", "/v1/sessions/sess-1/collaboration-mode", status: 409, json: #"{"error":"Config rejected"}"#)
         harness.interactor.setCollaborationMode(.plan)
         #expect(harness.interactor.config.collaborationMode == .plan)
         #expect(await eventually { !harness.interactor.configOpPending })
@@ -1260,7 +1260,7 @@ struct ChatInteractorTests {
     @Test func permissionModeSwitchAppliesOptimisticallyAndRollsBackToServerTruthOnError() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(permissionMode: .default))
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/permission-mode",
+            "PATCH", "/v1/sessions/sess-1",
             status: 409, json: #"{"error":"apply_failed","code":"apply_failed"}"#
         )
 
@@ -1278,9 +1278,9 @@ struct ChatInteractorTests {
                 return false
             }
         })
-        let modeBodies = await harness.performer.bodies("POST", pathSuffix: "/permission-mode")
-        #expect(modeBodies == [#"{"mode":"acceptEdits"}"#])
-        let detailLoads = await harness.performer.count("GET", pathSuffix: "/api/sessions/sess-1")
+        let modeBodies = await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1")
+        #expect(modeBodies == [#"{"permission_mode":"acceptEdits"}"#])
+        let detailLoads = await harness.performer.count("GET", pathSuffix: "/v1/sessions/sess-1")
         #expect(detailLoads >= 2)
     }
 
@@ -1292,19 +1292,19 @@ struct ChatInteractorTests {
         harness.interactor.setModel("opus")
         #expect(harness.store.detail(for: chatSessionID)?.model == "opus")
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/model") == 1
+            await harness.performer.count("PATCH", pathSuffix: "/v1/sessions/sess-1") == 1
                 && !harness.interactor.configOpPending
         })
-        let modelBodies = await harness.performer.bodies("POST", pathSuffix: "/model")
+        let modelBodies = await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1")
         #expect(modelBodies == [#"{"model":"opus"}"#])
 
         harness.interactor.setEffort("high")
         #expect(harness.store.detail(for: chatSessionID)?.effort == "high")
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/effort") == 1
+            await harness.performer.count("PATCH", pathSuffix: "/v1/sessions/sess-1") == 2
         })
-        let effortBodies = await harness.performer.bodies("POST", pathSuffix: "/effort")
-        #expect(effortBodies == [#"{"effort":"high"}"#])
+        let effortBodies = await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1")
+        #expect(effortBodies.last == #"{"effort":"high"}"#)
     }
 
     @Test func codexEffortRoutesToModelReasoningEffort() async throws {
@@ -1313,10 +1313,10 @@ struct ChatInteractorTests {
         harness.interactor.setEffort("medium")
 
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/model-reasoning-effort") == 1
+            await harness.performer.count("PATCH", pathSuffix: "/v1/sessions/sess-1") == 1
         })
-        let bodies = await harness.performer.bodies("POST", pathSuffix: "/model-reasoning-effort")
-        #expect(bodies == [#"{"modelReasoningEffort":"medium"}"#])
+        let bodies = await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1")
+        #expect(bodies == [#"{"effort":"medium"}"#])
         #expect(harness.store.detail(for: chatSessionID)?.modelReasoningEffort == "medium")
     }
 
@@ -1325,7 +1325,7 @@ struct ChatInteractorTests {
             detail: chatDetail(flavor: "codex", model: "gpt-5.3-codex")
         )
         await harness.performer.serve(
-            "GET", "/api/sessions/sess-1/codex-models",
+            "GET", "/v1/sessions/sess-1/codex-models",
             json: """
             {"success":true,"models":[{"id":"gpt-5.3-codex","displayName":"GPT-5.3 Codex",\
             "isDefault":true,"supportedReasoningEfforts":["low","medium","high"]}]}
@@ -1349,7 +1349,7 @@ struct ChatInteractorTests {
         detail.metadata?.machineId = "mach-1"
         let harness = try await ChatInteractionHarness(detail: detail)
         await harness.performer.serve(
-            "GET", "/api/sessions/sess-1/codex-models",
+            "GET", "/v1/sessions/sess-1/codex-models",
             json: """
             {"success":true,"models":[\
             {"id":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","isDefault":true,"defaultServiceTier":"priority","serviceTiers":["priority","fast"]},\
@@ -1392,15 +1392,15 @@ struct ChatInteractorTests {
         offlineDetail.serviceTier = "fast"
         let offline = try await ChatInteractionHarness(detail: offlineDetail)
         await offline.performer.serve(
-            "GET", "/api/machines/mach-1/codex-models",
+            "GET", "/v1/machines/mach-1/codex-models",
             json: """
             {"success":true,"models":[{"id":"gpt-6.1-sol","displayName":"GPT-6.1 Sol","isDefault":true,"serviceTiers":["priority","fast"]}]}
             """
         )
         offline.interactor.loadModelOptions()
         #expect(await eventually { offline.interactor.config.modelOptions?.isEmpty == false })
-        #expect(await offline.performer.count("GET", pathSuffix: "/api/sessions/sess-1/codex-models") == 0)
-        #expect(await offline.performer.count("GET", pathSuffix: "/api/machines/mach-1/codex-models") == 1)
+        #expect(await offline.performer.count("GET", pathSuffix: "/v1/sessions/sess-1/codex-models") == 0)
+        #expect(await offline.performer.count("GET", pathSuffix: "/v1/machines/mach-1/codex-models") == 1)
         #expect(offline.interactor.config.showsFastMode)
         #expect(offline.interactor.config.serviceTier == .fast)
         #expect(!offline.interactor.config.canChangeServiceTier)
@@ -1486,14 +1486,14 @@ struct ChatInteractorTests {
         interactor.implementCodexPlan(planId: "plan-1")
         #expect(await harness.performer.bodies("POST", pathSuffix: "/codex/plan/implement") == [#"{"planId":"plan-1"}"#])
         #expect(await harness.performer.exchanges.filter { $0.method == "POST" }.count == 1)
-        #expect(await harness.performer.count("GET", pathSuffix: "/api/sessions/sess-1") == 2)
+        #expect(await harness.performer.count("GET", pathSuffix: "/v1/sessions/sess-1") == 2)
         #expect(interactor.composerText == "Keep this draft")
     }
 
     @Test(arguments: [(409, "stale_plan"), (409, "unavailable"), (502, "failed"), (503, "indeterminate")])
     func planFailureRemainsVisibleAfterWithdrawalWithoutAutomaticResubmission(status: Int, code: String) async throws {
         let harness = try await ChatInteractionHarness(detail: planSession(), activate: false)
-        await harness.performer.script("POST", "/api/sessions/sess-1/codex/plan/implement", status: status,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/codex/plan/implement", status: status,
                                        json: "{\"ok\":false,\"code\":\"\(code)\",\"error\":\"Plan was not confirmed\"}")
         var next = planSession()
         next.agentState?.codexPlanProposalId = nil
@@ -1504,13 +1504,13 @@ struct ChatInteractorTests {
         #expect(state.error == "Plan was not confirmed")
         #expect(state.isVisible && !state.available && !state.canAct)
         #expect(await harness.performer.count("POST", pathSuffix: "/codex/plan/implement") == 1)
-        #expect(await harness.performer.count("GET", pathSuffix: "/api/sessions/sess-1") == 2)
+        #expect(await harness.performer.count("GET", pathSuffix: "/v1/sessions/sess-1") == 2)
         #expect(harness.store.detail(for: chatSessionID)?.collaborationMode == .plan)
     }
 
     @Test func confirmedPlanFailureCanBeRetriedExplicitly() async throws {
         let harness = try await ChatInteractionHarness(detail: planSession(), activate: false)
-        await harness.performer.script("POST", "/api/sessions/sess-1/codex/plan/implement", status: 502,
+        await harness.performer.script("POST", "/v1/sessions/sess-1/codex/plan/implement", status: 502,
                                        json: #"{"ok":false,"code":"failed","error":"Try again"}"#)
         harness.interactor.implementCodexPlan(planId: "plan-1")
         #expect(await eventually { !harness.interactor.codexPlanActions(planId: "plan-1").pending })
@@ -1541,7 +1541,7 @@ struct ChatInteractorTests {
         harness.interactor.abortSession()
 
         #expect(await eventually {
-            await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/abort") == 1
+            await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/abort") == 1
         })
     }
 
@@ -1559,14 +1559,14 @@ struct ChatInteractorTests {
     @Test func forkCurrentAndAtMessagePostAndOpenTheNewSession() async throws {
         let harness = try await ChatInteractionHarness(detail: historyDetail())
         #expect(harness.interactor.canForkCurrentConversation)
-        await harness.performer.serve("POST", "/api/sessions/sess-1/fork", json: #"{"sessionId":"fork-1"}"#)
+        await harness.performer.serve("POST", "/v1/sessions/sess-1/fork", json: #"{"sessionId":"fork-1"}"#)
 
         harness.interactor.forkConversation()
         #expect(await eventually { harness.events.contains(.sessionSuperseded(sessionId: "fork-1")) })
         #expect(await eventually { !harness.interactor.historyActionPending })
         harness.interactor.forkConversation(fromMessageLocalId: "l1")
         #expect(await eventually {
-            await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/fork") == ["{}", #"{"messageLocalId":"l1"}"#]
+            await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/fork") == ["{}", #"{"messageLocalId":"l1"}"#]
         })
     }
 
@@ -1586,14 +1586,14 @@ struct ChatInteractorTests {
     @Test func ambiguousRewindOffersAForkInstead() async throws {
         let harness = try await ChatInteractionHarness(detail: historyDetail())
         await harness.performer.script(
-            "POST", "/api/sessions/sess-1/rewind",
+            "POST", "/v1/sessions/sess-1/rewind",
             status: 409, json: #"{"error":"ambiguous","code":"ambiguous_native_boundary_fork_safe","hydrateFailed":false}"#
         )
         harness.interactor.rewindConversation(toMessageLocalId: "l1")
         #expect(await eventually { harness.interactor.rewindForkFallbackLocalId == "l1" })
 
         harness.interactor.dismissRewindForkFallback()
-        await harness.performer.script("POST", "/api/sessions/sess-1/rewind", status: 409, json: #"{"error":"Session busy"}"#)
+        await harness.performer.script("POST", "/v1/sessions/sess-1/rewind", status: 409, json: #"{"error":"Session busy"}"#)
         harness.interactor.rewindConversation(toMessageLocalId: "l1")
         #expect(await eventually { harness.events.contains(.notice("Session busy")) })
         #expect(harness.interactor.rewindForkFallbackLocalId == nil)
@@ -1610,7 +1610,7 @@ struct ChatInteractorTests {
         harness.interactor.sendMessage(steer: true)
 
         #expect(await eventually {
-            await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/messages") == [
+            await harness.performer.bodies("POST", pathSuffix: "/v1/sessions/sess-1/messages") == [
                 #"{"deliveryMode":"queue","localId":"local-1","scheduledAt":1801000,"text":"ship it"}"#,
             ]
         })
@@ -1636,7 +1636,7 @@ struct ChatInteractorTests {
         #expect(harness.interactor.composerText == "later")
         #expect(harness.interactor.pendingSchedule != nil)
         try? await Task.sleep(for: .milliseconds(30))
-        #expect(await harness.performer.count("POST", pathSuffix: "/api/sessions/sess-1/messages") == 0)
+        #expect(await harness.performer.count("POST", pathSuffix: "/v1/sessions/sess-1/messages") == 0)
     }
 
     @Test func mentionsPersistAndSendFullReferencesWithoutChangingSurroundingDraft() async throws {
@@ -1663,7 +1663,7 @@ struct ChatInteractorTests {
 
     @Test func mentionFilesUseTheCurrentSessionAPIAndSupplementLiveSessionMatches() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(flavor: "codex"))
-        await harness.performer.serve("GET", "/api/sessions/sess-1/files",
+        await harness.performer.serve("GET", "/v1/sessions/sess-1/files",
             json: #"{"success":true,"files":[{"fileName":"file.swift","filePath":"src","fullPath":"src/file.swift","fileType":"file"}]}"#)
         var peer = chatDetail(id: "file-peer")
         peer.hasConversationContent = true
@@ -1690,7 +1690,7 @@ struct ChatInteractorTests {
         detail.metadata?.slashCommands = ["deploy"]
         let harness = try await ChatInteractionHarness(detail: detail)
         await harness.performer.serve(
-            "GET", "/api/sessions/sess-1/slash-commands",
+            "GET", "/v1/sessions/sess-1/slash-commands",
             json: #"{"success":true,"commands":[{"name":"compact","description":"Summarize","source":"builtin"}]}"#
         )
 
@@ -1715,11 +1715,11 @@ struct ChatInteractorTests {
     @Test func grokLoadsModelsAndEffortsAndReloadsEffortsAfterAModelSwitch() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(flavor: "grok", model: "grok-4"))
         await harness.performer.serve(
-            "GET", "/api/sessions/sess-1/grok-models",
+            "GET", "/v1/sessions/sess-1/grok-models",
             json: #"{"success":true,"availableModels":[{"modelId":"grok-4","name":"Grok 4"},{"modelId":"grok-mini"}]}"#
         )
         await harness.performer.serve(
-            "GET", "/api/sessions/sess-1/grok-reasoning-effort-options",
+            "GET", "/v1/sessions/sess-1/grok-reasoning-effort-options",
             json: #"{"success":true,"options":[{"value":"high","name":"High"}]}"#
         )
 
@@ -1731,7 +1731,7 @@ struct ChatInteractorTests {
 
         harness.interactor.setModel("grok-mini")
         #expect(await eventually {
-            await harness.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/model") == [#"{"model":"grok-mini"}"#]
+            await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1") == [#"{"model":"grok-mini"}"#]
         })
         #expect(await eventually {
             await harness.performer.count("GET", pathSuffix: "/grok-reasoning-effort-options") == 2
@@ -1756,7 +1756,7 @@ struct ChatInteractorTests {
         agyDetail.metadata?.machineId = "mach-1"
         let agy = try await ChatInteractionHarness(detail: agyDetail)
         await agy.performer.serve(
-            "GET", "/api/machines/mach-1/agy-models",
+            "GET", "/v1/machines/mach-1/agy-models",
             json: #"{"success":true,"availableModels":[{"modelId":"gemini-3.7-flash-high"}]}"#
         )
         agy.interactor.loadModelOptions()
@@ -1764,15 +1764,15 @@ struct ChatInteractorTests {
 
         let pi = try await ChatInteractionHarness(detail: chatDetail(flavor: "pi", model: "m"))
         await pi.performer.serve(
-            "GET", "/api/sessions/sess-1/pi-models",
+            "GET", "/v1/sessions/sess-1/pi-models",
             json: #"{"success":true,"availableModels":[{"modelId":"m","provider":"a"},{"modelId":"n","provider":"b"}]}"#
         )
         pi.interactor.loadModelOptions()
         #expect(await eventually { pi.interactor.config.model == "a/m" })
         pi.interactor.setModel("b/n")
         #expect(await eventually {
-            await pi.performer.bodies("POST", pathSuffix: "/api/sessions/sess-1/model")
-                == [#"{"model":{"modelId":"n","provider":"b"}}"#]
+            await pi.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1")
+                == [#"{"model":"b/n"}"#]
         })
         #expect(pi.store.detail(for: chatSessionID)?.metadata?.piSelectedModel == PiModelReference(provider: "b", modelId: "n"))
     }
@@ -1786,11 +1786,11 @@ struct ChatInteractorTests {
         harness.interactor.renameSession("  Release prep  ")
 
         #expect(await eventually {
-            await harness.performer.bodies("PATCH", pathSuffix: "/api/sessions/sess-1") == [#"{"name":"Release prep"}"#]
+            await harness.performer.bodies("PATCH", pathSuffix: "/v1/sessions/sess-1") == [#"{"title":"Release prep"}"#]
         })
         #expect(harness.store.detail(for: chatSessionID)?.metadata?.name == "Release prep")
 
-        await harness.performer.script("PATCH", "/api/sessions/sess-1", status: 500, json: #"{"error":"boom"}"#)
+        await harness.performer.script("PATCH", "/v1/sessions/sess-1", status: 500, json: #"{"error":"boom"}"#)
         harness.interactor.renameSession("Other")
         #expect(await eventually { harness.events.contains(.notice("Failed to rename session")) })
     }
@@ -1801,7 +1801,7 @@ struct ChatInteractorTests {
         harness.store.onSessionRemoved = { removals.append($0) }
 
         await harness.performer.script(
-            "DELETE", "/api/sessions/sess-1",
+            "DELETE", "/v1/sessions/sess-1",
             status: 409, json: #"{"error":"Cannot delete active session. Archive it first."}"#
         )
         harness.interactor.deleteSession()
@@ -1812,7 +1812,7 @@ struct ChatInteractorTests {
         #expect(removals.isEmpty)
         #expect(harness.store.detail(for: chatSessionID) != nil, "a failed delete restores the detail")
 
-        await harness.performer.script("DELETE", "/api/sessions/sess-1", json: #"{"ok":true}"#)
+        await harness.performer.script("DELETE", "/v1/sessions/sess-1", json: #"{"ok":true}"#)
         harness.interactor.deleteSession()
         #expect(await eventually { removals == [chatSessionID] })
     }
@@ -1820,7 +1820,7 @@ struct ChatInteractorTests {
     @Test func reopenWithASupersedingIdMovesTheDraftAndRenavigates() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(active: false))
         await harness.performer.serve(
-            "POST", "/api/sessions/sess-1/reopen",
+            "POST", "/v1/sessions/sess-1/resume",
             json: #"{"ok":true,"sessionId":"sess-2","resumed":true}"#
         )
         harness.interactor.setComposerText("unsent words")
@@ -1836,7 +1836,7 @@ struct ChatInteractorTests {
     @Test func reopenInPlaceMarksTheSessionActiveWithoutRenavigating() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(active: false))
         await harness.performer.serve(
-            "POST", "/api/sessions/sess-1/reopen",
+            "POST", "/v1/sessions/sess-1/resume",
             json: #"{"ok":true,"sessionId":"sess-1","resumed":true}"#
         )
 
@@ -1853,7 +1853,7 @@ struct ChatInteractorTests {
     @Test func reopenMissingMetadataSurfacesTheHubMessage() async throws {
         let harness = try await ChatInteractionHarness(detail: chatDetail(active: false))
         await harness.performer.serve(
-            "POST", "/api/sessions/sess-1/reopen",
+            "POST", "/v1/sessions/sess-1/resume",
             status: 422, json: #"{"error":"Session metadata is incomplete","missing":["path","machineId"]}"#
         )
 

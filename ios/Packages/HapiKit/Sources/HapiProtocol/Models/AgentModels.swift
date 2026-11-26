@@ -77,6 +77,39 @@ public struct AgentModelsResponse: Codable, Equatable, Sendable {
         self.autoPermissionModeSupported = autoPermissionModeSupported
         self.error = error
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case success
+        case availableModels
+        case available_models
+        case cliModelSkus
+        case currentModelId
+        case current_model_id
+        case autoPermissionModeSupported
+        case error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        success = try c.decode(Bool.self, forKey: .success)
+        availableModels = try c.decodeIfPresent([AgentModelSummary].self, forKey: .available_models)
+            ?? c.decodeIfPresent([AgentModelSummary].self, forKey: .availableModels)
+        cliModelSkus = try c.decodeIfPresent([AgentModelSummary].self, forKey: .cliModelSkus)
+        currentModelId = try c.decodeIfPresent(String.self, forKey: .current_model_id)
+            ?? c.decodeIfPresent(String.self, forKey: .currentModelId)
+        autoPermissionModeSupported = try c.decodeIfPresent(Bool.self, forKey: .autoPermissionModeSupported)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(success, forKey: .success)
+        try c.encodeIfPresent(availableModels, forKey: .availableModels)
+        try c.encodeIfPresent(cliModelSkus, forKey: .cliModelSkus)
+        try c.encodeIfPresent(currentModelId, forKey: .currentModelId)
+        try c.encodeIfPresent(autoPermissionModeSupported, forKey: .autoPermissionModeSupported)
+        try c.encodeIfPresent(error, forKey: .error)
+    }
 }
 
 /// `GET /api/machines/:id/opencode-model-variants`.

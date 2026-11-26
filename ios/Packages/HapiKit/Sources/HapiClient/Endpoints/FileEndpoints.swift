@@ -9,26 +9,26 @@ import HapiProtocol
 /// e.g. `Session path not available` before the session has a workspace).
 /// Mirrors the Android `HapiApi` git & files section.
 extension APIClient {
-    /// `GET /api/sessions/:id/git-status` — raw
+    /// `GET /v1/sessions/:id/git-status` — raw
     /// `git status --porcelain=v2 --branch` stdout.
     public func gitStatus(sessionId: String) async throws -> GitCommandResponse {
         try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/git-status"
+            "/v1/sessions/\(encodePathComponent(sessionId))/git-status"
         )
     }
 
-    /// `GET /api/sessions/:id/git-diff-numstat?staged=` — raw
+    /// `GET /v1/sessions/:id/git-diff-numstat?staged=` — raw
     /// `git diff --numstat` stdout for one side.
     public func gitDiffNumstat(sessionId: String, staged: Bool) async throws -> GitCommandResponse {
         try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/git-diff-numstat",
+            "/v1/sessions/\(encodePathComponent(sessionId))/git-diff-numstat",
             query: [URLQueryItem(name: "staged", value: staged ? "true" : "false")]
         )
     }
 
-    /// `GET /api/sessions/:id/git-diff-file?path=&staged=` — raw unified diff
+    /// `GET /v1/sessions/:id/git-diff-file?path=&staged=` — raw unified diff
     /// for one file (`staged` omitted = unstaged side).
     public func gitDiffFile(
         sessionId: String,
@@ -41,12 +41,12 @@ extension APIClient {
         }
         return try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/git-diff-file",
+            "/v1/sessions/\(encodePathComponent(sessionId))/git-diff-file",
             query: query
         )
     }
 
-    /// `GET /api/sessions/:id/file?path=&maxBytes=` — `content` is base64;
+    /// `GET /v1/sessions/:id/file?path=&maxBytes=` — `content` is base64;
     /// decode before display.
     public func readSessionFile(
         sessionId: String,
@@ -59,12 +59,12 @@ extension APIClient {
         }
         return try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/file",
+            "/v1/sessions/\(encodePathComponent(sessionId))/file",
             query: query
         )
     }
 
-    /// `GET /api/sessions/:id/files?query=&limit=` — ripgrep-backed search
+    /// `GET /v1/sessions/:id/files?query=&limit=` — ripgrep-backed search
     /// (limit 1–500, hub default 200). An empty query is omitted, like the
     /// Android/web clients.
     public func searchSessionFiles(
@@ -81,12 +81,12 @@ extension APIClient {
         }
         return try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/files",
+            "/v1/sessions/\(encodePathComponent(sessionId))/files",
             query: queryItems
         )
     }
 
-    /// `GET /api/sessions/:id/directory?path=` — omitted/empty path lists the
+    /// `GET /v1/sessions/:id/directory?path=` — omitted/empty path lists the
     /// session root.
     public func listSessionDirectory(
         sessionId: String,
@@ -98,7 +98,7 @@ extension APIClient {
         }
         return try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/directory",
+            "/v1/sessions/\(encodePathComponent(sessionId))/directory",
             query: query
         )
     }

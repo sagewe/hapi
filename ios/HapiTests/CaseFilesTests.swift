@@ -16,13 +16,13 @@ import XCTest
             let url = request.url!, path = url.path
             var bytes = Data("{}".utf8), mime = "application/json"
             if path.hasSuffix("case-files") { bytes = try JSONEncoder().encode(["files": files]) }
-            else if path.contains("/generated-images/") || path.contains("/uploads/") {
+            else if path.contains("/blobs/") || path.contains("/generated-images/") || path.contains("/uploads/") {
                 if path.hasSuffix("archive") { bytes = zip; mime = "application/zip" }
                 else if path.contains("shot") { bytes = png; mime = "image/png" }
                 else { bytes = pdf; mime = "application/pdf" }
             } else if path.hasSuffix("hub-settings") { bytes = Data(#"{"clientProfile":{"mode":"assistant","defaultAgent":"agy","defaultDirectory":"/test","modelPresets":[{"id":"quick","label":"快速","model":"test-quick","effort":"medium"},{"id":"deep","label":"深度","model":"test-deep","effort":"high","isDefault":true}],"quickActions":[{"id":"company","title":"企业主体与股权穿透","prompt":"核查企业"},{"id":"individual","title":"自然人核查","prompt":"核查自然人"},{"id":"document","title":"单据审核","prompt":"审核单据"},{"id":"sanctions","title":"制裁与高风险筛查","prompt":"筛查制裁"}]}}"#.utf8) }
             else if path.hasSuffix("/sessions") { var summary = await HomeFilterTestData.summary("case81", machine: "test"); summary.metadata?.name = "示例贸易公司 · 单据与股权尽调"; summary.metadata?.flavor = "agy"; bytes = try JSONEncoder().encode(SessionsResponse(sessions: [summary])) }
-            else if path.hasSuffix("/upload") { bytes = Data(#"{"success":true,"path":"/test/contract.docx"}"#.utf8) }
+            else if path.hasSuffix("/uploads") { bytes = Data(#"{"success":true,"path":"/test/contract.docx"}"#.utf8) }
             else if path.hasSuffix("-models") { bytes = Data(#"{"success":true,"models":[],"availableModels":[]}"#.utf8) }
             else if path.hasSuffix("/messages") {
                 let rows = [DecryptedMessage(id: "summary", seq: 1, content: ["role": "agent", "content": ["type": "codex", "data": ["type": "message", "message": "结论摘要\n\n已核对商业发票、提单与登记摘录。示例贸易公司主体一致，未发现单据间金额与币种冲突。实控人资料仍需补充确认。"]]], createdAt: 1000, invokedAt: 1000),

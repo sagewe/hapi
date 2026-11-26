@@ -57,7 +57,7 @@ private actor RouteHTTP: HTTPPerforming {
             if !publicUp { throw URLError(.cannotConnectToHost) }
         }
         let body: String
-        if url.path == "/api/connection" { body = "{\"hubId\":\"same-hub\",\"privateUrl\":\"https://tailscale.example.test\",\"lanUrl\":\(lanAdvertised ? "\"\(privateOrigin)\"" : "null")}" }
+        if url.path == "/v1/connection" { body = "{\"hubId\":\"same-hub\",\"privateUrl\":\"https://tailscale.example.test\",\"lanUrl\":\(lanAdvertised ? "\"\(privateOrigin)\"" : "null")}" }
         else if url.path == "/health" { body = "{\"status\":\"ok\",\"hubId\":\"\(sameIdentity ? "same-hub" : "wrong-hub")\"}" }
         else { body = #"{"ok":true}"# }
         return (Data(body.utf8), try #require(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)))
@@ -123,12 +123,12 @@ struct HubConnectionRouterTests {
         let http = RouteHTTP()
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
         let performer = RoutingHTTPPerformer(router: router, underlying: http)
-        var request = URLRequest(url: canonical.appendingPathComponent("api/messages"))
+        var request = URLRequest(url: canonical.appendingPathComponent("v1/messages"))
         request.httpMethod = "POST"; request.httpBody = Data([0, 1, 2, 255])
         request.setValue("Bearer test-only", forHTTPHeaderField: "Authorization")
         _ = try await performer.perform(request)
         let requests = await http.requests
-        #expect(requests.map { $0.url?.path } == ["/api/connection", "/health", "/api/messages"])
+        #expect(requests.map { $0.url?.path } == ["/v1/connection", "/health", "/v1/messages"])
         #expect(requests[1].value(forHTTPHeaderField: "Authorization") == nil)
         #expect(requests.last?.url?.host == "direct.example.test")
         #expect(requests.last?.httpBody == request.httpBody)
@@ -148,10 +148,10 @@ struct HubConnectionRouterTests {
         _ = try await router.resolve(token: "test-only")
         await http.direct(false)
         let performer = RoutingHTTPPerformer(router: router, underlying: http)
-        var write = URLRequest(url: canonical.appendingPathComponent("api/messages")); write.httpMethod = "POST"
+        var write = URLRequest(url: canonical.appendingPathComponent("v1/messages")); write.httpMethod = "POST"
         #expect(await capturedError { try await performer.perform(write) } is URLError)
-        #expect(await http.requests.filter { $0.url?.path == "/api/messages" }.count == 1)
-        let read = URLRequest(url: canonical.appendingPathComponent("api/sessions"))
+        #expect(await http.requests.filter { $0.url?.path == "/v1/messages" }.count == 1)
+        let read = URLRequest(url: canonical.appendingPathComponent("v1/sessions"))
         _ = try await performer.perform(read)
         #expect(await http.requests.last?.url?.host == "public.example.test")
         let fresh = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
@@ -194,7 +194,7 @@ struct HubConnectionRouterTests {
             for _ in 0..<10 { group.addTask { try await router.resolve(token: "test-only") } }
             for try await origin in group { #expect(origin == canonical) }
         }
-        #expect(await http.requests.filter { $0.url?.path == "/api/connection" }.count == 1)
+        #expect(await http.requests.filter { $0.url?.path == "/v1/connection" }.count == 1)
         await http.direct(true); await http.publicDown()
         _ = try await RoutingHTTPPerformer(router: router, underlying: http).perform(URLRequest(url: canonical.appendingPathComponent("api/sessions")))
         #expect(await http.requests.last?.url?.host == "tailscale.example.test")
@@ -204,7 +204,7 @@ struct HubConnectionRouterTests {
         let http = RouteHTTP()
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
         let transport = RoutingSSETransport(router: router, underlying: ConnectedSSE(), recheckInterval: .milliseconds(5))
-        var request = URLRequest(url: URL(string: canonical.absoluteString + "/api/events?all=true&token=test-only")!)
+        var request = URLRequest(url: URL(string: canonical.absoluteString + "/v1/events?all=true&token=test-only")!)
         request.setValue("old-event-cursor", forHTTPHeaderField: "Last-Event-ID")
         var iterator = transport.connect(request).makeAsyncIterator()
         if case .connected(let response) = try await iterator.next() {
@@ -307,7 +307,7 @@ struct HubConnectionRouterTests {
         let http = RouteHTTP()
         let router = HubConnectionRouter(canonicalURL: canonical, performer: http, persistent: false)
         let transport = RoutingSSETransport(router: router, underlying: ConnectedSSE(), recheckInterval: .milliseconds(5))
-        let request = URLRequest(url: URL(string: canonical.absoluteString + "/api/events?all=true&token=test-only")!)
+        let request = URLRequest(url: URL(string: canonical.absoluteString + "/v1/events?all=true&token=test-only")!)
         var iterator = transport.connect(request).makeAsyncIterator()
         _ = try await iterator.next()
         #expect(await router.diagnostics().activeRoute == .lan)

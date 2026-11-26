@@ -32,7 +32,9 @@ private actor ScratchlistFlowHTTP: HTTPPerforming {
                     path: "hapi-hub:scratchlist/default/sess-1/park-\(parks).png")
                 response = try encodeJSON(ScratchlistUploadResponse(success: true, attachment: attachment))
             }
-        } else if path.hasSuffix("/upload") {
+        } else if request.httpMethod == "DELETE" && path.hasSuffix("/uploads") {
+            response = #"{"success":true}"#
+        } else if path.hasSuffix("/uploads") {
             uploads += 1
             if uploads == failUploadNumber { status = 500; response = "{}" }
             else { response = "{\"success\":true,\"path\":\"/tmp/chat-\(uploads).png\"}" }
@@ -47,7 +49,7 @@ private actor ScratchlistFlowHTTP: HTTPPerforming {
             status = 409
             response = "{\"error\":\"inactive\",\"code\":\"session_inactive\"}"
         }
-        else if path.contains("/scratchlist/attachments/") { response = "test" }
+        else if path.contains("/blobs/") || path.contains("/scratchlist/attachments/") { response = "test" }
         else if path.hasSuffix("/messages"), request.httpMethod == "GET" { response = "{\"messages\":[],\"hasMore\":false}" }
         else { response = "{}" }
         return (Data(response.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
@@ -83,7 +85,7 @@ struct ScratchlistAttachmentFlowTests {
         try await expectEventually { tray.allReady }
         tray.discardAllDetached()
         try await Task.sleep(for: .milliseconds(30))
-        #expect(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/park-2") })
+        #expect(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/uploads") })
     }
 
     @Test func chatToScratchlistMigrationLeavesTheSourceUntilCommit() async throws {
@@ -98,14 +100,14 @@ struct ScratchlistAttachmentFlowTests {
         #expect(prepared.attachments.count == 1)
         #expect(tray.snapshot == snapshot)
         #expect(await http.requests.contains { $0.url!.path.hasSuffix("/file") })
-        #expect(!(await http.requests.contains { $0.url!.path.hasSuffix("/upload/delete") }))
+        #expect(!(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/uploads") }))
         await ScratchlistTransfer.cleanupPark(store: store, sessionId: "sess-1", attachments: prepared.uploaded)
         #expect(tray.snapshot == snapshot, "A rejected park leaves the original chat upload usable")
     }
 
     @Test func partialParkFailureCleansOnlyNewHubCopies() async throws {
         let http = ScratchlistFlowHTTP()
-        await http.failParkUpload(2)
+        await http.failChatUpload(4)
         let api = try makeStoreAPIClient(performer: http)
         let store = ScratchlistStore(api: api)
         let tray = ComposerAttachments(api: api, sessionId: "sess-1")
@@ -117,8 +119,7 @@ struct ScratchlistAttachmentFlowTests {
         } catch {}
         #expect(tray.items.count == 2)
         #expect(tray.allReady)
-        #expect(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/park-1") })
-        #expect(!(await http.requests.contains { $0.url!.path.hasSuffix("/upload/delete") }))
+        #expect(await http.requests.filter { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/uploads") }.count == 1)
     }
 
     @Test func partialSendPreparationCleansChatCopiesWithoutDeletingSavedFiles() async throws {
@@ -131,8 +132,8 @@ struct ScratchlistAttachmentFlowTests {
                 snapshot: ScratchlistTransfer.snapshot(entry))
             Issue.record("The second upload must fail")
         } catch {}
-        #expect(await http.requests.contains { $0.url!.path.hasSuffix("/upload/delete") })
-        #expect(!(await http.requests.contains { $0.httpMethod == "DELETE" }))
+        #expect(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.hasSuffix("/uploads") })
+        #expect(!(await http.requests.contains { $0.httpMethod == "DELETE" && $0.url!.path.contains("/scratchlist/attachments/") }))
     }
 
     @Test func queueResumesBeforeStagingAndCleansEntryInTheEffectiveSession() async throws {
@@ -146,10 +147,10 @@ struct ScratchlistAttachmentFlowTests {
         #expect(interactor.composerText == "Keep this input")
         let requests = await http.requests
         let resume = try #require(requests.firstIndex { $0.url!.path.hasSuffix("/resume") })
-        let fetch = try #require(requests.firstIndex { $0.url!.path == "/api/sessions/resumed/scratchlist/attachments/one" })
+        let fetch = try #require(requests.firstIndex { $0.url!.path == "/v1/sessions/resumed/blobs/one" })
         #expect(resume < fetch)
-        #expect(requests.contains { $0.httpMethod == "POST" && $0.url!.path == "/api/sessions/resumed/messages" })
-        #expect(requests.contains { $0.httpMethod == "DELETE" && $0.url!.path == "/api/sessions/resumed/scratchlist/entry" })
+        #expect(requests.contains { $0.httpMethod == "POST" && $0.url!.path == "/v1/sessions/resumed/messages" })
+        #expect(requests.contains { $0.httpMethod == "DELETE" && $0.url!.path == "/v1/sessions/resumed/scratchlist/entry" })
         let message = try #require(requests.first { $0.httpMethod == "POST" && $0.url!.path.hasSuffix("/messages") })
         let body = try #require(message.httpBody)
         #expect(!String(decoding: body, as: UTF8.self).contains("hapi-hub:"))
@@ -165,7 +166,7 @@ struct ScratchlistAttachmentFlowTests {
         #expect(await interactor.queueScratchlistEntry(entry))
         let requests = await http.requests
         #expect(requests.filter { $0.url!.path.hasSuffix("/resume") }.map { $0.url!.path }
-            == ["/api/sessions/sess-1/resume", "/api/sessions/resumed/resume"])
-        #expect(requests.contains { $0.httpMethod == "DELETE" && $0.url!.path == "/api/sessions/resumed-again/scratchlist/entry" })
+            == ["/v1/sessions/sess-1/resume", "/v1/sessions/resumed/resume"])
+        #expect(requests.contains { $0.httpMethod == "DELETE" && $0.url!.path == "/v1/sessions/resumed-again/scratchlist/entry" })
     }
 }

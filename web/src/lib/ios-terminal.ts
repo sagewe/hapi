@@ -1,14 +1,15 @@
-// Embedded iOS terminal. Reuses the web's xterm and Socket.IO versions.
+// Embedded iOS terminal. Uses Reins Native v1 JSON WebSocket (/v1/sessions/{id}/terminal).
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { Manager, Socket } from 'socket.io-client'
+import { buildV1TerminalWsUrl } from '@/api/v1Adapters'
+
 const post = (message: object) => (window as any).webkit.messageHandlers.terminal.postMessage(message)
 const term = new Terminal({ cursorBlink: true, convertEol: true, scrollback: 5000, fontSize: 14, disableStdin: false,
     theme: { background: '#101114', foreground: '#eeeeee' } })
 const fit = new FitAddon()
 term.loadAddon(fit)
 term.open(document.getElementById('terminal')!)
-let socket: Socket | null = null
+let ws: WebSocket | null = null
 let terminalId = '', sessionId = '', ready = false, direct = false, paused = true, retry = 0
 term.attachCustomKeyEventHandler(() => direct)
 if (term.textarea) term.textarea.readOnly = true
@@ -16,10 +17,17 @@ document.addEventListener('paste', event => { if (!direct) { event.preventDefaul
 let timer: ReturnType<typeof setTimeout> | undefined
 let readyTimer: ReturnType<typeof setTimeout> | undefined
 const status = (state: string, message = '') => post({ type: 'status', state, message })
+
+function sendFrame(frame: Record<string, unknown>): boolean {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify(frame))
+    return true
+}
+
 function refit() {
     if (!document.getElementById('terminal')!.clientHeight) return
     fit.fit()
-    if (ready) socket?.emit('terminal:resize', { terminalId, cols: term.cols, rows: term.rows })
+    if (ready) sendFrame({ type: 'resize', terminal_id: terminalId, cols: term.cols, rows: term.rows })
 }
 new ResizeObserver(() => requestAnimationFrame(refit)).observe(document.getElementById('terminal')!)
 function schedule(auth = false) {
@@ -31,11 +39,18 @@ function detach() {
     ready = false
     clearTimeout(readyTimer); readyTimer = undefined
     clearTimeout(timer); timer = undefined
-    socket?.removeAllListeners(); socket?.disconnect(); socket = null
+    if (ws) {
+        ws.onopen = null
+        ws.onmessage = null
+        ws.onerror = null
+        ws.onclose = null
+        ws.close()
+        ws = null
+    }
 }
 function send(data: string): boolean {
-    if (!ready || !socket?.connected) return false // Never queue keystrokes across reconnects.
-    socket.emit('terminal:write', { terminalId, data }); return true
+    if (!ready || !ws || ws.readyState !== WebSocket.OPEN) return false // Never queue keystrokes across reconnects.
+    return sendFrame({ type: 'write', terminal_id: terminalId, data })
 }
 // Gate user keyboard/paste input above, not xterm protocol replies: shells
 // may wait for a cursor-position response before displaying their prompt.
@@ -45,30 +60,57 @@ term.onData(data => { send(data) })
         detach(); paused = false; terminalId = options.terminalId; sessionId = options.sessionId
         // Hub replays its scrollback on reattachment; avoid duplicate transcript.
         term.reset(); refit(); status('connecting')
-        const manager = new Manager(options.baseURL, { path: '/socket.io/', autoConnect: false,
-            transports: ['websocket'], reconnection: false, timeout: 10000 })
-        const current = manager.socket('/terminal', { auth: { token: options.token } }); socket = current
-        const ours = (p: any) => current === socket && p?.terminalId === terminalId
-        current.on('connect', () => {
-            current.emit('terminal:create', { sessionId, terminalId, cols: term.cols, rows: term.rows })
-            readyTimer = setTimeout(() => { if (current === socket && !ready) { paused = true; detach(); status('error', 'Terminal did not become ready. Retry to reconnect.') } }, 15000)
-        })
-        current.on('terminal:ready', p => {
+        const url = buildV1TerminalWsUrl(options.baseURL, sessionId, options.token)
+        const current = new WebSocket(url)
+        ws = current
+        const ours = (p: any) => current === ws && (p?.terminal_id === terminalId || p?.terminalId === terminalId)
+        current.onopen = () => {
+            if (current !== ws) return
+            sendFrame({ type: 'open', terminal_id: terminalId, cols: term.cols, rows: term.rows })
+            readyTimer = setTimeout(() => {
+                if (current === ws && !ready) {
+                    paused = true
+                    detach()
+                    status('error', 'Terminal did not become ready. Retry to reconnect.')
+                }
+            }, 15000)
+        }
+        current.onmessage = (event) => {
+            if (current !== ws || typeof event.data !== 'string') return
+            let p: any
+            try {
+                p = JSON.parse(event.data)
+            } catch {
+                return
+            }
+            if (p?.type === 'pong') return
             if (!ours(p)) return
-            // Parse replayed scrollback while input is still disabled. Old
-            // cursor queries must not inject replies into the current prompt.
-            term.write('', () => {
-                if (current !== socket || !current.connected) return
-                ready = true; clearTimeout(readyTimer); readyTimer = undefined
-                retry = 0; status('connected'); refit()
-            })
-        })
-        current.on('terminal:output', p => { if (ours(p) && typeof p.data === 'string') term.write(p.data) })
-        current.on('terminal:exit', p => { if (ours(p)) { paused = true; detach(); status('exited', String(p.code ?? '')) } })
-        current.on('terminal:error', p => { if (ours(p)) { paused = true; detach(); status('error', p.message || 'Terminal error') } })
-        current.on('connect_error', error => { if (current !== socket) return; status('error', error.message); schedule(/auth|token|jwt|unauthorized/i.test(error.message)) })
-        current.on('disconnect', () => { if (current === socket) { status('connecting'); schedule() } })
-        current.connect()
+            if (p.type === 'ready') {
+                // Parse replayed scrollback while input is still disabled. Old
+                // cursor queries must not inject replies into the current prompt.
+                term.write('', () => {
+                    if (current !== ws || current.readyState !== WebSocket.OPEN) return
+                    ready = true; clearTimeout(readyTimer); readyTimer = undefined
+                    retry = 0; status('connected'); refit()
+                })
+            } else if (p.type === 'output' && typeof p.data === 'string') {
+                term.write(p.data)
+            } else if (p.type === 'exit') {
+                paused = true; detach(); status('exited', String(p.code ?? ''))
+            } else if (p.type === 'error') {
+                paused = true; detach(); status('error', p.message || 'Terminal error')
+            }
+        }
+        current.onerror = () => {
+            if (current !== ws) return
+            status('error', 'Connection error')
+        }
+        current.onclose = (event) => {
+            if (current !== ws) return
+            const isAuthErr = event.code === 1008 || /auth|token|jwt|unauthorized/i.test(event.reason || '')
+            status('connecting')
+            schedule(isAuthErr)
+        }
     },
     send,
     mode(value: boolean) { direct = value; if (term.textarea) term.textarea.readOnly = !value; if (value) term.focus(); else term.blur() },
@@ -78,6 +120,6 @@ term.onData(data => { send(data) })
         return Array.from({ length: buffer.length }, (_, i) => buffer.getLine(i)?.translateToString(true) ?? '').join('\n')
     },
     suspend() { paused = true; detach(); status('idle') },
-    close() { paused = true; if (socket?.connected) socket.emit('terminal:close', { terminalId }); detach(); term.dispose() }
+    close() { paused = true; if (ws?.readyState === WebSocket.OPEN) sendFrame({ type: 'close', terminal_id: terminalId }); detach(); term.dispose() }
 }
 post({ type: 'loaded' })

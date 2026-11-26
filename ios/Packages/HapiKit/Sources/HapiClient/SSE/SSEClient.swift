@@ -493,7 +493,7 @@ public actor SSEClient {
         guard var components = URLComponents(url: configuration.baseUrl, resolvingAgainstBaseURL: false) else {
             return nil
         }
-        components.path = "/api/events"
+        components.path = "/v1/events"
         // Query-param auth, exactly like the web reference (buildEventsUrl):
         // token, visibility, all|sessionId, lastEventId.
         var items = [

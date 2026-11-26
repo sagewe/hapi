@@ -180,52 +180,59 @@ class HapiApi internal constructor(
 
     // ------------------------------------------------------ health & auth --
 
-    /** `GET /health` — no auth, outside `/api`. */
+    /** `GET /v1/voice/asr-config` — streaming ASR availability probe. */
     suspend fun streamingAsrAvailable(): Boolean =
-        request<kotlinx.serialization.json.JsonObject>("GET", url("api", "voice", "asr-config").build())["available"].toString() == "true"
+        request<kotlinx.serialization.json.JsonObject>("GET", url("v1", "voice", "asr-config").build())["available"].toString() == "true"
 
     suspend fun prepareStreamingAsr(draft: String, recordingId: String) {
-        request<Unit>("POST", url("api", "voice", "asr-context").build(), jsonBody(kotlinx.serialization.json.buildJsonObject {
+        request<Unit>("POST", url("v1", "voice", "asr-context").build(), jsonBody(kotlinx.serialization.json.buildJsonObject {
             put("draft", kotlinx.serialization.json.JsonPrimitive(draft.take(8000)))
-            put("recordingId", kotlinx.serialization.json.JsonPrimitive(recordingId))
+            put("recording_id", kotlinx.serialization.json.JsonPrimitive(recordingId))
         }))
     }
 
     fun openStreamingAsr(draft: String, listener: okhttp3.WebSocketListener): okhttp3.WebSocket =
-        client.newWebSocket(okhttp3.Request.Builder().url(url("api", "voice", "asr-ws").addQueryParameter("sample_rate", "16000").build())
+        client.newWebSocket(okhttp3.Request.Builder().url(url("v1", "voice", "asr-ws").addQueryParameter("sample_rate", "16000").build())
             .header("X-ASR-Draft", java.util.Base64.getEncoder().encodeToString(draft.take(2000).toByteArray())).build(), listener)
 
     suspend fun health(): HubHealthResponse =
         request("GET", url("health").build(), client = authClient)
 
     /**
-     * `POST /api/auth` — exchanges the pairing access token for a 4-hour JWT.
+     * `POST /v1/auth/login` — exchanges the pairing access token for a JWT.
      * Initial pairing entry point; steady-state refresh belongs to
      * `TokenAuthenticator`. 401 here means the token was rejected (re-pair).
      */
     suspend fun authenticate(accessToken: String): AuthResponse =
-        request("POST", url("api", "auth").build(), AuthRequest(accessToken).toJsonBody(), authClient)
+        request("POST", url("v1", "auth", "login").build(), AuthRequest(accessToken).toJsonBody(), authClient)
 
     // ------------------------------------------------------------ sessions --
 
-    /** `GET /api/sessions` — `order = "updatedAt"` for pure recency. */
+    /** `GET /v1/sessions` — `order = "updatedAt"` for pure recency. */
     suspend fun getSessions(limit: Int? = null, order: String? = null): SessionsResponse {
-        val target = url("api", "sessions").apply {
+        val target = url("v1", "sessions").apply {
             limit?.let { addQueryParameter("limit", it.toString()) }
             order?.let { addQueryParameter("order", it) }
         }
         return request("GET", target.build())
     }
 
-    /** `GET /api/sessions/:id`. */
-    suspend fun updateSessionReadState(sessionId: String, state: SessionReadStateRequest): SessionReadStateResponse =
-        request("PUT", url("api", "sessions", sessionId, "read-state").build(), state.toJsonBody())
+    /** `PUT /v1/sessions/:id/read-state`. */
+    suspend fun updateSessionReadState(sessionId: String, state: SessionReadStateRequest): SessionReadStateResponse {
+        val manualUnread = state.manualUnread ?: (state.type == "unread")
+        val body = buildJsonObject {
+            state.readRevision?.let { put("readRevision", it) }
+            put("manualUnread", manualUnread)
+            put("expectedVersion", state.expectedVersion)
+        }
+        return request("PUT", url("v1", "sessions", sessionId, "read-state").build(), jsonBody(body))
+    }
 
     suspend fun getSession(sessionId: String): SessionResponse =
-        request("GET", url("api", "sessions", sessionId).build())
+        request("GET", url("v1", "sessions", sessionId).build())
 
     /**
-     * `GET /api/sessions/:id/messages`. Cursors are `(seq, at)` pairs that
+     * `GET /v1/sessions/:id/messages`. Cursors are `(seq, at)` pairs that
      * always travel together; `epoch` accompanies the `after` cursor and a
      * mismatch makes the hub answer the latest page with `reset: true`
      * (`docs/api/client-contract/pagination.md`). Parameters pass through
@@ -242,7 +249,7 @@ class HapiApi internal constructor(
         untilAt: Long? = null,
         epoch: Long? = null,
     ): MessagesResponse {
-        val target = url("api", "sessions", sessionId, "messages").apply {
+        val target = url("v1", "sessions", sessionId, "messages").apply {
             beforeAt?.let { addQueryParameter("beforeAt", it.toString()) }
             beforeSeq?.let { addQueryParameter("beforeSeq", it.toString()) }
             afterAt?.let { addQueryParameter("afterAt", it.toString()) }
@@ -276,120 +283,137 @@ class HapiApi internal constructor(
     }
 
     /**
-     * `GET /api/sessions/:id/messages/:messageId/context` — a bounded history
-     * window centered on one message, or null when it does not resolve
-     * ([MessagesApi] seam over the same call — the recovery sweep's
-     * transport).
+     * `GET /v1/sessions/:id/messages/:messageId/context` — a bounded history
+     * window centered on one message, or null when it does not resolve.
      */
     override suspend fun getMessageContext(sessionId: String, messageId: String): MessageContextResponse? =
-        request("GET", url("api", "sessions", sessionId, "messages", messageId, "context").build())
+        request("GET", url("v1", "sessions", sessionId, "messages", messageId, "context").build())
 
     /**
-     * `POST /api/sessions/:id/messages` — responds `{ok: true}` only; the
-     * message itself arrives via SSE (`message-received`), reconciled by
-     * `localId`.
+     * `POST /v1/sessions/:id/messages` — submits a user message; the row also
+     * arrives via SSE (`message_received`), reconciled by `localId`.
      */
     override suspend fun sendMessage(sessionId: String, message: SendMessageRequest) {
-        request<Unit>("POST", url("api", "sessions", sessionId, "messages").build(), message.toJsonBody())
+        request<Unit>("POST", url("v1", "sessions", sessionId, "messages").build(), message.toJsonBody())
     }
 
-    /** `DELETE /api/sessions/:id/messages/:messageId` — cancel a queued message. */
+    /** `DELETE /v1/sessions/:id/messages/:messageId` — cancel a queued message. */
     override suspend fun cancelMessage(sessionId: String, messageId: String): CancelMessageResponse =
-        request("DELETE", url("api", "sessions", sessionId, "messages", messageId).build())
+        request("DELETE", url("v1", "sessions", sessionId, "messages", messageId).build())
 
     override suspend fun retryIndeterminateMessage(sessionId: String, messageId: String): RetryIndeterminateMessageResponse =
-        request("POST", url("api", "sessions", sessionId, "messages", messageId, "retry").build(), EMPTY_JSON)
+        request("POST", url("v1", "sessions", sessionId, "messages", messageId, "retry").build(), EMPTY_JSON)
 
-    /** `POST /api/sessions/:id/messages/:messageId/steer`. */
+    /** `POST /v1/sessions/:id/messages/:messageId/steer`. */
     override suspend fun steerMessage(sessionId: String, messageId: String): SteerQueuedMessageResponse =
-        request("POST", url("api", "sessions", sessionId, "messages", messageId, "steer").build(), EMPTY_JSON)
+        request("POST", url("v1", "sessions", sessionId, "messages", messageId, "steer").build(), EMPTY_JSON)
 
-    /** `POST /api/sessions/:id/messages/queued-state` — resync optimistic sends after reconnect. */
+    /** `POST /v1/sessions/:id/messages/queued-state` — resync optimistic sends after reconnect. */
     override suspend fun getQueuedState(sessionId: String, localIds: List<String>): QueuedStateResponse =
         request(
             "POST",
-            url("api", "sessions", sessionId, "messages", "queued-state").build(),
+            url("v1", "sessions", sessionId, "messages", "queued-state").build(),
             QueuedStateRequest(localIds).toJsonBody(),
         )
 
-    /** `POST /api/sessions/:id/clear` — shared sessions; returns an independent root. */
+    /** `POST /v1/sessions/:id/clear` — shared sessions; returns an independent root. */
     override suspend fun clearConversation(sessionId: String): ResumeSessionResponse =
-        request("POST", url("api", "sessions", sessionId, "clear").build(), EMPTY_JSON)
+        request("POST", url("v1", "sessions", sessionId, "clear").build(), EMPTY_JSON)
 
     /** CLI validates the proposal, switches to Default, then queues implementation. */
     override suspend fun implementCodexPlan(sessionId: String, planId: String) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "codex", "plan", "implement").build(),
+            url("v1", "sessions", sessionId, "codex", "plan", "implement").build(),
             jsonBody(buildJsonObject { put("planId", planId) }),
         )
     }
 
-    /** `POST /api/sessions/:id/abort` — active sessions only. */
+    /** `POST /v1/sessions/:id/abort` — active sessions only. */
     override suspend fun abortSession(sessionId: String) {
-        request<Unit>("POST", url("api", "sessions", sessionId, "abort").build(), EMPTY_JSON)
+        request<Unit>("POST", url("v1", "sessions", sessionId, "abort").build(), EMPTY_JSON)
     }
 
-    /** `POST /api/sessions/:id/switch` — hand a terminal-controlled session to remote control. */
+    /** `POST /v1/sessions/:id/switch` — hand a terminal-controlled session to remote control. */
     suspend fun switchSession(sessionId: String) {
-        request<Unit>("POST", url("api", "sessions", sessionId, "switch").build(), EMPTY_JSON)
+        request<Unit>("POST", url("v1", "sessions", sessionId, "switch").build(), EMPTY_JSON)
     }
 
     /**
-     * `POST /api/sessions/:id/resume`. The returned `sessionId` may differ
+     * `POST /v1/sessions/:id/resume`. The returned `sessionId` may differ
      * from [sessionId] (superseding spawn) — migrate drafts and navigation.
      */
-    override suspend fun resumeSession(sessionId: String, permissionMode: String?): ResumeSessionResponse =
-        request(
+    override suspend fun resumeSession(sessionId: String, permissionMode: String?): ResumeSessionResponse {
+        val resp = request<ResumeSessionResponse>(
             "POST",
-            url("api", "sessions", sessionId, "resume").build(),
+            url("v1", "sessions", sessionId, "resume").build(),
             ResumeSessionRequest(permissionMode).toJsonBody(),
         )
+        if (permissionMode != null) {
+            setPermissionMode(resp.sessionId, permissionMode)
+        }
+        return resp
+    }
 
-    /** `POST /api/sessions/:id/reopen` — same superseding-id caveat as resume; 422 when metadata is incomplete. */
+    /** `POST /v1/sessions/:id/resume` — reopens an archived/inactive session. */
     suspend fun reopenSession(sessionId: String): ReopenSessionResponse =
-        request("POST", url("api", "sessions", sessionId, "reopen").build(), EMPTY_JSON)
+        request("POST", url("v1", "sessions", sessionId, "resume").build(), EMPTY_JSON)
 
-    /** `POST /api/sessions/:id/archive` — 409 for a plain inactive session. */
+    /** `POST /v1/sessions/:id/archive`. */
     suspend fun archiveSession(sessionId: String) {
-        request<Unit>("POST", url("api", "sessions", sessionId, "archive").build(), EMPTY_JSON)
+        request<Unit>("POST", url("v1", "sessions", sessionId, "archive").build(), EMPTY_JSON)
     }
 
-    /** `DELETE /api/sessions/:id` — 409 while active (archive first). */
+    /** `DELETE /v1/sessions/:id`. */
     suspend fun deleteSession(sessionId: String) {
-        request<Unit>("DELETE", url("api", "sessions", sessionId).build())
+        request<Unit>("DELETE", url("v1", "sessions", sessionId).build())
     }
 
-    /** `PATCH /api/sessions/:id` — rename (1–255 chars). */
+    /** `PATCH /v1/sessions/:id` (+ optional `POST /v1/sessions/:id/tags`). */
     suspend fun renameInvestigation(sessionId: String, name: String, tags: List<String>) {
-        request<Unit>("PATCH", url("api", "sessions", sessionId).build(), jsonBody(buildJsonObject {
-            put("name", name)
-            put("tags", kotlinx.serialization.json.JsonArray(tags.map(::JsonPrimitive)))
+        request<Unit>("PATCH", url("v1", "sessions", sessionId).build(), jsonBody(buildJsonObject {
+            put("title", name)
+            put("title_locked", true)
+        }))
+        val trimmedTags = tags.map(String::trim).filter(String::isNotEmpty).take(3)
+        if (trimmedTags.isNotEmpty()) {
+            request<Unit>("POST", url("v1", "sessions", sessionId, "tags").build(), jsonBody(buildJsonObject {
+                put("tags", kotlinx.serialization.json.JsonArray(trimmedTags.map(::JsonPrimitive)))
+            }))
+        }
+    }
+
+    /** `PATCH /v1/sessions/:id` — rename (1–255 chars). */
+    suspend fun renameSession(sessionId: String, name: String) {
+        request<Unit>("PATCH", url("v1", "sessions", sessionId).build(), jsonBody(buildJsonObject {
+            put("title", name)
+            put("title_locked", true)
         }))
     }
-    suspend fun renameSession(sessionId: String, name: String) {
-        request<Unit>("PATCH", url("api", "sessions", sessionId).build(), RenameSessionRequest(name).toJsonBody())
-    }
 
-    /** `PATCH /api/sessions/:id/summary` (1–255 chars). */
+    /** `PATCH /v1/sessions/:id` — updates session title/summary. */
     suspend fun updateSessionSummary(sessionId: String, text: String) {
         request<Unit>(
             "PATCH",
-            url("api", "sessions", sessionId, "summary").build(),
-            UpdateSessionSummaryRequest(text).toJsonBody(),
+            url("v1", "sessions", sessionId).build(),
+            jsonBody(buildJsonObject { put("title", text) }),
         )
     }
 
-    /** `PUT /api/sessions/:id/pin` — mode `'none' | 'project' | 'global'`. */
+    /** `PATCH /v1/sessions/:id` — `pin_mode` `'none' | 'project' | 'global'`. */
     suspend fun setSessionPinMode(sessionId: String, mode: String) {
-        request<Unit>("PUT", url("api", "sessions", sessionId, "pin").build(), SetSessionPinRequest(mode).toJsonBody())
+        request<Unit>(
+            "PATCH",
+            url("v1", "sessions", sessionId).build(),
+            jsonBody(buildJsonObject { put("pin_mode", mode) }),
+        )
     }
 
     // --------------------------------------------------------- permissions --
 
     /**
-     * `POST /api/sessions/:id/permissions/:requestId/approve`. 404 when the
-     * request is no longer pending; 409 `session_inactive` on an inactive
+     * `POST /v1/sessions/:id/permissions/:requestId/approve`. 409 `request_not_found`
+     * when the request is no longer pending; 409 `session_inactive` on an inactive
      * session (offer Reopen).
      */
     override suspend fun approvePermission(
@@ -399,160 +423,143 @@ class HapiApi internal constructor(
     ) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "permissions", requestId, "approve").build(),
+            url("v1", "sessions", sessionId, "permissions", requestId, "approve").build(),
             options.toJsonBody(),
         )
     }
 
-    /** `POST /api/sessions/:id/permissions/:requestId/deny`. */
+    /** `POST /v1/sessions/:id/permissions/:requestId/deny`. */
     override suspend fun denyPermission(sessionId: String, requestId: String, decision: String?) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "permissions", requestId, "deny").build(),
+            url("v1", "sessions", sessionId, "permissions", requestId, "deny").build(),
             DenyPermissionRequest(decision).toJsonBody(),
         )
     }
 
     // ------------------------------------------- session config (per flavor) --
-    // All respond `{ok: true}`; wrong flavor → 400, apply-failure → 409.
-    // Clearing endpoints need an explicit JSON `null`, which HapiJson's
-    // `explicitNulls = false` would drop from a DTO — hence raw JsonObjects.
 
-    /** `POST /api/sessions/:id/permission-mode` — allowed set per flavor (`modes.ts`). */
+    /** `PATCH /v1/sessions/:id` — `permission_mode`. */
     override suspend fun setPermissionMode(sessionId: String, mode: String) {
         request<Unit>(
-            "POST",
-            url("api", "sessions", sessionId, "permission-mode").build(),
-            jsonBody(buildJsonObject { put("mode", mode) }),
+            "PATCH",
+            url("v1", "sessions", sessionId).build(),
+            jsonBody(buildJsonObject { put("permission_mode", mode) }),
         )
     }
 
-    /** `POST /api/sessions/:id/model` — string id, or null to clear back to the agent default. */
+    /** `PATCH /v1/sessions/:id` — `model` string id, or null to clear back to default. */
     override suspend fun setModel(sessionId: String, model: String?) {
         setModelElement(sessionId, model?.let(::JsonPrimitive) ?: JsonNull)
     }
 
-    /** `POST /api/sessions/:id/model` — `{provider, modelId}` variant (pi). */
+    /** `PATCH /v1/sessions/:id` — `model` `"$provider/$modelId"` variant. */
     suspend fun setModel(sessionId: String, provider: String, modelId: String) {
-        setModelElement(
-            sessionId,
-            buildJsonObject {
-                put("provider", provider)
-                put("modelId", modelId)
-            },
-        )
+        setModelElement(sessionId, JsonPrimitive("$provider/$modelId"))
     }
 
     private suspend fun setModelElement(sessionId: String, model: JsonElement) {
         request<Unit>(
-            "POST",
-            url("api", "sessions", sessionId, "model").build(),
+            "PATCH",
+            url("v1", "sessions", sessionId).build(),
             jsonBody(buildJsonObject { put("model", model) }),
         )
     }
 
-    /** `POST /api/sessions/:id/model-reasoning-effort` (codex, opencode) — null clears. */
+    /** `PATCH /v1/sessions/:id` — `effort` (codex, opencode) — null clears. */
     override suspend fun setModelReasoningEffort(sessionId: String, modelReasoningEffort: String?) {
         request<Unit>(
-            "POST",
-            url("api", "sessions", sessionId, "model-reasoning-effort").build(),
+            "PATCH",
+            url("v1", "sessions", sessionId).build(),
             jsonBody(
                 buildJsonObject {
-                    put("modelReasoningEffort", modelReasoningEffort?.let(::JsonPrimitive) ?: JsonNull)
+                    put("effort", modelReasoningEffort?.let(::JsonPrimitive) ?: JsonNull)
                 }
             ),
         )
     }
 
-    /** `POST /api/sessions/:id/effort` (claude, grok, pi) — null clears. */
+    /** `PATCH /v1/sessions/:id` — `effort` (claude, grok, pi) — null clears. */
     override suspend fun setEffort(sessionId: String, effort: String?) {
         request<Unit>(
-            "POST",
-            url("api", "sessions", sessionId, "effort").build(),
+            "PATCH",
+            url("v1", "sessions", sessionId).build(),
             jsonBody(buildJsonObject { put("effort", effort?.let(::JsonPrimitive) ?: JsonNull) }),
         )
     }
 
-    /** `POST /api/sessions/:id/service-tier` (codex) — `'fast' | 'standard'` (standard = explicit off). */
+    /** `POST /v1/sessions/:id/service-tier` (codex) — `'fast' | 'standard'`. */
     suspend fun setServiceTier(sessionId: String, serviceTier: String) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "service-tier").build(),
+            url("v1", "sessions", sessionId, "service-tier").build(),
             jsonBody(buildJsonObject { put("serviceTier", serviceTier) }),
         )
     }
 
-    /** `POST /api/sessions/:id/collaboration-mode` (codex) — `'default' | 'plan'`. */
+    /** `POST /v1/sessions/:id/collaboration-mode` (codex) — `'default' | 'plan'`. */
     suspend fun setCollaborationMode(sessionId: String, mode: String) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "collaboration-mode").build(),
+            url("v1", "sessions", sessionId, "collaboration-mode").build(),
             jsonBody(buildJsonObject { put("mode", mode) }),
         )
     }
 
-    /** `POST /api/sessions/:id/copilot-agent-mode` (copilot). */
+    /** `POST /v1/sessions/:id/copilot-agent-mode` (copilot). */
     suspend fun setCopilotAgentMode(sessionId: String, mode: String) {
         request<Unit>(
             "POST",
-            url("api", "sessions", sessionId, "copilot-agent-mode").build(),
+            url("v1", "sessions", sessionId, "copilot-agent-mode").build(),
             jsonBody(buildJsonObject { put("mode", mode) }),
         )
     }
 
     /**
-     * `GET /api/sessions/:id/codex-models` — active codex session's model
+     * `GET /v1/sessions/:id/codex-models` — active codex session's model
      * catalog (RPC-wrapped: check `success`; 400 on other flavors).
      */
     override suspend fun getSessionCodexModels(sessionId: String): CodexModelsResponse =
-        request("GET", url("api", "sessions", sessionId, "codex-models").build())
+        request("GET", url("v1", "sessions", sessionId, "codex-models").build())
 
     // ------------------------------------------------- commands & skills --
 
-    /** `GET /api/sessions/:id/slash-commands` (RPC-wrapped: check `success`). */
+    /** `GET /v1/sessions/:id/slash-commands` (RPC-wrapped: check `success`). */
     override suspend fun getSlashCommands(sessionId: String): SlashCommandsResponse =
-        request("GET", url("api", "sessions", sessionId, "slash-commands").build())
+        request("GET", url("v1", "sessions", sessionId, "slash-commands").build())
 
-    /** `GET /api/sessions/:id/skills` (RPC-wrapped: check `success`). */
+    /** `GET /v1/sessions/:id/skills` (RPC-wrapped: check `success`). */
     suspend fun getSkills(sessionId: String): SkillsResponse =
-        request("GET", url("api", "sessions", sessionId, "skills").build())
+        request("GET", url("v1", "sessions", sessionId, "skills").build())
 
     // ------------------------------------------------------------ machines --
 
-    /** `GET /api/machines` — online machines in the caller's namespace. */
+    /** `GET /v1/machines` — online machines in the caller's namespace. */
     suspend fun getMachines(): MachinesResponse =
-        request("GET", url("api", "machines").build())
+        request("GET", url("v1", "machines").build())
 
-    /** `PATCH /api/machines/:id` — empty [displayName] clears back to the hostname. */
+    /** `PATCH /v1/machines/:id` — empty [displayName] clears back to the hostname. */
     suspend fun renameMachine(machineId: String, displayName: String) {
         request<Unit>(
             "PATCH",
-            url("api", "machines", machineId).build(),
+            url("v1", "machines", machineId).build(),
             RenameMachineRequest(displayName).toJsonBody(),
         )
     }
 
-    /**
-     * `POST /api/machines/:id/restart-runner` — the skew banner's manual
-     * exit: the hub stops a supervised runner so its supervisor relaunches it
-     * with the newer on-disk CLI. Fails (HTTP error) when the runner is not
-     * supervised or not newer-on-disk.
-     */
+    /** `POST /v1/machines/:id/restart-runner`. */
     suspend fun restartMachineRunner(machineId: String): RestartRunnerResponse =
-        request("POST", url("api", "machines", machineId, "restart-runner").build(), EMPTY_JSON)
+        request("POST", url("v1", "machines", machineId, "restart-runner").build(), EMPTY_JSON)
 
-    /**
-     * `POST /api/machines/:id/spawn`. The response discriminates on `type`,
-     * not HTTP status — a failed spawn is still HTTP 200 with `type: 'error'`.
-     */
+    /** `GET /v1/app-updates/android/latest`. */
     suspend fun getAndroidRelease(): app.hapi.protocol.wire.AndroidRelease =
-        request("GET", url("api", "app-updates", "android", "latest").build())
+        request("GET", url("v1", "app-updates", "android", "latest").build())
 
     suspend fun downloadAndroidRelease(release: app.hapi.protocol.wire.AndroidRelease, destination: java.io.File, progress: (Long) -> Unit) {
         app.hapi.data.update.AndroidUpdatePolicy.validate(release)
         val temporary = java.io.File(destination.parentFile, destination.name + ".part")
         try {
-            val request = Request.Builder().url(url("api", "app-updates", "android", "download", release.fileName).build()).build()
+            val request = Request.Builder().url(url("v1", "app-updates", "android", "download", release.fileName).build()).build()
             val downloadClient = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
             downloadClient.newCall(request).await().use { response ->
                 if (!response.isSuccessful) throw ApiError.from(response.code, "更新下载失败")
@@ -577,22 +584,33 @@ class HapiApi internal constructor(
     }
 
     suspend fun getHubSettings(): app.hapi.protocol.wire.HubSettingsResponse =
-        request("GET", url("api", "hub-settings").build())
+        request("GET", url("v1", "settings").build())
 
-    /** Model and effort are committed atomically by the hub. */
+    /** Model and effort are committed atomically by the hub via `PATCH /v1/sessions/:id`. */
     override suspend fun setModelPreset(sessionId: String, model: String, effort: String?) {
-        request<Unit>("POST", url("api", "sessions", sessionId, "model").build(),
+        request<Unit>("PATCH", url("v1", "sessions", sessionId).build(),
             jsonBody(buildJsonObject { put("model", model); effort?.let { put("effort", it) } }))
     }
 
-    suspend fun spawnSession(machineId: String, spawn: SpawnSessionRequest): SpawnResponse =
-        request("POST", url("api", "machines", machineId, "spawn").build(), spawn.toJsonBody())
+    /** `POST /v1/sessions` — spawns a new session on [machineId]. */
+    suspend fun spawnSession(machineId: String, spawn: SpawnSessionRequest): SpawnResponse {
+        val body = buildJsonObject {
+            put("machine_id", machineId)
+            put("directory", spawn.directory)
+            spawn.agent?.let { put("agent", it) }
+            spawn.model?.let { put("model", it) }
+            (spawn.effort ?: spawn.modelReasoningEffort)?.let { put("effort", it) }
+            val perm = spawn.permissionMode ?: if (spawn.yolo == true) "yolo" else null
+            perm?.let { put("permission_mode", it) }
+        }
+        return request("POST", url("v1", "sessions").build(), jsonBody(body))
+    }
 
     /** Installed/static-configured Agents reported by the selected runner. */
     suspend fun getMachineAgentAvailability(machineId: String): AgentAvailabilityResponse =
-        request("GET", url("api", "machines", machineId, "agent-availability").build())
+        request("GET", url("v1", "machines", machineId, "agent-availability").build())
 
-    /** `POST /api/machines/:id/list-directory` (RPC-wrapped: check `success`). */
+    /** `POST /v1/machines/:id/list-directory` (RPC-wrapped: check `success`). */
     suspend fun listMachineDirectory(
         machineId: String,
         path: String,
@@ -600,84 +618,71 @@ class HapiApi internal constructor(
     ): MachineListDirectoryResponse =
         request(
             "POST",
-            url("api", "machines", machineId, "list-directory").build(),
+            url("v1", "machines", machineId, "list-directory").build(),
             MachineListDirectoryRequest(path, includeHidden).toJsonBody(),
         )
 
-    /** `POST /api/machines/:id/paths/exists` (≤ 1000 paths). */
+    /** `POST /v1/machines/:id/paths/exists` (≤ 1000 paths). */
     suspend fun checkMachinePathsExist(machineId: String, paths: List<String>): MachinePathsExistsResponse =
         request(
             "POST",
-            url("api", "machines", machineId, "paths", "exists").build(),
+            url("v1", "machines", machineId, "paths", "exists").build(),
             MachinePathsExistsRequest(paths).toJsonBody(),
         )
 
-    /**
-     * `GET /api/machines/:id/codex-models` — pre-spawn codex model catalog
-     * (RPC-wrapped: check `success`). A runner without the machine RPC answers
-     * 503 with code `rpc_target_missing` → [ApiError]; callers hide the picker
-     * (web ref: `useCodexModels`). Added in B-M3d.
-     */
+    /** `GET /v1/machines/:id/codex-models`. */
     suspend fun getMachineCodexModels(machineId: String): CodexModelsResponse =
-        request("GET", url("api", "machines", machineId, "codex-models").build())
+        request("GET", url("v1", "machines", machineId, "codex-models").build())
 
-    /**
-     * `GET /api/machines/:id/grok-models?cwd=` — directory-scoped Grok probe
-     * (RPC-wrapped). Consumed for `autoPermissionModeSupported` (create-form
-     * Auto gate, web ref: `useGrokModelsForCwd`); the cwd must exist.
-     */
+    /** `GET /v1/machines/:id/grok-models?cwd=`. */
     suspend fun getMachineGrokModelsForCwd(machineId: String, cwd: String): GrokModelsResponse =
         request(
             "GET",
-            url("api", "machines", machineId, "grok-models")
+            url("v1", "machines", machineId, "grok-models")
                 .apply { addQueryParameter("cwd", cwd) }
                 .build(),
         )
 
     // --------------------------------------------------------- git & files --
-    // RAW-stdout contract (`docs/api/client-contract/rest.md` "Git & files"):
-    // the hub relays git output verbatim inside `GitCommandResponse.stdout`;
-    // parsing happens client-side in `app.hapi.protocol.git`. All six are
-    // RPC-wrapped — check `success` (HTTP 200 + `{success:false}` is normal).
 
-    /** `GET /api/sessions/:id/git-status` — raw `git status --porcelain=v2 --branch` stdout. */
+    /** `GET /v1/sessions/:id/git-status` — raw `git status --porcelain=v2 --branch` stdout. */
     suspend fun getGitStatus(sessionId: String): GitCommandResponse =
-        request("GET", url("api", "sessions", sessionId, "git-status").build())
+        request("GET", url("v1", "sessions", sessionId, "git-status").build())
 
-    /** `GET /api/sessions/:id/git-diff-numstat?staged=` — raw `git diff --numstat` stdout. */
+    /** `GET /v1/sessions/:id/git-diff-numstat?staged=` — raw `git diff --numstat` stdout. */
     suspend fun getGitDiffNumstat(sessionId: String, staged: Boolean): GitCommandResponse {
-        val target = url("api", "sessions", sessionId, "git-diff-numstat")
+        val target = url("v1", "sessions", sessionId, "git-diff-numstat")
             .addQueryParameter("staged", staged.toString())
         return request("GET", target.build())
     }
 
-    /** `GET /api/sessions/:id/git-diff-file?path=&staged=` — raw unified diff for one file. */
+    /** `GET /v1/sessions/:id/git-diff-file?path=&staged=` — raw unified diff for one file. */
     suspend fun getGitDiffFile(sessionId: String, path: String, staged: Boolean? = null): GitCommandResponse {
-        val target = url("api", "sessions", sessionId, "git-diff-file")
+        val target = url("v1", "sessions", sessionId, "git-diff-file")
             .addQueryParameter("path", path)
             .apply { staged?.let { addQueryParameter("staged", it.toString()) } }
         return request("GET", target.build())
     }
 
-    /** `GET /api/sessions/:id/file?path=` — `content` is base64; decode before display. */
+    /** `GET /v1/sessions/:id/file?path=` — `content` is base64; decode before display. */
     suspend fun readSessionFile(sessionId: String, path: String): FileReadResponse {
-        val target = url("api", "sessions", sessionId, "file")
+        val target = url("v1", "sessions", sessionId, "file")
             .addQueryParameter("path", path)
         return request("GET", target.build())
     }
 
-    /** `GET /api/sessions/:id/files?query=&limit=` — ripgrep-backed search (limit 1–500, default 200). */
+    /** `GET /v1/sessions/:id/files?query=&limit=` — ripgrep-backed search (limit 1–500, default 200). */
     override suspend fun searchSessionFiles(sessionId: String, query: String, limit: Int?): FileSearchResponse {
-        val target = url("api", "sessions", sessionId, "files").apply {
+        val target = url("v1", "sessions", sessionId, "files").apply {
             if (query.isNotEmpty()) addQueryParameter("query", query)
             limit?.let { addQueryParameter("limit", it.toString()) }
         }
         return request("GET", target.build())
     }
 
-    /** `GET /api/sessions/:id/directory?path=` — omitted path lists the session root. */
+    /** `GET /v1/sessions/:id/directory?path=` — omitted path lists the session root. */
     suspend fun listSessionDirectory(sessionId: String, path: String? = null): ListDirectoryResponse {
-        val target = url("api", "sessions", sessionId, "directory").apply {
+        val target = url("v1", "sessions", sessionId, "directory").apply {
             if (!path.isNullOrEmpty()) addQueryParameter("path", path)
         }
         return request("GET", target.build())
@@ -686,25 +691,23 @@ class HapiApi internal constructor(
     // ---------------------------------------------------------- visibility --
 
     /**
-     * `POST /api/visibility` — report foreground/background for the SSE
-     * subscription so the hub can suppress redundant push. 404 when the
-     * subscription is gone (reconnect will mint a new id).
+     * `POST /v1/visibility` — report foreground/background for the SSE
+     * subscription so the hub can suppress redundant push.
      */
     suspend fun setVisibility(subscriptionId: String, visibility: String) {
         request<Unit>(
             "POST",
-            url("api", "visibility").build(),
+            url("v1", "visibility").build(),
             VisibilityRequest(subscriptionId, visibility).toJsonBody(),
         )
     }
 
     suspend fun getCaseFiles(sessionId: String): app.hapi.protocol.wire.CaseFilesResponse =
-        request("GET", url("api", "sessions", sessionId, "case-files").build())
+        request("GET", url("v1", "sessions", sessionId, "case-files").build())
 
     suspend fun getCaseFile(sessionId: String, file: app.hapi.protocol.wire.CaseFile): GeneratedImage {
         require(file.category == "uploads" || file.category == "deliverables")
-        val category = if (file.isUpload) "uploads" else "generated-images"
-        val target = url("api", "sessions", sessionId, category, file.id).build()
+        val target = url("v1", "sessions", sessionId, "blobs", file.id).build()
         return imageClient.newCall(Request.Builder().url(target).build()).await().use { response ->
             if (!response.isSuccessful) throw ApiError.from(response.code, response.body?.string().orEmpty())
             val body = requireNotNull(response.body)
@@ -726,13 +729,11 @@ class HapiApi internal constructor(
     // ------------------------------------------------------------- images --
 
     /**
-     * `GET /api/sessions/:id/generated-images/:imageId` — raw bytes. Rides
-     * [imageClient]'s disk cache: the image id is an immutable content
-     * fingerprint doubling as the `ETag`, so revalidation is a 304 without the
-     * CLI round-trip and repeat views are served from disk.
+     * `GET /v1/sessions/:id/blobs/:imageId` — raw bytes. Rides
+     * [imageClient]'s disk cache (immutable + ETagged).
      */
     suspend fun getGeneratedImage(sessionId: String, imageId: String): GeneratedImage {
-        val target = url("api", "sessions", sessionId, "generated-images", imageId).build()
+        val target = url("v1", "sessions", sessionId, "blobs", imageId).build()
         return imageClient.newCall(Request.Builder().url(target).build()).await().use { response ->
             if (!response.isSuccessful) {
                 throw ApiError.from(response.code, response.body?.string().orEmpty())
@@ -747,7 +748,7 @@ class HapiApi internal constructor(
     // ------------------------------------------------------------ uploads --
 
     /**
-     * `POST /api/sessions/:id/upload` — JSON + base64 [contentBase64] (NOT
+     * `POST /v1/sessions/:id/uploads` — JSON + base64 [contentBase64] (NOT
      * multipart), ≤ 50 MB decoded → 413. The returned `path` feeds the
      * `attachments` of send-message.
      */
@@ -759,100 +760,93 @@ class HapiApi internal constructor(
     ): UploadFileResponse =
         request(
             "POST",
-            url("api", "sessions", sessionId, "upload").build(),
+            url("v1", "sessions", sessionId, "uploads").build(),
             UploadFileRequest(filename, contentBase64, mimeType).toJsonBody(),
         )
 
-    /** `POST /api/sessions/:id/upload/delete`. */
+    /** `DELETE /v1/sessions/:id/uploads`. */
     override suspend fun deleteUpload(sessionId: String, path: String): DeleteUploadResponse =
         request(
-            "POST",
-            url("api", "sessions", sessionId, "upload", "delete").build(),
+            "DELETE",
+            url("v1", "sessions", sessionId, "uploads").build(),
             DeleteUploadRequest(path).toJsonBody(),
         )
 
     // ---------------------------------------------------- usage & storage --
-    // Owner-only dashboards: both 403 unless the JWT namespace is `default`
-    // (`docs/api/client-contract/rest.md#usage--storage-owner-only`).
 
-    /**
-     * `GET /api/usage/summary?range=7d|30d|all&timeZone=<IANA>` — token-usage
-     * dashboard aggregates. The hub validates [timeZone] (400 when invalid)
-     * and buckets `daily` by that zone's calendar days.
-     */
+    /** `GET /v1/usage/summary?range=7d|30d|all&timeZone=<IANA>`. */
     suspend fun getUsageSummary(range: String = "7d", timeZone: String = "UTC"): UsageSummaryResponse {
-        val target = url("api", "usage", "summary")
+        val target = url("v1", "usage", "summary")
             .addQueryParameter("range", range)
             .addQueryParameter("timeZone", timeZone)
         return request("GET", target.build())
     }
 
-    /** `GET /api/storage/sqlite` — hub db/wal/shm file sizes. */
+    /** `GET /v1/storage/sqlite` — hub db/wal/shm file sizes. */
     suspend fun getSqliteStorageUsage(): SqliteStorageUsageResponse =
-        request("GET", url("api", "storage", "sqlite").build())
+        request("GET", url("v1", "storage", "sqlite").build())
 
     // --------------------------------------------------------- scratchlist --
-    // Per-session operator notes (tiann/hapi#893, B-M4d). Mutations bump
-    // `scratchlistUpdatedAt` in the session's SSE patch — a bare refetch
-    // trigger for [getScratchlist]. Error codes:
-    // `app.hapi.protocol.wire.ScratchlistErrorCodes`.
 
-    /** `GET /api/sessions/:id/scratchlist` — all entries, `createdAt DESC`. */
+    /** `GET /v1/sessions/:id/scratchlist` — all entries, `createdAt DESC`. */
     suspend fun getScratchlist(sessionId: String): ScratchlistEntriesResponse =
-        request("GET", url("api", "sessions", sessionId, "scratchlist").build())
+        request("GET", url("v1", "sessions", sessionId, "scratchlist").build())
 
-    /**
-     * `POST /api/sessions/:id/scratchlist` — 201 with the canonical row; 200
-     * when [ScratchlistEntryCreateRequest.entryId] already exists (idempotent
-     * retry); 409 `scratchlist_at_cap` at 200 entries.
-     */
+    /** `POST /v1/sessions/:id/scratchlist`. */
     suspend fun createScratchlistEntry(
         sessionId: String,
         body: ScratchlistEntryCreateRequest,
     ): ScratchlistEntryResponse =
-        request("POST", url("api", "sessions", sessionId, "scratchlist").build(), body.toJsonBody())
+        request("POST", url("v1", "sessions", sessionId, "scratchlist").build(), body.toJsonBody())
 
-    /** `PUT /api/sessions/:id/scratchlist/:entryId` — 404 when the entry is gone. */
+    /** `PUT /v1/sessions/:id/scratchlist/:entryId` — 404 when the entry is gone. */
     suspend fun updateScratchlistEntry(
         sessionId: String,
         entryId: String,
         body: ScratchlistEntryUpdateRequest,
     ): ScratchlistEntryResponse =
-        request("PUT", url("api", "sessions", sessionId, "scratchlist", entryId).build(), body.toJsonBody())
+        request("PUT", url("v1", "sessions", sessionId, "scratchlist", entryId).build(), body.toJsonBody())
 
-    /** `DELETE /api/sessions/:id/scratchlist/:entryId` — 404 when already gone. */
+    /** `DELETE /v1/sessions/:id/scratchlist/:entryId` — 404 when already gone. */
     suspend fun deleteScratchlistEntry(sessionId: String, entryId: String) {
-        request<Unit>("DELETE", url("api", "sessions", sessionId, "scratchlist", entryId).build())
+        request<Unit>("DELETE", url("v1", "sessions", sessionId, "scratchlist", entryId).build())
     }
 
-    /** `GET /api/sessions/:id/scratchlist/limits` — attachment size/count/byte budgets. */
+    /** `GET /v1/sessions/:id/scratchlist/limits` — attachment size/count/byte budgets. */
     suspend fun getScratchlistLimits(sessionId: String): ScratchlistLimitsResponse =
-        request("GET", url("api", "sessions", sessionId, "scratchlist", "limits").build())
+        request("GET", url("v1", "sessions", sessionId, "scratchlist", "limits").build())
 
-    /**
-     * `POST /api/sessions/:id/scratchlist/upload` — JSON + base64 (NOT
-     * multipart), same body shape as the CLI upload. Over
-     * `limits.maxBytesPerFile` → 413 `scratchlist_attachment_too_large`.
-     */
+    /** `POST /v1/sessions/:id/uploads` — JSON + base64; adapts `{success, path}` to [ScratchlistUploadResponse]. */
     suspend fun uploadScratchlistAttachment(
         sessionId: String,
         filename: String,
         contentBase64: String,
         mimeType: String,
-    ): ScratchlistUploadResponse =
-        request(
+    ): ScratchlistUploadResponse {
+        val raw = request<ScratchlistUploadResponse>(
             "POST",
-            url("api", "sessions", sessionId, "scratchlist", "upload").build(),
+            url("v1", "sessions", sessionId, "uploads").build(),
             UploadFileRequest(filename, contentBase64, mimeType).toJsonBody(),
         )
+        val uploadedPath = raw.path
+        if (raw.attachment != null || !raw.success || uploadedPath.isNullOrBlank()) return raw
+        val decodedBytes = runCatching {
+            java.util.Base64.getDecoder().decode(contentBase64).size.toLong()
+        }.getOrDefault(0L)
+        return raw.copy(
+            attachment = app.hapi.protocol.wire.ScratchlistAttachment(
+                id = uploadedPath.substringAfterLast('/').ifBlank { filename },
+                filename = filename,
+                mimeType = mimeType,
+                size = decodedBytes,
+                path = uploadedPath,
+            ),
+        )
+    }
 
-    /**
-     * `GET /api/sessions/:id/scratchlist/attachments/:attachmentId` — raw
-     * bytes. Rides [imageClient] (auth + disk cache) like generated images;
-     * attachment content is immutable per id, so any cache hit is safe.
-     */
+    /** `GET /v1/sessions/:id/blobs/:attachmentId` — raw bytes. */
     suspend fun getScratchlistAttachment(sessionId: String, attachmentId: String): ScratchlistAttachmentFile {
-        val target = url("api", "sessions", sessionId, "scratchlist", "attachments", attachmentId).build()
+        val target = url("v1", "sessions", sessionId, "blobs", attachmentId).build()
         return imageClient.newCall(Request.Builder().url(target).build()).await().use { response ->
             if (!response.isSuccessful) {
                 throw ApiError.from(response.code, response.body?.string().orEmpty())
@@ -864,54 +858,42 @@ class HapiApi internal constructor(
         }
     }
 
-    /**
-     * `DELETE /api/sessions/:id/scratchlist/attachments/:attachmentId` — 409
-     * `scratchlist_attachment_in_use` while an entry still references it.
-     */
+    /** `DELETE /v1/sessions/:id/uploads` — deletes a staged upload by path/id. */
     suspend fun deleteScratchlistAttachment(sessionId: String, attachmentId: String) {
         request<Unit>(
             "DELETE",
-            url("api", "sessions", sessionId, "scratchlist", "attachments", attachmentId).build(),
+            url("v1", "sessions", sessionId, "uploads").build(),
+            DeleteUploadRequest(attachmentId).toJsonBody(),
         )
     }
 
     // ------------------------------------------------------------- devices --
 
-    /** `POST /api/devices/register` (upsert) — FCM contract (`native-companion-contract.md`). */
+    /** `POST /v1/devices/register` (upsert). */
     suspend fun registerDevice(token: String, deviceId: String, pushKey: String, platform: String = "phone") {
         request<Unit>(
             "POST",
-            url("api", "devices", "register").build(),
+            url("v1", "devices", "register").build(),
             RegisterDeviceRequest(token = token, platform = platform, deviceId = deviceId, pushKey = pushKey).toJsonBody(),
         )
     }
 
-    /** `DELETE /api/devices/register` — call on unpair while the JWT is still valid. */
+    /** `DELETE /v1/devices/register` — call on unpair while the JWT is still valid. */
     suspend fun unregisterDevice(token: String) {
         request<Unit>(
             "DELETE",
-            url("api", "devices", "register").build(),
+            url("v1", "devices", "register").build(),
             UnregisterDeviceRequest(token).toJsonBody(),
         )
     }
 
     // --------------------------------------------------------------- voice --
 
-    /**
-     * `GET /api/voice/transcription/providers` — providers whose keys are
-     * configured on the hub. Dictation (B-M3ce) picks the first entry
-     * supporting `standard`; an empty list means "no transcription provider
-     * configured on hub".
-     */
+    /** `GET /v1/voice/transcription/providers`. */
     suspend fun getTranscriptionProviders(): TranscriptionProvidersResponse =
-        request("GET", url("api", "voice", "transcription", "providers").build())
+        request("GET", url("v1", "voice", "transcription", "providers").build())
 
-    /**
-     * `POST /api/voice/transcription` — the one `multipart/form-data`
-     * endpoint: `file` (≤ 25 MB audio), `provider`, `mode`, optional
-     * `language` (BCP-47-ish). Dictation lands in M3e; the transport helper
-     * lives here with the rest of the surface.
-     */
+    /** `POST /v1/voice/transcription` — multipart/form-data. */
     suspend fun transcribeVoice(
         audio: ByteArray,
         filename: String,
@@ -927,7 +909,7 @@ class HapiApi internal constructor(
             .addFormDataPart("mode", mode)
             .apply { language?.let { addFormDataPart("language", it) } }
             .build()
-        return request("POST", url("api", "voice", "transcription").build(), body)
+        return request("POST", url("v1", "voice", "transcription").build(), body)
     }
 
     private companion object {

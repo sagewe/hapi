@@ -23,7 +23,7 @@ describe('fetchThroughAuthProxy', () => {
         const response = { type: 'basic', status: 200, ok: true } as Response
         fetchMock.mockResolvedValueOnce(response)
 
-        await expect(fetchThroughAuthProxy('/api/auth')).resolves.toBe(response)
+        await expect(fetchThroughAuthProxy('/v1/auth/login')).resolves.toBe(response)
         expect(fetchMock).toHaveBeenCalledTimes(1)
         expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'manual' })
     })
@@ -32,7 +32,7 @@ describe('fetchThroughAuthProxy', () => {
         fetchMock.mockResolvedValueOnce({ type: 'basic', status: 200, ok: true } as Response)
         const signal = new AbortController().signal
 
-        await fetchThroughAuthProxy('/api/sessions/s/export', { method: 'GET', signal })
+        await fetchThroughAuthProxy('/v1/sessions/s/export', { method: 'GET', signal })
         const firstInit = fetchMock.mock.calls[0][1] as RequestInit
         expect(firstInit.signal).toBe(signal)
         expect(firstInit).toMatchObject({ method: 'GET', redirect: 'manual' })
@@ -43,7 +43,7 @@ describe('fetchThroughAuthProxy', () => {
         fetchMock.mockResolvedValueOnce(opaqueRedirect()).mockResolvedValueOnce(retry)
 
         const init: RequestInit = { method: 'POST', headers: { 'content-type': 'application/json' } }
-        await expect(fetchThroughAuthProxy('https://h.example/api/auth', init)).resolves.toBe(retry)
+        await expect(fetchThroughAuthProxy('https://h.example/v1/auth/login', init)).resolves.toBe(retry)
         expect(fetchMock).toHaveBeenCalledTimes(2)
         expect(fetchMock.mock.calls[1][1]).toBe(init)
         expect(fetchMock.mock.calls[1][1]).not.toHaveProperty('redirect')
@@ -54,7 +54,7 @@ describe('fetchThroughAuthProxy', () => {
             .mockResolvedValueOnce(opaqueRedirect())
             .mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
-        const error = await fetchThroughAuthProxy('https://h.example/api/auth').catch((e) => e)
+        const error = await fetchThroughAuthProxy('https://h.example/v1/auth/login').catch((e) => e)
         expect(error).toBeInstanceOf(AuthProxyRedirectError)
         expect(error.name).toBe('AuthProxyRedirectError')
         expect(error.hubOrigin).toBe('https://h.example')
@@ -66,7 +66,7 @@ describe('fetchThroughAuthProxy', () => {
             .mockResolvedValueOnce(opaqueRedirect())
             .mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
-        const error = await fetchThroughAuthProxy('/api/auth').catch((e) => e)
+        const error = await fetchThroughAuthProxy('/v1/auth/login').catch((e) => e)
         expect(error).toBeInstanceOf(AuthProxyRedirectError)
         expect(error.hubOrigin).toBe(window.location.origin)
     })
@@ -75,14 +75,14 @@ describe('fetchThroughAuthProxy', () => {
         const failure = new RangeError('boom')
         fetchMock.mockResolvedValueOnce(opaqueRedirect()).mockRejectedValueOnce(failure)
 
-        await expect(fetchThroughAuthProxy('/api/auth')).rejects.toBe(failure)
+        await expect(fetchThroughAuthProxy('/v1/auth/login')).rejects.toBe(failure)
     })
 
     it('propagates a first-call rejection unchanged without retrying', async () => {
         const failure = new TypeError('Failed to fetch')
         fetchMock.mockRejectedValueOnce(failure)
 
-        await expect(fetchThroughAuthProxy('/api/auth')).rejects.toBe(failure)
+        await expect(fetchThroughAuthProxy('/v1/auth/login')).rejects.toBe(failure)
         expect(fetchMock).toHaveBeenCalledTimes(1)
     })
 })

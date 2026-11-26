@@ -18,11 +18,11 @@ struct APIClientTests {
 
         let requests = await harness.performer.requests
         try #require(requests.count == 3)
-        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/api/sessions")
+        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/v1/sessions")
         #expect(requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer \(initial)")
-        #expect(requests[1].url?.absoluteString == "\(testHubURLString)/api/auth")
+        #expect(requests[1].url?.absoluteString == "\(testHubURLString)/v1/auth/login")
         #expect(requests[1].value(forHTTPHeaderField: "Authorization") == nil)
-        #expect(requests[2].url?.absoluteString == "\(testHubURLString)/api/sessions")
+        #expect(requests[2].url?.absoluteString == "\(testHubURLString)/v1/sessions")
         #expect(requests[2].value(forHTTPHeaderField: "Authorization") == "Bearer \(rotated)")
     }
 
@@ -108,10 +108,10 @@ struct APIClientTests {
         await harness.performer.enqueue(json: authResponseJSON(token: issued))
         let response = try await harness.client.authenticate(accessToken: "base:team")
         #expect(response.token == issued)
-        #expect(response.user.id == 1)
+        #expect(response.user?.id == 1)
         let requests = await harness.performer.requests
         try #require(requests.count == 1)
-        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/api/auth")
+        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/v1/auth/login")
         let body = requests[0].httpBody.flatMap { String(data: $0, encoding: .utf8) }
         #expect(body == "{\"accessToken\":\"base:team\"}")
         #expect(requests[0].value(forHTTPHeaderField: "Authorization") == nil)
@@ -130,7 +130,7 @@ struct APIClientTests {
         try #require(requests.count == 1)
         #expect(
             requests[0].url?.absoluteString
-                == "\(testHubURLString)/api/sessions/s1/generated-images/img1"
+                == "\(testHubURLString)/v1/sessions/s1/blobs/img1"
         )
     }
 }

@@ -272,7 +272,7 @@ private actor NewSessionDirectoryHTTP: HTTPPerforming {
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let url = try XCTUnwrap(request.url)
         let data: Data
-        if url.path == "/api/machines" {
+        if url.path == "/v1/machines" {
             struct Roster: Encodable { let machines: [Machine] }
             let machines = ["m1", "m2"].map { id in
                 Machine(

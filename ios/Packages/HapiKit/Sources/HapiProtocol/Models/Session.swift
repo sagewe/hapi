@@ -114,40 +114,171 @@ public struct Session: Codable, Equatable, Sendable {
         self.copilotAgentMode = copilotAgentMode
     }
 
+    private enum V1CodingKeys: String, CodingKey {
+        case id
+        case namespace
+        case machine_id
+        case agent
+        case directory
+        case title
+        case title_locked
+        case prompt_title
+        case model
+        case effort
+        case permission_mode
+        case status
+        case pinned
+        case pin_mode
+        case archived
+        case meta_rev
+        case state_rev
+        case content_rev
+        case read_rev
+        case read_state_ver
+        case manual_unread
+        case pending_requests
+        case metadata
+        case created_at
+        case updated_at
+        case seq
+        case message_count
+    }
+
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        contentRevision = try container.decodeIfPresent(Int.self, forKey: .contentRevision)
-        readState = try container.decodeIfPresent(SessionReadState.self, forKey: .readState)
-        hasConversationContent = try container.decodeIfPresent(Bool.self, forKey: .hasConversationContent)
-        id = try container.decode(String.self, forKey: .id)
-        namespace = try container.decode(String.self, forKey: .namespace)
-        seq = try container.decode(Int.self, forKey: .seq)
-        createdAt = try container.decode(Int.self, forKey: .createdAt)
-        updatedAt = try container.decode(Int.self, forKey: .updatedAt)
-        lastUserMessageAt = try container.decodeIfPresent(Int.self, forKey: .lastUserMessageAt)
-        pinned = try container.decodeIfPresent(Bool.self, forKey: .pinned)
-        globalPinned = try container.decodeIfPresent(Bool.self, forKey: .globalPinned)
-        active = try container.decode(Bool.self, forKey: .active)
+        let v1 = try decoder.container(keyedBy: V1CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: CodingKeys.self)
+
+        // Native Reins v1 `Session` carries `created_at` / `updated_at` / `meta_rev`
+        // (snake_case) instead of `metadataVersion`.
+        if !legacy.contains(.metadataVersion) && (v1.contains(.created_at) || v1.contains(.meta_rev) || v1.contains(.machine_id)) {
+            id = try v1.decode(String.self, forKey: .id)
+            namespace = try v1.decode(String.self, forKey: .namespace)
+            seq = try v1.decodeIfPresent(Int.self, forKey: .seq) ?? 0
+            createdAt = try v1.decode(Int.self, forKey: .created_at)
+            updatedAt = try v1.decode(Int.self, forKey: .updated_at)
+            lastUserMessageAt = nil
+
+            let pinMode = try v1.decodeIfPresent(String.self, forKey: .pin_mode) ?? "none"
+            let rawPinned = try v1.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+            globalPinned = pinMode == "global"
+            pinned = pinMode == "global" ? false : (rawPinned || pinMode == "project")
+
+            let status = try v1.decodeIfPresent(String.self, forKey: .status) ?? "idle"
+            let archived = try v1.decodeIfPresent(Bool.self, forKey: .archived) ?? (status == "archived")
+            active = !archived && status != "archived"
+            activeAt = updatedAt
+            thinking = status == "thinking"
+            thinkingAt = updatedAt
+            activeTurnStartedAt = nil
+            backgroundTaskCount = 0
+
+            metadataVersion = try v1.decodeIfPresent(Int.self, forKey: .meta_rev) ?? 0
+            agentStateVersion = try v1.decodeIfPresent(Int.self, forKey: .state_rev) ?? 0
+            contentRevision = try v1.decodeIfPresent(Int.self, forKey: .content_rev)
+            let readRev = try v1.decodeIfPresent(Int.self, forKey: .read_rev) ?? 0
+            let readVer = try v1.decodeIfPresent(Int.self, forKey: .read_state_ver) ?? 0
+            let manualUnread = try v1.decodeIfPresent(Bool.self, forKey: .manual_unread) ?? false
+            readState = SessionReadState(readRevision: readRev, manualUnread: manualUnread, version: readVer)
+            let msgCount = try v1.decodeIfPresent(Int.self, forKey: .message_count) ?? 0
+            hasConversationContent = msgCount > 0
+
+            model = try v1.decodeIfPresent(String.self, forKey: .model)
+            modelReasoningEffort = nil
+            effort = try v1.decodeIfPresent(String.self, forKey: .effort)
+            serviceTier = nil
+            if let pmRaw = try v1.decodeIfPresent(String.self, forKey: .permission_mode) {
+                permissionMode = PermissionMode(rawValue: pmRaw)
+            } else {
+                permissionMode = nil
+            }
+            collaborationMode = nil
+            copilotAgentMode = nil
+            todos = nil
+            teamState = nil
+            todosUpdatedAt = 0
+            teamStateUpdatedAt = nil
+
+            // `pending_requests` holds the agentState object (`{ requests, completedRequests, ... }`).
+            if let pendingVal = try v1.decodeIfPresent(JSONValue.self, forKey: .pending_requests),
+               case .object = pendingVal,
+               let encoded = try? JSONEncoder().encode(pendingVal) {
+                agentState = try? JSONDecoder().decode(AgentState.self, from: encoded)
+            } else {
+                agentState = nil
+            }
+
+            // Merge top-level v1 session fields with the free-form `metadata` JSON object.
+            let rawMeta = (try? v1.decodeIfPresent(JSONValue.self, forKey: .metadata))?.objectValue ?? [:]
+            let directory = try v1.decodeIfPresent(String.self, forKey: .directory) ?? rawMeta["path"]?.stringValue ?? ""
+            let host = rawMeta["host"]?.stringValue ?? ""
+            let title = try v1.decodeIfPresent(String.self, forKey: .title)
+            let titleLocked = try v1.decodeIfPresent(Bool.self, forKey: .title_locked)
+            let promptTitle = try v1.decodeIfPresent(String.self, forKey: .prompt_title)
+            let machineId = try v1.decodeIfPresent(String.self, forKey: .machine_id)
+            let agent = try v1.decodeIfPresent(String.self, forKey: .agent)
+
+            var mergedObj = rawMeta
+            mergedObj["path"] = .string(directory)
+            if mergedObj["host"] == nil { mergedObj["host"] = .string(host) }
+            if let title, !title.isEmpty { mergedObj["name"] = .string(title) }
+            if let titleLocked { mergedObj["titleLocked"] = .bool(titleLocked) }
+            if let promptTitle { mergedObj["promptTitle"] = .string(promptTitle) }
+            if let machineId { mergedObj["machineId"] = .string(machineId) }
+            if let agent { mergedObj["flavor"] = .string(agent) }
+            mergedObj["lifecycleState"] = .string(archived ? "archived" : "running")
+            if case .string(let sumText)? = mergedObj["summary"] {
+                mergedObj["summary"] = .object(["text": .string(sumText), "updatedAt": .number(Double(updatedAt))])
+            }
+            if let encoded = try? JSONEncoder().encode(JSONValue.object(mergedObj)),
+               let decodedMeta = try? JSONDecoder().decode(SessionMetadata.self, from: encoded) {
+                metadata = decodedMeta
+            } else {
+                metadata = SessionMetadata(
+                    path: directory,
+                    host: host,
+                    titleLocked: titleLocked,
+                    name: title,
+                    promptTitle: promptTitle,
+                    machineId: machineId,
+                    flavor: agent,
+                    lifecycleState: archived ? "archived" : "running"
+                )
+            }
+            return
+        }
+
+        contentRevision = try legacy.decodeIfPresent(Int.self, forKey: .contentRevision)
+        readState = try legacy.decodeIfPresent(SessionReadState.self, forKey: .readState)
+        hasConversationContent = try legacy.decodeIfPresent(Bool.self, forKey: .hasConversationContent)
+        id = try legacy.decode(String.self, forKey: .id)
+        namespace = try legacy.decode(String.self, forKey: .namespace)
+        seq = try legacy.decode(Int.self, forKey: .seq)
+        createdAt = try legacy.decode(Int.self, forKey: .createdAt)
+        updatedAt = try legacy.decode(Int.self, forKey: .updatedAt)
+        lastUserMessageAt = try legacy.decodeIfPresent(Int.self, forKey: .lastUserMessageAt)
+        pinned = try legacy.decodeIfPresent(Bool.self, forKey: .pinned)
+        globalPinned = try legacy.decodeIfPresent(Bool.self, forKey: .globalPinned)
+        active = try legacy.decode(Bool.self, forKey: .active)
         // zod: `z.number().nullish().transform((value) => value ?? 0)`.
-        activeAt = try container.decodeIfPresent(Int.self, forKey: .activeAt) ?? 0
-        metadata = try container.decodeIfPresent(SessionMetadata.self, forKey: .metadata)
-        metadataVersion = try container.decode(Int.self, forKey: .metadataVersion)
-        agentState = try container.decodeIfPresent(AgentState.self, forKey: .agentState)
-        agentStateVersion = try container.decode(Int.self, forKey: .agentStateVersion)
-        thinking = try container.decode(Bool.self, forKey: .thinking)
-        thinkingAt = try container.decode(Int.self, forKey: .thinkingAt)
-        activeTurnStartedAt = try container.decodeIfPresent(Int.self, forKey: .activeTurnStartedAt)
-        backgroundTaskCount = try container.decodeIfPresent(Int.self, forKey: .backgroundTaskCount)
-        todos = try container.decodeIfPresent([TodoItem].self, forKey: .todos)
-        teamState = try container.decodeIfPresent(JSONValue.self, forKey: .teamState)
-        todosUpdatedAt = try container.decodeIfPresent(Int.self, forKey: .todosUpdatedAt)
-        teamStateUpdatedAt = try container.decodeIfPresent(Int.self, forKey: .teamStateUpdatedAt)
-        model = try container.decodeIfPresent(String.self, forKey: .model)
-        modelReasoningEffort = try container.decodeIfPresent(String.self, forKey: .modelReasoningEffort)
-        effort = try container.decodeIfPresent(String.self, forKey: .effort)
-        serviceTier = try container.decodeIfPresent(String.self, forKey: .serviceTier)
-        permissionMode = try container.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
-        collaborationMode = try container.decodeIfPresent(CodexCollaborationMode.self, forKey: .collaborationMode)
-        copilotAgentMode = try container.decodeIfPresent(CopilotAgentMode.self, forKey: .copilotAgentMode)
+        activeAt = try legacy.decodeIfPresent(Int.self, forKey: .activeAt) ?? 0
+        metadata = try legacy.decodeIfPresent(SessionMetadata.self, forKey: .metadata)
+        metadataVersion = try legacy.decode(Int.self, forKey: .metadataVersion)
+        agentState = try legacy.decodeIfPresent(AgentState.self, forKey: .agentState)
+        agentStateVersion = try legacy.decode(Int.self, forKey: .agentStateVersion)
+        thinking = try legacy.decode(Bool.self, forKey: .thinking)
+        thinkingAt = try legacy.decode(Int.self, forKey: .thinkingAt)
+        activeTurnStartedAt = try legacy.decodeIfPresent(Int.self, forKey: .activeTurnStartedAt)
+        backgroundTaskCount = try legacy.decodeIfPresent(Int.self, forKey: .backgroundTaskCount)
+        todos = try legacy.decodeIfPresent([TodoItem].self, forKey: .todos)
+        teamState = try legacy.decodeIfPresent(JSONValue.self, forKey: .teamState)
+        todosUpdatedAt = try legacy.decodeIfPresent(Int.self, forKey: .todosUpdatedAt)
+        teamStateUpdatedAt = try legacy.decodeIfPresent(Int.self, forKey: .teamStateUpdatedAt)
+        model = try legacy.decodeIfPresent(String.self, forKey: .model)
+        modelReasoningEffort = try legacy.decodeIfPresent(String.self, forKey: .modelReasoningEffort)
+        effort = try legacy.decodeIfPresent(String.self, forKey: .effort)
+        serviceTier = try legacy.decodeIfPresent(String.self, forKey: .serviceTier)
+        permissionMode = try legacy.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
+        collaborationMode = try legacy.decodeIfPresent(CodexCollaborationMode.self, forKey: .collaborationMode)
+        copilotAgentMode = try legacy.decodeIfPresent(CopilotAgentMode.self, forKey: .copilotAgentMode)
     }
 }

@@ -26,7 +26,7 @@ struct AuthManagerTests {
         #expect(Set(tokens) == [issued])
         let requests = await harness.performer.requests
         try #require(requests.count == 1)
-        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/api/auth")
+        #expect(requests[0].url?.absoluteString == "\(testHubURLString)/v1/auth/login")
         #expect(requests[0].httpMethod == "POST")
         let body = requests[0].httpBody.flatMap { String(data: $0, encoding: .utf8) }
         #expect(body == "{\"accessToken\":\"access-token\"}")

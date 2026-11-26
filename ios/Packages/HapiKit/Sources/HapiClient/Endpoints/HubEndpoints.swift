@@ -10,7 +10,7 @@ import HapiProtocol
 /// `request`/`requestVoid`/`requestBytes`.
 extension APIClient {
     public func hubSettings() async throws -> HubSettingsResponse {
-        try await request(.get, "/api/hub-settings")
+        try await request(.get, "/v1/settings")
     }
 
     /// `GET /health` (unauthenticated). Capability flags are additive.
@@ -18,7 +18,7 @@ extension APIClient {
         try await request(.get, "/health", authenticated: false)
     }
 
-    /// `POST /api/auth` (unauthenticated) — exchanges a pairing access token
+    /// `POST /v1/auth/login` (unauthenticated) — exchanges a pairing access token
     /// for a JWT. The pairing flow persists the credentials afterwards;
     /// routine refreshes go through ``AuthManager`` instead.
     public func authenticate(accessToken: String) async throws -> AuthResponse {
@@ -27,20 +27,20 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/auth",
+            "/v1/auth/login",
             body: AuthRequestBody(accessToken: accessToken),
             authenticated: false
         )
     }
 
-    /// `POST /api/visibility` — reports foreground/background transitions so
+    /// `POST /v1/visibility` — reports foreground/background transitions so
     /// the hub can suppress redundant pushes while the app is visible.
-    /// `subscriptionId` comes from the SSE `connection-changed` handshake;
+    /// `subscriptionId` comes from the SSE `connection_changed` handshake;
     /// a stale one answers 404.
     public func setVisibility(subscriptionId: String, visibility: VisibilityState) async throws {
         try await requestVoid(
             .post,
-            "/api/visibility",
+            "/v1/visibility",
             body: VisibilityRequest(subscriptionId: subscriptionId, visibility: visibility)
         )
     }

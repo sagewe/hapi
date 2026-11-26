@@ -191,4 +191,47 @@ public struct SessionSummary: Codable, Equatable, Sendable {
         self.modelReasoningEffort = modelReasoningEffort
         self.effort = effort
     }
+
+    private enum V1ProbeKeys: String, CodingKey {
+        case created_at
+        case meta_rev
+        case machine_id
+    }
+
+    public init(from decoder: Decoder) throws {
+        let legacy = try decoder.container(keyedBy: CodingKeys.self)
+        let v1Probe = try decoder.container(keyedBy: V1ProbeKeys.self)
+        if !legacy.contains(.metadataVersion)
+            && (v1Probe.contains(.created_at) || v1Probe.contains(.meta_rev) || v1Probe.contains(.machine_id)) {
+            let full = try Session(from: decoder)
+            self = SummaryPatching.toSessionSummary(full)
+            return
+        }
+        contentRevision = try legacy.decodeIfPresent(Int.self, forKey: .contentRevision)
+        readState = try legacy.decodeIfPresent(SessionReadState.self, forKey: .readState)
+        hasConversationContent = try legacy.decodeIfPresent(Bool.self, forKey: .hasConversationContent)
+        id = try legacy.decode(String.self, forKey: .id)
+        active = try legacy.decode(Bool.self, forKey: .active)
+        thinking = try legacy.decode(Bool.self, forKey: .thinking)
+        activeAt = try legacy.decode(Int.self, forKey: .activeAt)
+        createdAt = try legacy.decodeIfPresent(Int.self, forKey: .createdAt)
+        lastUserMessageAt = try legacy.decodeIfPresent(Int.self, forKey: .lastUserMessageAt)
+        updatedAt = try legacy.decode(Int.self, forKey: .updatedAt)
+        pinned = try legacy.decodeIfPresent(Bool.self, forKey: .pinned)
+        globalPinned = try legacy.decodeIfPresent(Bool.self, forKey: .globalPinned)
+        metadata = try legacy.decodeIfPresent(SessionSummaryMetadata.self, forKey: .metadata)
+        metadataVersion = try legacy.decode(Int.self, forKey: .metadataVersion)
+        agentStateVersion = try legacy.decode(Int.self, forKey: .agentStateVersion)
+        todosUpdatedAt = try legacy.decode(Int.self, forKey: .todosUpdatedAt)
+        todoProgress = try legacy.decodeIfPresent(TodoProgress.self, forKey: .todoProgress)
+        pendingRequestsCount = try legacy.decode(Int.self, forKey: .pendingRequestsCount)
+        pendingRequestKinds = try legacy.decode([PendingRequestKind].self, forKey: .pendingRequestKinds)
+        pendingRequests = try legacy.decode([PendingRequest].self, forKey: .pendingRequests)
+        backgroundTaskCount = try legacy.decode(Int.self, forKey: .backgroundTaskCount)
+        futureScheduledMessageCount = try legacy.decode(Int.self, forKey: .futureScheduledMessageCount)
+        nextScheduledAt = try legacy.decodeIfPresent(Int.self, forKey: .nextScheduledAt)
+        model = try legacy.decodeIfPresent(String.self, forKey: .model)
+        modelReasoningEffort = try legacy.decodeIfPresent(String.self, forKey: .modelReasoningEffort)
+        effort = try legacy.decodeIfPresent(String.self, forKey: .effort)
+    }
 }

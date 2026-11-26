@@ -270,10 +270,10 @@ struct AgentModelEndpointTests {
 
         let urls = await performer.requests.compactMap { $0.url }
         #expect(urls.map(\.path) == [
-            "/api/machines/mach 1/kimi-models",
-            "/api/machines/m1/opencode-model-variants",
-            "/api/sessions/s1/dsh-models",
-            "/api/sessions/s1/grok-reasoning-effort-options",
+            "/v1/machines/mach 1/kimi-models",
+            "/v1/machines/m1/opencode-model-variants",
+            "/v1/sessions/s1/dsh-models",
+            "/v1/sessions/s1/grok-reasoning-effort-options",
         ])
         #expect(urls.first.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems }
             == [URLQueryItem(name: "cwd", value: "/repo dir")])

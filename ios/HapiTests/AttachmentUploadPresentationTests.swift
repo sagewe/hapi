@@ -59,7 +59,7 @@ final class AttachmentUploadPresentationTests: XCTestCase {
         func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
             let path = request.url!.path
             let id = path.split(separator: "/").dropFirst(2).first.map(String.init) ?? ""
-            if path.hasSuffix("/upload") { attempts += 1; uploadSessions.append(id) }
+            if path.hasSuffix("/uploads") { attempts += 1; uploadSessions.append(id) }
             let status: Int
             let body: String
             if path.hasSuffix("/resume") {
@@ -68,7 +68,7 @@ final class AttachmentUploadPresentationTests: XCTestCase {
                 status = resumeStatus
                 resumed.insert(id)
                 body = status == 200 ? "{\"sessionId\":\"\(target ?? id)\"}" : #"{"error":"Machine offline"}"#
-            } else if path.hasSuffix("/upload"), id.hasSuffix("-inactive"), !resumed.contains(id) {
+            } else if path.hasSuffix("/uploads"), id.hasSuffix("-inactive"), !resumed.contains(id) {
                 status = 409
                 body = #"{"error":"Session is inactive","code":"session_inactive"}"#
             } else if path.contains("-retry/"), attempts == 1 {
@@ -76,7 +76,7 @@ final class AttachmentUploadPresentationTests: XCTestCase {
                 body = #"{"success":false,"error":"Fixture upload failure — retry should succeed"}"#
             } else {
                 status = 200
-                body = path == "/api/sessions" ? #"{"sessions":[]}"# : path.hasSuffix("/upload")
+                body = path == "/v1/sessions" ? #"{"sessions":[]}"# : path.hasSuffix("/uploads")
                     ? #"{"success":true,"path":"/fixture/uploaded"}"#
                     : #"{"success":true}"#
             }

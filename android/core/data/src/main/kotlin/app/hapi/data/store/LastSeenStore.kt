@@ -125,7 +125,12 @@ class LastSeenStore(
             val pending = current.pending[sessionId]
             val manualUnread = server.manualUnread && pending?.request?.expectedVersion != server.version
             if (seen >= revision && !manualUnread) return@commit current
-            val request = SessionReadStateRequest(type = "read", readRevision = maxOf(seen, revision), expectedVersion = serverState?.version ?: server.version)
+            val request = SessionReadStateRequest(
+                type = "read",
+                readRevision = maxOf(seen, revision),
+                expectedVersion = serverState?.version ?: server.version,
+                manualUnread = false,
+            )
             current.copy(
                 lastSeen = current.lastSeen + (sessionId to maxOf(seen, revision)),
                 server = current.server + (sessionId to server),

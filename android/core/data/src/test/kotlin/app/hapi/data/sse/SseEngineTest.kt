@@ -123,7 +123,7 @@ class SseEngineTest {
         h.engine.events(SseSubscriptionKey.Global).test {
             h.engine.subscribe(SseSubscriptionKey.Global)
             val conn = h.awaitOpen()
-            assertTrue(conn.url.startsWith("https://hub.test/api/events?"), conn.url)
+            assertTrue(conn.url.startsWith("https://hub.test/v1/events?"), conn.url)
             assertContains(conn.url, "token=jwt-1")
             assertContains(conn.url, "visibility=visible")
             assertContains(conn.url, "all=true")

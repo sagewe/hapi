@@ -111,7 +111,7 @@ final class SessionConfigTests: XCTestCase {
         XCTAssertEqual(model.permission, .default)
         try await configEventually { !model.isApplying }
         let posts = await harness.http.posts
-        XCTAssertEqual(posts.first?.path, "/api/sessions/config/collaboration-mode")
+        XCTAssertEqual(posts.first?.path, "/v1/sessions/config/collaboration-mode")
         XCTAssertEqual(posts.first?.body, #"{"mode":"plan"}"#)
         harness.store.applySessionEvent(.sessionUpdated(namespace: nil, sessionId: "config", data: .patch(SessionPatch(collaborationMode: .default))))
         XCTAssertEqual(model.collaborationMode, .default)
@@ -217,7 +217,7 @@ final class SessionConfigTests: XCTestCase {
         model.selectEffort("high")
         try await configEventually { await harness.http.posts.count == 1 }
         let posts = await harness.http.posts
-        XCTAssertEqual(posts.first?.path, "/api/sessions/config/model")
+        XCTAssertEqual(posts.first?.path, "/v1/sessions/config")
         XCTAssertEqual(posts.first?.body, #"{"model":"opus"}"#)
 
         await harness.http.releasePosts()
@@ -226,7 +226,7 @@ final class SessionConfigTests: XCTestCase {
         try await configEventually { !model.isApplying }
         let finalPosts = await harness.http.posts
         XCTAssertEqual(finalPosts.count, 2)
-        XCTAssertEqual(finalPosts.last?.path, "/api/sessions/config/effort")
+        XCTAssertEqual(finalPosts.last?.path, "/v1/sessions/config")
     }
 
     func testModelSwitchUpdatesEffortMenuWithoutSilentlyChangingStaleEffort() async throws {
@@ -247,8 +247,8 @@ final class SessionConfigTests: XCTestCase {
         try await configEventually { !model.isApplying }
         let posts = await harness.http.posts
         XCTAssertEqual(posts.count, 2)
-        XCTAssertEqual(posts.last?.path, "/api/sessions/config/model-reasoning-effort")
-        XCTAssertEqual(posts.last?.body, #"{"modelReasoningEffort":"low"}"#)
+        XCTAssertEqual(posts.last?.path, "/v1/sessions/config")
+        XCTAssertEqual(posts.last?.body, #"{"effort":"low"}"#)
         XCTAssertEqual(model.currentEffort, "low")
     }
 
@@ -346,7 +346,7 @@ final class SessionConfigTests: XCTestCase {
         model.selectCollaborationMode(.plan)
         try await configEventually { await harness.http.posts.count == 1 }
         let firstPosts = await harness.http.posts
-        XCTAssertEqual(firstPosts.first?.path, "/api/sessions/config/service-tier")
+        XCTAssertEqual(firstPosts.first?.path, "/v1/sessions/config/service-tier")
         XCTAssertEqual(firstPosts.first?.body, #"{"serviceTier":"fast"}"#)
 
         await harness.http.releasePosts()
@@ -978,7 +978,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
                 )
             )
             data = try HapiJSON.encoder.encode(settings)
-        } else if request.httpMethod == "POST" {
+        } else if request.httpMethod == "POST" || request.httpMethod == "PATCH" {
             posts.append(Post(path: path, body: request.httpBody.map { String(decoding: $0, as: UTF8.self) }))
             if postsHeld { await withCheckedContinuation { postWaiters.append($0) } }
             if !changesRejected, path.hasSuffix("/service-tier"),
@@ -994,7 +994,7 @@ actor SessionConfigTestHTTP: HTTPPerforming {
                 success: !modelsFailure, models: modelsFailure ? nil : models,
                 error: modelsFailure ? "Catalog unavailable" : nil
             ))
-        } else if path == "/api/sessions/config" {
+        } else if path == "/v1/sessions/config" {
             data = try HapiJSON.encoder.encode(SessionResponse(session: detail))
         } else {
             throw URLError(.unsupportedURL)

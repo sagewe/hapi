@@ -2,8 +2,8 @@ import Foundation
 import HapiProtocol
 import Testing
 
-/// Decoding of the owner-only dashboard payloads (`GET /api/usage/summary`,
-/// `GET /api/storage/sqlite`) — shaped like `hub/src/sync/usageService.ts`
+/// Decoding of the owner-only dashboard payloads (`GET /v1/usage/summary`,
+/// `GET /v1/storage/sqlite`) — shaped like `hub/src/sync/usageService.ts`
 /// output: sparse ascending `daily`, desc-sorted `byAgent`/`byModel`,
 /// `range.from = null` on `range=all`, unknown keys ignored. Transcribed
 /// from the Android `UsageDecodingTest`.

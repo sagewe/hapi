@@ -11,22 +11,25 @@ import HapiProtocol
 /// "reset to default" — matching the reference client's `JSON.stringify`
 /// output; an omitted key would fail the hub's schema.
 extension APIClient {
-    /// `POST /api/sessions/:id/permission-mode`.
+    /// `PATCH /v1/sessions/:id` (`permission_mode`).
     public func setPermissionMode(sessionId: String, mode: PermissionMode) async throws {
         struct PermissionModeRequest: Encodable {
-            let mode: PermissionMode
+            let permissionMode: PermissionMode
+            enum CodingKeys: String, CodingKey {
+                case permissionMode = "permission_mode"
+            }
         }
         try await requestVoid(
-            .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/permission-mode",
-            body: PermissionModeRequest(mode: mode)
+            .patch,
+            "/v1/sessions/\(encodePathComponent(sessionId))",
+            body: PermissionModeRequest(permissionMode: mode)
         )
     }
 
-    /// `POST /api/sessions/:id/model` (`nil` resets to the default model).
+    /// `PATCH /v1/sessions/:id` (`model`, optional `effort`).
     public func setModel(sessionId: String, model: ModelSelection?, effort: String? = nil) async throws {
         struct SetModelRequest: Encodable {
-            let model: ModelSelection?
+            let model: String?
             let effort: String?
 
             enum CodingKeys: String, CodingKey {
@@ -43,14 +46,19 @@ extension APIClient {
                 }
             }
         }
+        let modelId: String? = switch model {
+        case .id(let id): id
+        case .catalogReference(let provider, let id): "\(provider)/\(id)"
+        case nil: nil
+        }
         try await requestVoid(
-            .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/model",
-            body: SetModelRequest(model: model, effort: effort)
+            .patch,
+            "/v1/sessions/\(encodePathComponent(sessionId))",
+            body: SetModelRequest(model: modelId, effort: effort)
         )
     }
 
-    /// `POST /api/sessions/:id/effort` — claude, grok, pi.
+    /// `PATCH /v1/sessions/:id` (`effort`).
     public func setEffort(sessionId: String, effort: String?) async throws {
         struct SetEffortRequest: Encodable {
             let effort: String?
@@ -69,39 +77,38 @@ extension APIClient {
             }
         }
         try await requestVoid(
-            .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/effort",
+            .patch,
+            "/v1/sessions/\(encodePathComponent(sessionId))",
             body: SetEffortRequest(effort: effort)
         )
     }
 
-    /// `POST /api/sessions/:id/model-reasoning-effort` — codex, opencode
-    /// (remote-only).
+    /// `PATCH /v1/sessions/:id` (`effort` for codex/opencode reasoning effort).
     public func setModelReasoningEffort(sessionId: String, modelReasoningEffort: String?) async throws {
-        struct SetModelReasoningEffortRequest: Encodable {
-            let modelReasoningEffort: String?
+        struct SetEffortRequest: Encodable {
+            let effort: String?
 
             enum CodingKeys: String, CodingKey {
-                case modelReasoningEffort
+                case effort
             }
 
             func encode(to encoder: Encoder) throws {
                 var container = encoder.container(keyedBy: CodingKeys.self)
-                if let modelReasoningEffort {
-                    try container.encode(modelReasoningEffort, forKey: .modelReasoningEffort)
+                if let effort {
+                    try container.encode(effort, forKey: .effort)
                 } else {
-                    try container.encodeNil(forKey: .modelReasoningEffort)
+                    try container.encodeNil(forKey: .effort)
                 }
             }
         }
         try await requestVoid(
-            .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/model-reasoning-effort",
-            body: SetModelReasoningEffortRequest(modelReasoningEffort: modelReasoningEffort)
+            .patch,
+            "/v1/sessions/\(encodePathComponent(sessionId))",
+            body: SetEffortRequest(effort: modelReasoningEffort)
         )
     }
 
-    /// `POST /api/sessions/:id/service-tier` — codex (remote-only).
+    /// `POST /v1/sessions/:id/service-tier` — codex (remote-only).
     public func setServiceTier(sessionId: String, serviceTier: ServiceTier?) async throws {
         struct SetServiceTierRequest: Encodable {
             let serviceTier: ServiceTier?
@@ -121,31 +128,31 @@ extension APIClient {
         }
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/service-tier",
+            "/v1/sessions/\(encodePathComponent(sessionId))/service-tier",
             body: SetServiceTierRequest(serviceTier: serviceTier)
         )
     }
 
-    /// `POST /api/sessions/:id/collaboration-mode` — codex (remote-only).
+    /// `POST /v1/sessions/:id/collaboration-mode` — codex (remote-only).
     public func setCollaborationMode(sessionId: String, mode: CodexCollaborationMode) async throws {
         struct CollaborationModeRequest: Encodable {
             let mode: CodexCollaborationMode
         }
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/collaboration-mode",
+            "/v1/sessions/\(encodePathComponent(sessionId))/collaboration-mode",
             body: CollaborationModeRequest(mode: mode)
         )
     }
 
-    /// `POST /api/sessions/:id/copilot-agent-mode` — copilot (remote-only).
+    /// `POST /v1/sessions/:id/copilot-agent-mode` — copilot (remote-only).
     public func setCopilotAgentMode(sessionId: String, mode: CopilotAgentMode) async throws {
         struct CopilotAgentModeRequest: Encodable {
             let mode: CopilotAgentMode
         }
         try await requestVoid(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/copilot-agent-mode",
+            "/v1/sessions/\(encodePathComponent(sessionId))/copilot-agent-mode",
             body: CopilotAgentModeRequest(mode: mode)
         )
     }

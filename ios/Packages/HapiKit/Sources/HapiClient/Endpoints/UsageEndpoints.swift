@@ -12,14 +12,14 @@ extension APIClient {
         range: String = "7d",
         timeZone: String = "UTC"
     ) async throws -> UsageSummaryResponse {
-        try await request(.get, "/api/usage/summary", query: [
+        try await request(.get, "/v1/usage/summary", query: [
             URLQueryItem(name: "range", value: range),
             URLQueryItem(name: "timeZone", value: timeZone),
         ])
     }
 
-    /// `GET /api/storage/sqlite` — hub db/wal/shm file sizes.
+    /// `GET /v1/storage/sqlite` — hub db/wal/shm file sizes.
     public func sqliteStorageUsage() async throws -> SqliteStorageUsageResponse {
-        try await request(.get, "/api/storage/sqlite")
+        try await request(.get, "/v1/storage/sqlite")
     }
 }

@@ -43,8 +43,8 @@ public struct TranscriptionProviderInfo: Codable, Equatable, Sendable {
     }
 }
 
-/// Body of `GET /api/voice/asr-config` — streaming ASR capability backed by
-/// Home Model Gateway (`WS /api/voice/asr-ws`).
+/// Body of `GET /v1/voice/asr-config` — streaming ASR capability backed by
+/// Home Model Gateway (`WS /v1/voice/asr-ws`).
 public struct VoiceAsrConfigResponse: Codable, Equatable, Sendable {
     public var available: Bool
     public var wsUrl: String?
@@ -61,6 +61,33 @@ public struct VoiceAsrConfigResponse: Codable, Equatable, Sendable {
         self.wsUrl = wsUrl
         self.sampleRate = sampleRate
         self.model = model
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case available
+        case wsUrl
+        case ws_url
+        case sampleRate
+        case sample_rate
+        case model
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        available = try c.decode(Bool.self, forKey: .available)
+        wsUrl = try c.decodeIfPresent(String.self, forKey: .ws_url)
+            ?? c.decodeIfPresent(String.self, forKey: .wsUrl)
+        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sample_rate)
+            ?? c.decodeIfPresent(Int.self, forKey: .sampleRate)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(available, forKey: .available)
+        try c.encodeIfPresent(wsUrl, forKey: .wsUrl)
+        try c.encodeIfPresent(sampleRate, forKey: .sampleRate)
+        try c.encodeIfPresent(model, forKey: .model)
     }
 }
 

@@ -14,7 +14,7 @@ class SseConnectionTest {
             visibility = "visible",
             lastEventId = null,
         )
-        assertEquals("https://hub.test/api/events?token=tok+en%2Bx&visibility=visible&all=true", url)
+        assertEquals("https://hub.test/v1/events?token=tok+en%2Bx&visibility=visible&all=true", url)
     }
 
     @Test
@@ -27,7 +27,7 @@ class SseConnectionTest {
             lastEventId = "018f3c2a:412:9b1f00aa",
         )
         assertEquals(
-            "https://hub.test/api/events?token=t&visibility=hidden&sessionId=s-1&lastEventId=018f3c2a%3A412%3A9b1f00aa",
+            "https://hub.test/v1/events?token=t&visibility=hidden&sessionId=s-1&lastEventId=018f3c2a%3A412%3A9b1f00aa",
             url,
         )
     }

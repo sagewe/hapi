@@ -26,7 +26,7 @@ struct SessionExportTests {
         #expect(text.hasSuffix("}\n"))
         #expect(text.contains("\"path\" : \"/repo/app\""))
         let path = await performer.requests.first?.url?.path
-        #expect(path == "/api/sessions/abcdef123456/export")
+        #expect(path == "/v1/sessions/abcdef123456/export")
     }
 
     @Test func markdownIncludesFullPayloadAndScratchlistWithoutChangingJSON() throws {

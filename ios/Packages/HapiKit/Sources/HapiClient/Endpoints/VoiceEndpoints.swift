@@ -9,16 +9,16 @@ extension APIClient {
     /// `standard`; an empty list means no transcription provider is
     /// configured.
     public func transcriptionProviders() async throws -> TranscriptionProvidersResponse {
-        try await request(.get, "/api/voice/transcription/providers")
+        try await request(.get, "/v1/voice/transcription/providers")
     }
 
-    /// `GET /api/voice/asr-config` — checks whether Home Model Gateway
-    /// streaming ASR (`WS /api/voice/asr-ws`) is configured on the hub.
+    /// `GET /v1/voice/asr-config` — checks whether Home Model Gateway
+    /// streaming ASR (`WS /v1/voice/asr-ws`) is configured on the hub.
     public func voiceAsrConfig() async throws -> VoiceAsrConfigResponse {
-        try await request(.get, "/api/voice/asr-config")
+        try await request(.get, "/v1/voice/asr-config")
     }
 
-    /// Builds `wss://.../api/voice/asr-ws?sample_rate=...` from `baseURL`
+    /// Builds `wss://.../v1/voice/asr-ws?sample_rate=...` from `baseURL`
     /// so TLS is preserved behind reverse proxies / `tunwg` relays.
     public func voiceAsrWebSocketURL(sampleRate: Int = 16_000, model: String? = nil, context: VoiceRecognitionContext? = nil) -> URL? {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
@@ -30,7 +30,7 @@ extension APIClient {
             with: "",
             options: .regularExpression
         )
-        components.path = "\(trimmedBasePath)/api/voice/asr-ws"
+        components.path = "\(trimmedBasePath)/v1/voice/asr-ws"
         var items = [URLQueryItem(name: "sample_rate", value: String(sampleRate))]
         if let model, !model.isEmpty {
             items.append(URLQueryItem(name: "model", value: model))
@@ -70,7 +70,7 @@ extension APIClient {
         }
         return try await request(
             .post,
-            "/api/voice/transcription",
+            "/v1/voice/transcription",
             rawBody: form.encodedBody(),
             contentType: form.contentType
         )
@@ -111,7 +111,7 @@ extension APIClient {
         guard context.sessionId != nil else { return }
         struct Body: Encodable { let sessionId: String?; let draft: String; let recordingId: String }
         struct Result: Decodable { let ok: Bool }
-        let _: Result = try await request(.post, "/api/voice/asr-context",
+        let _: Result = try await request(.post, "/v1/voice/asr-context",
             body: Body(sessionId: context.sessionId, draft: context.draft, recordingId: context.recordingId))
     }
 }

@@ -54,17 +54,221 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
         self.deliveryState = deliveryState
     }
 
+    private enum V1CodingKeys: String, CodingKey {
+        case id
+        case seq
+        case local_id
+        case role
+        case content_rev
+        case invoked_at
+        case delivery_state
+        case blocks
+        case meta
+        case created_at
+    }
+
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        contentRevision = try container.decodeIfPresent(Int.self, forKey: .contentRevision)
-        id = try container.decode(String.self, forKey: .id)
-        seq = try container.decodeIfPresent(Int.self, forKey: .seq)
-        localId = try container.decodeIfPresent(String.self, forKey: .localId)
-        content = try container.decodeIfPresent(JSONValue.self, forKey: .content) ?? .null
-        createdAt = try container.decode(Int.self, forKey: .createdAt)
-        invokedAt = try container.decodeIfPresent(Int.self, forKey: .invokedAt)
-        scheduledAt = try container.decodeIfPresent(Int.self, forKey: .scheduledAt)
-        deliveryState = try container.decodeIfPresent(String.self, forKey: .deliveryState)
+        let legacy = try decoder.container(keyedBy: CodingKeys.self)
+        let v1 = try decoder.container(keyedBy: V1CodingKeys.self)
+
+        // Native Reins v1 `StoredMessage` carries `role` + `blocks` + `created_at`
+        // instead of the legacy `content` role-wrapped envelope.
+        if !legacy.contains(.content) && (v1.contains(.blocks) || v1.contains(.created_at)) {
+            id = try v1.decode(String.self, forKey: .id)
+            seq = try v1.decodeIfPresent(Int.self, forKey: .seq)
+            localId = try v1.decodeIfPresent(String.self, forKey: .local_id)
+            contentRevision = try v1.decodeIfPresent(Int.self, forKey: .content_rev)
+            createdAt = try v1.decode(Int.self, forKey: .created_at)
+            invokedAt = try v1.decodeIfPresent(Int.self, forKey: .invoked_at)
+            scheduledAt = nil
+            deliveryState = try v1.decodeIfPresent(String.self, forKey: .delivery_state)
+
+            let role = try v1.decodeIfPresent(String.self, forKey: .role) ?? "assistant"
+            let blocks = (try v1.decodeIfPresent([JSONValue].self, forKey: .blocks)) ?? []
+            let meta = try v1.decodeIfPresent(JSONValue.self, forKey: .meta)
+            content = Self.synthesizeContentEnvelope(id: id, role: role, blocks: blocks, meta: meta)
+            return
+        }
+
+        contentRevision = try legacy.decodeIfPresent(Int.self, forKey: .contentRevision)
+        id = try legacy.decode(String.self, forKey: .id)
+        seq = try legacy.decodeIfPresent(Int.self, forKey: .seq)
+        localId = try legacy.decodeIfPresent(String.self, forKey: .localId)
+        content = try legacy.decodeIfPresent(JSONValue.self, forKey: .content) ?? .null
+        createdAt = try legacy.decode(Int.self, forKey: .createdAt)
+        invokedAt = try legacy.decodeIfPresent(Int.self, forKey: .invokedAt)
+        scheduledAt = try legacy.decodeIfPresent(Int.self, forKey: .scheduledAt)
+        deliveryState = try legacy.decodeIfPresent(String.self, forKey: .deliveryState)
+    }
+
+    private static func synthesizeContentEnvelope(
+        id: String,
+        role: String,
+        blocks: [JSONValue],
+        meta: JSONValue?
+    ) -> JSONValue {
+        switch role {
+        case "user":
+            var texts: [String] = []
+            var attachments: [JSONValue] = []
+            for blk in blocks {
+                guard case .object(let obj) = blk, let kind = obj["type"]?.stringValue else { continue }
+                switch kind {
+                case "text":
+                    if let t = obj["text"]?.stringValue { texts.append(t) }
+                case "attachment":
+                    let attId = obj["id"]?.stringValue ?? ""
+                    let filename = obj["filename"]?.stringValue ?? ""
+                    let mimeType = obj["mimeType"]?.stringValue ?? obj["mime_type"]?.stringValue ?? "application/octet-stream"
+                    let size = obj["size"]?.numberValue ?? 0
+                    let path = obj["previewUrl"]?.stringValue ?? obj["preview_url"]?.stringValue ?? filename
+                    var attObj: [String: JSONValue] = [
+                        "id": .string(attId),
+                        "filename": .string(filename),
+                        "mimeType": .string(mimeType),
+                        "size": .number(size),
+                        "path": .string(path),
+                    ]
+                    if let preview = obj["previewUrl"]?.stringValue ?? obj["preview_url"]?.stringValue {
+                        attObj["previewUrl"] = .string(preview)
+                    }
+                    attachments.append(.object(attObj))
+                default:
+                    break
+                }
+            }
+            var inner: [String: JSONValue] = [
+                "type": .string("text"),
+                "text": .string(texts.joined(separator: "\n")),
+            ]
+            if !attachments.isEmpty {
+                inner["attachments"] = .array(attachments)
+            }
+            var envelope: [String: JSONValue] = [
+                "role": .string("user"),
+                "content": .object(inner),
+            ]
+            if let meta, meta != .null { envelope["meta"] = meta }
+            return .object(envelope)
+
+        case "assistant":
+            if blocks.count == 1,
+               case .object(let obj) = blocks[0],
+               obj["type"]?.stringValue == "generated_media",
+               let mediaId = obj["id"]?.stringValue,
+               let filename = obj["filename"]?.stringValue {
+                let mimeType = obj["mime_type"]?.stringValue ?? obj["mimeType"]?.stringValue ?? "image/png"
+                return .object([
+                    "role": .string("agent"),
+                    "content": .object([
+                        "type": .string("codex"),
+                        "data": .object([
+                            "type": .string("generated-image"),
+                            "id": .string(id),
+                            "imageId": .string(mediaId),
+                            "fileName": .string(filename),
+                            "mimeType": .string(mimeType),
+                        ]),
+                    ]),
+                ])
+            }
+            var contentBlocks: [JSONValue] = []
+            for blk in blocks {
+                guard case .object(let obj) = blk, let kind = obj["type"]?.stringValue else { continue }
+                switch kind {
+                case "text":
+                    if let t = obj["text"]?.stringValue {
+                        contentBlocks.append(.object(["type": .string("text"), "text": .string(t)]))
+                    }
+                case "thinking":
+                    if let t = obj["thinking"]?.stringValue {
+                        contentBlocks.append(.object(["type": .string("thinking"), "thinking": .string(t)]))
+                    }
+                case "tool_use":
+                    contentBlocks.append(.object([
+                        "type": .string("tool_use"),
+                        "id": obj["id"] ?? .string(""),
+                        "name": obj["name"] ?? .string(""),
+                        "input": obj["input"] ?? .object([:]),
+                    ]))
+                default:
+                    break
+                }
+            }
+            var envelope: [String: JSONValue] = [
+                "role": .string("agent"),
+                "content": .object([
+                    "type": .string("output"),
+                    "data": .object([
+                        "type": .string("assistant"),
+                        "message": .object([
+                            "role": .string("assistant"),
+                            "content": .array(contentBlocks),
+                        ]),
+                    ]),
+                ]),
+            ]
+            if let meta, meta != .null { envelope["meta"] = meta }
+            return .object(envelope)
+
+        case "tool":
+            var contentBlocks: [JSONValue] = []
+            var firstToolName: String?
+            var firstReceipt: JSONValue?
+            for blk in blocks {
+                guard case .object(let obj) = blk, obj["type"]?.stringValue == "tool_result" else { continue }
+                if firstToolName == nil, let name = obj["name"]?.stringValue {
+                    firstToolName = name
+                }
+                if firstReceipt == nil, let receipt = obj["receipt"], receipt != .null {
+                    firstReceipt = receipt
+                }
+                var outObj: [String: JSONValue] = [
+                    "type": .string("tool_result"),
+                    "tool_use_id": obj["tool_use_id"] ?? .string(""),
+                    "content": obj["content"] ?? .string(""),
+                    "is_error": obj["is_error"] ?? .bool(false),
+                ]
+                if let receipt = obj["receipt"], receipt != .null {
+                    outObj["tool_receipt"] = receipt
+                }
+                contentBlocks.append(.object(outObj))
+            }
+            var mergedMeta = meta?.objectValue ?? [:]
+            if let firstToolName, mergedMeta["toolName"] == nil {
+                mergedMeta["toolName"] = .string(firstToolName)
+            }
+            if let firstReceipt, mergedMeta["toolReceipt"] == nil {
+                mergedMeta["toolReceipt"] = firstReceipt
+            }
+            return .object([
+                "role": .string("agent"),
+                "content": .object([
+                    "type": .string("output"),
+                    "data": .object([
+                        "type": .string("user"),
+                        "message": .object([
+                            "role": .string("user"),
+                            "content": .array(contentBlocks),
+                        ]),
+                    ]),
+                ]),
+                "meta": .object(mergedMeta),
+            ])
+
+        default: // "system" or other
+            let texts = blocks.compactMap { blk -> String? in
+                guard case .object(let obj) = blk, obj["type"]?.stringValue == "text" else { return nil }
+                return obj["text"]?.stringValue
+            }
+            return .object([
+                "role": .string("system"),
+                "content": .object([
+                    "type": .string("text"),
+                    "text": .string(texts.joined(separator: "\n")),
+                ]),
+            ])
+        }
     }
 }
 

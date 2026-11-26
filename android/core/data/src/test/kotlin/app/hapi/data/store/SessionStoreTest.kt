@@ -205,9 +205,9 @@ class SessionStoreTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val body = when {
-                    request.path!!.startsWith("/api/sessions/s1") ->
+                    request.path!!.startsWith("/v1/sessions/s1") ->
                         """{"session":${fullSessionJson(session("s1", updatedAt = 900))}}"""
-                    request.path!!.startsWith("/api/sessions") ->
+                    request.path!!.startsWith("/v1/sessions") ->
                         sessionsResponseJson(summary("s1", updatedAt = 900))
                     else -> return MockResponse().setResponseCode(404)
                 }
@@ -320,8 +320,8 @@ class SessionStoreTest {
         server.takeRequest() // GET /sessions/s1
         val patch = server.takeRequest()
         assertEquals("PATCH", patch.method)
-        assertEquals("/api/sessions/s1", patch.path)
-        assertEquals("""{"name":"New name"}""", patch.body.readUtf8())
+        assertEquals("/v1/sessions/s1", patch.path)
+        assertEquals("""{"title":"New name","title_locked":true}""", patch.body.readUtf8())
         // The fixture detail has no metadata; the store must not invent one.
         assertNull(store.currentDetail("s1")!!.metadata)
     }
@@ -352,7 +352,7 @@ class SessionStoreTest {
         server.takeRequest() // GET /sessions/s1
         val delete = server.takeRequest()
         assertEquals("DELETE", delete.method)
-        assertEquals("/api/sessions/s2", delete.path)
+        assertEquals("/v1/sessions/s2", delete.path)
 
         server.enqueueJson("""{"error":"session is active","code":"session_active"}""", code = 409)
         assertFailsWith<Exception> { store.deleteSession("s1") }

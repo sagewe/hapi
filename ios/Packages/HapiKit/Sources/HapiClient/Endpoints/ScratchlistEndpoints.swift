@@ -7,12 +7,12 @@ import HapiProtocol
 /// ``scratchlistEntries(sessionId:)``, never data
 /// (see `SessionListStore.onScratchlistInvalidation`).
 extension APIClient {
-    /// `GET /api/sessions/:id/scratchlist` — all entries, `createdAt DESC`.
+    /// `GET /v1/sessions/:id/scratchlist` — all entries, `createdAt DESC`.
     public func scratchlistEntries(sessionId: String) async throws -> ScratchlistEntriesResponse {
-        try await request(.get, "/api/sessions/\(encodePathComponent(sessionId))/scratchlist")
+        try await request(.get, "/v1/sessions/\(encodePathComponent(sessionId))/scratchlist")
     }
 
-    /// `POST /api/sessions/:id/scratchlist` — 201 with the canonical row; 200
+    /// `POST /v1/sessions/:id/scratchlist` — 201 with the canonical row; 200
     /// with the existing row when `entryId` is already known (idempotent
     /// retry); 409 `scratchlist_at_cap` at 200 entries.
     public func createScratchlistEntry(
@@ -21,12 +21,12 @@ extension APIClient {
     ) async throws -> ScratchlistEntryResponse {
         try await request(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist",
+            "/v1/sessions/\(encodePathComponent(sessionId))/scratchlist",
             body: body
         )
     }
 
-    /// `PUT /api/sessions/:id/scratchlist/:entryId` — 404 when the entry is gone.
+    /// `PUT /v1/sessions/:id/scratchlist/:entryId` — 404 when the entry is gone.
     public func updateScratchlistEntry(
         sessionId: String,
         entryId: String,
@@ -34,49 +34,59 @@ extension APIClient {
     ) async throws -> ScratchlistEntryResponse {
         try await request(
             .put,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/\(encodePathComponent(entryId))",
+            "/v1/sessions/\(encodePathComponent(sessionId))/scratchlist/\(encodePathComponent(entryId))",
             body: body
         )
     }
 
-    /// `DELETE /api/sessions/:id/scratchlist/:entryId` — 404 when already gone.
+    /// `DELETE /v1/sessions/:id/scratchlist/:entryId` — 404 when already gone.
     public func deleteScratchlistEntry(sessionId: String, entryId: String) async throws {
         try await requestVoid(
             .delete,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/\(encodePathComponent(entryId))"
+            "/v1/sessions/\(encodePathComponent(sessionId))/scratchlist/\(encodePathComponent(entryId))"
         )
     }
 
-    /// `GET /api/sessions/:id/scratchlist/limits` — attachment size/count/byte
+    /// `GET /v1/sessions/:id/scratchlist/limits` — attachment size/count/byte
     /// budgets (``ScratchlistAttachmentLimits``).
     public func scratchlistLimits(sessionId: String) async throws -> ScratchlistLimitsResponse {
         try await request(
             .get,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/limits"
+            "/v1/sessions/\(encodePathComponent(sessionId))/scratchlist/limits"
         )
     }
 
-    /// `POST /api/sessions/:id/scratchlist/upload` — JSON + base64 (**not**
-    /// multipart), the message-upload body shape. Decoded size over
-    /// `limits.maxBytesPerFile` → 413 `scratchlist_attachment_too_large`.
+    /// `POST /v1/sessions/:id/uploads` — JSON + base64 (**not**
+    /// multipart). Adapts Reins v1 `{success, path}` into `ScratchlistAttachment`
+    /// when `attachment` is not directly returned.
     public func uploadScratchlistAttachment(
         sessionId: String,
         filename: String,
         data: Data,
         mimeType: String
     ) async throws -> ScratchlistUploadResponse {
-        try await request(
+        var response: ScratchlistUploadResponse = try await request(
             .post,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/upload",
+            "/v1/sessions/\(encodePathComponent(sessionId))/uploads",
             body: UploadFileRequest(
                 filename: filename,
                 content: data.base64EncodedString(),
                 mimeType: mimeType
             )
         )
+        if response.attachment == nil, response.success, let path = response.path, !path.isEmpty {
+            response.attachment = ScratchlistAttachment(
+                id: UUID().uuidString,
+                filename: filename,
+                mimeType: mimeType,
+                size: data.count,
+                path: path
+            )
+        }
+        return response
     }
 
-    /// `GET /api/sessions/:id/scratchlist/attachments/:attachmentId` — raw
+    /// `GET /v1/sessions/:id/blobs/:attachmentId` — raw
     /// bytes (`Content-Type` from stored metadata). Attachment content is
     /// immutable per id, so any `URLCache` hit is safe — same plumbing as
     /// ``generatedImage(sessionId:imageId:)``.
@@ -85,17 +95,18 @@ extension APIClient {
         attachmentId: String
     ) async throws -> (data: Data, mimeType: String?) {
         let (data, response) = try await requestBytes(
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/attachments/\(encodePathComponent(attachmentId))"
+            "/v1/sessions/\(encodePathComponent(sessionId))/blobs/\(encodePathComponent(attachmentId))"
         )
         return (data, response.value(forHTTPHeaderField: "Content-Type"))
     }
 
-    /// `DELETE /api/sessions/:id/scratchlist/attachments/:attachmentId` — 409
-    /// `scratchlist_attachment_in_use` while an entry still references it.
+    /// `DELETE /v1/sessions/:id/uploads` — deletes a staged upload by path/id.
     public func deleteScratchlistAttachment(sessionId: String, attachmentId: String) async throws {
+        struct DeleteUploadBody: Encodable { let path: String }
         try await requestVoid(
             .delete,
-            "/api/sessions/\(encodePathComponent(sessionId))/scratchlist/attachments/\(encodePathComponent(attachmentId))"
+            "/v1/sessions/\(encodePathComponent(sessionId))/uploads",
+            body: DeleteUploadBody(path: attachmentId)
         )
     }
 }

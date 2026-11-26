@@ -56,7 +56,7 @@ class TokenAuthenticator(
 
     private val hubUrl: String = HubUrls.normalize(hubUrl) ?: hubUrl
     private val authUrl = this.hubUrl.toHttpUrl().newBuilder()
-        .addPathSegment("api").addPathSegment("auth").build()
+        .addPathSegment("v1").addPathSegment("auth").addPathSegment("login").build()
 
     private val mutex = Mutex()
 

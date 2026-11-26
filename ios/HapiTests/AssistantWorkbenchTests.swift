@@ -27,7 +27,7 @@ final class AssistantWorkbenchTests: XCTestCase {
             else if path.hasSuffix("hub-settings") { body = profile }
             else if path.hasSuffix("/machines") { body = machines }
             else if path.hasSuffix("/spawn") { body = Data(#"{"type":"success","sessionId":"investigation"}"#.utf8) }
-            else if path.hasSuffix("/upload") { body = Data(#"{"success":true,"path":"/test/evidence.pdf"}"#.utf8) }
+            else if path.hasSuffix("/uploads") { body = Data(#"{"success":true,"path":"/test/evidence.pdf"}"#.utf8) }
             else if path.hasSuffix("/messages") && request.httpMethod == "POST" {
                 if failSend { failSend = false; status = 503 }
                 body = Data((status == 200 ? #"{"ok":true}"# : #"{"error":"retry"}"#).utf8)
@@ -80,7 +80,7 @@ final class AssistantWorkbenchTests: XCTestCase {
         let second = await draft.send(); XCTAssertEqual(second, "investigation")
         let requests = await http.requests
         XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/spawn") }.count, 1)
-        XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/upload") }.count, 1)
+        XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/uploads") }.count, 1)
         let sends = requests.filter { $0.url!.path.hasSuffix("/messages") }
         let firstBody = try JSONSerialization.jsonObject(with: sends[0].httpBody!) as! [String: Any]
         let secondBody = try JSONSerialization.jsonObject(with: sends[1].httpBody!) as! [String: Any]

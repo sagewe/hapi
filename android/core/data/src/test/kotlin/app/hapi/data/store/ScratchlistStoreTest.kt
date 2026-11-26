@@ -72,7 +72,7 @@ class ScratchlistStoreTest {
             assertTrue(!state.atCap)
             val request = server.takeRequest()
             assertEquals("GET", request.method)
-            assertEquals("/api/sessions/s1/scratchlist", request.path)
+            assertEquals("/v1/sessions/s1/scratchlist", request.path)
         }
 
     @Test
@@ -111,7 +111,7 @@ class ScratchlistStoreTest {
 
             val request = server.takeRequest()
             assertEquals("POST", request.method)
-            assertEquals("/api/sessions/s1/scratchlist", request.path)
+            assertEquals("/v1/sessions/s1/scratchlist", request.path)
             val sent = body(request)
             assertEquals("note", sent["text"]?.jsonPrimitive?.content)
             assertEquals("opt-1", sent["entryId"]?.jsonPrimitive?.content)
@@ -177,7 +177,7 @@ class ScratchlistStoreTest {
             server.takeRequest() // initial GET
             val request = server.takeRequest()
             assertEquals("PUT", request.method)
-            assertEquals("/api/sessions/s1/scratchlist/e1", request.path)
+            assertEquals("/v1/sessions/s1/scratchlist/e1", request.path)
             assertEquals("new", body(request)["text"]?.jsonPrimitive?.content)
         }
 
@@ -328,7 +328,7 @@ class ScratchlistStoreTest {
 
             val request = server.takeRequest()
             assertEquals("POST", request.method)
-            assertEquals("/api/sessions/s1/scratchlist/upload", request.path)
+            assertEquals("/v1/sessions/s1/uploads", request.path)
             val sent = body(request)
             assertEquals("pic.jpg", sent["filename"]?.jsonPrimitive?.content)
             assertEquals("image/jpeg", sent["mimeType"]?.jsonPrimitive?.content)
@@ -367,7 +367,8 @@ class ScratchlistStoreTest {
         )
         val first = server.takeRequest()
         assertEquals("DELETE", first.method)
-        assertEquals("/api/sessions/s1/scratchlist/attachments/a1", first.path)
+        assertEquals("/v1/sessions/s1/uploads", first.path)
+        assertEquals("a1", body(first)["path"]?.jsonPrimitive?.content)
     }
 
     @Test

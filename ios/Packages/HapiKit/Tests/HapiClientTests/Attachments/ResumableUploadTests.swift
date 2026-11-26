@@ -52,7 +52,7 @@ private actor ChunkServer: HTTPPerforming {
             if loseCompleteResponse { loseCompleteResponse = false; throw URLError(.networkConnectionLost) }
             status = 200
             response = ["success": true, "path": "/runner/file"]
-        } else if path.hasSuffix("/upload/delete") {
+        } else if request.httpMethod == "DELETE" && path.hasSuffix("/uploads") {
             status = 200
             response = ["success": true]
         } else {

@@ -61,12 +61,12 @@ class HapiApiTest {
 
     @Test
     fun `ASR discovery context and websocket remain authenticated and same origin`() = runBlocking {
-        server.enqueue(ok("""{"available":true,"wsUrl":"wss://evil.example"}"""))
+        server.enqueue(ok("""{"available":true,"ws_url":"wss://evil.example"}"""))
         assertEquals(true,session.api.streamingAsrAvailable())
-        val config=server.takeRequest();assertEquals("/api/voice/asr-config",config.path);assertEquals("Bearer $jwt",config.getHeader("Authorization"))
+        val config=server.takeRequest();assertEquals("/v1/voice/asr-config",config.path);assertEquals("Bearer $jwt",config.getHeader("Authorization"))
         server.enqueue(ok("""{"ok":true}"""))
         session.api.prepareStreamingAsr("核验企业","take-1")
-        val context=server.takeRequest();assertEquals("/api/voice/asr-context",context.path);assertEquals("Bearer $jwt",context.getHeader("Authorization"));assertTrue(context.body.readUtf8().contains("核验企业"))
+        val context=server.takeRequest();assertEquals("/v1/voice/asr-context",context.path);assertEquals("Bearer $jwt",context.getHeader("Authorization"));assertTrue(context.body.readUtf8().contains("核验企业"))
         val done=java.util.concurrent.CountDownLatch(1)
         server.enqueue(MockResponse().withWebSocketUpgrade(object: okhttp3.WebSocketListener() {
             override fun onOpen(ws: okhttp3.WebSocket,response: okhttp3.Response) { ws.send("""{"type":"partial","text":"企业"}""");ws.send("""{"type":"final","text":"核验企业"}""") }
@@ -76,25 +76,25 @@ class HapiApiTest {
             override fun onMessage(ws: okhttp3.WebSocket,text: String) { frames.add(text);if(frames.size==2) done.countDown() }
         })
         assertTrue(done.await(5,java.util.concurrent.TimeUnit.SECONDS))
-        val upgrade=server.takeRequest();assertEquals("/api/voice/asr-ws?sample_rate=16000",upgrade.path);assertEquals("Bearer $jwt",upgrade.getHeader("Authorization"));assertEquals("中文草稿",String(java.util.Base64.getDecoder().decode(upgrade.getHeader("X-ASR-Draft"))))
+        val upgrade=server.takeRequest();assertEquals("/v1/voice/asr-ws?sample_rate=16000",upgrade.path);assertEquals("Bearer $jwt",upgrade.getHeader("Authorization"));assertEquals("中文草稿",String(java.util.Base64.getDecoder().decode(upgrade.getHeader("X-ASR-Draft"))))
         assertEquals(2,frames.size);socket.cancel()
     }
 
     @Test
     fun `case index and uploads stay authenticated on this origin`() = runBlocking {
-        server.enqueue(ok("""{"files":[{"id":"f","category":"uploads","fileName":"单据.zip","mimeType":"application/zip","size":3,"createdAt":1,"downloadPath":"https://evil.example/steal"}]}"""))
+        server.enqueue(ok("""{"files":[{"id":"f","category":"uploads","filename":"单据.zip","mime_type":"application/zip","size":3,"created_at":1,"download_path":"https://evil.example/steal"}]}"""))
         val file=session.api.getCaseFiles("case1").files.single()
-        val index=server.takeRequest(); assertEquals("/api/sessions/case1/case-files",index.path); assertEquals("Bearer $jwt",index.getHeader("Authorization"))
+        val index=server.takeRequest(); assertEquals("/v1/sessions/case1/case-files",index.path); assertEquals("Bearer $jwt",index.getHeader("Authorization"))
         server.enqueue(MockResponse().setBody("zip").setHeader("Content-Type","application/zip"))
         assertEquals("zip",session.api.getCaseFile("case1",file).bytes.toString(Charsets.UTF_8))
-        val download=server.takeRequest(); assertEquals("/api/sessions/case1/uploads/f",download.path);assertEquals("Bearer $jwt",download.getHeader("Authorization"))
+        val download=server.takeRequest(); assertEquals("/v1/sessions/case1/blobs/f",download.path);assertEquals("Bearer $jwt",download.getHeader("Authorization"))
     }
 
     @Test
     fun `update downloads are authenticated streamed and checksum gated`() = runBlocking {
         val bytes = "apk".toByteArray()
         val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
-        val release = app.hapi.protocol.wire.AndroidRelease("com.sagewe.hapi.compliance",2,"0.34.3","work.apk",hash,3,"notes","2026-11-23T00:00:00Z","/api/app-updates/android/download/work.apk")
+        val release = app.hapi.protocol.wire.AndroidRelease("com.sagewe.hapi.compliance",2,"0.34.3","work.apk",hash,3,"notes","2026-11-23T00:00:00Z","/v1/app-updates/android/download/work.apk")
         val file = java.nio.file.Files.createTempFile("update-download", ".apk").toFile()
         try {
             server.enqueue(MockResponse().setBody("apk"))
@@ -102,7 +102,7 @@ class HapiApiTest {
             session.api.downloadAndroidRelease(release,file) { count = it }
             assertEquals(3L,count); assertEquals("apk",file.readText())
             val request = server.takeRequest()
-            assertEquals("/api/app-updates/android/download/work.apk",request.path)
+            assertEquals("/v1/app-updates/android/download/work.apk",request.path)
             assertEquals("Bearer $jwt",request.getHeader("Authorization"))
             server.enqueue(MockResponse().setBody("bad"))
             assertFailsWith<IllegalArgumentException> { session.api.downloadAndroidRelease(release,file) {} }
@@ -117,19 +117,55 @@ class HapiApiTest {
 
     @Test
     fun `assistant profile and atomic preset use the shared wire contract`() = runBlocking {
-        server.enqueue(ok("""{"clientProfile":{"mode":"assistant","appTitle":"合规调查","defaultAgent":"agy","defaultPermissionMode":"always-proceed","defaultDirectory":"/cases","hideExecutionDetails":true,"modelPresets":[{"id":"deep","label":"深度","model":"neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"document","title":"单据审核","prompt":"审核资料"}]}}"""))
+        server.enqueue(ok("""{"client_profile":{"mode":"assistant","appTitle":"合规调查","defaultAgent":"agy","defaultPermissionMode":"always-proceed","defaultDirectory":"/cases","hideExecutionDetails":true,"modelPresets":[{"id":"deep","label":"深度","model":"neon-high","effort":"high","isDefault":true}],"quickActions":[{"id":"document","title":"单据审核","prompt":"审核资料"}]}}"""))
         val profile = session.api.getHubSettings().clientProfile!!
         assertEquals("assistant", profile.mode)
         assertEquals("high", profile.modelPresets.single().effort)
-        assertEquals("/api/hub-settings", server.takeRequest().path)
+        assertEquals("/v1/settings", server.takeRequest().path)
         server.enqueue(ok("{}"))
         session.api.setModelPreset("case", "neon-high", "high")
         val request = server.takeRequest()
-        assertEquals("/api/sessions/case/model", request.path)
+        assertEquals("PATCH", request.method)
+        assertEquals("/v1/sessions/case", request.path)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("neon-high", body["model"]!!.jsonPrimitive.content)
         assertEquals("high", body["effort"]!!.jsonPrimitive.content)
         assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `updateSessionReadState maps unread and read to manualUnread boolean`() = runBlocking {
+        server.enqueue(ok("""{"contentRevision":5,"readRevision":4,"readStateVersion":2,"manualUnread":true}"""))
+        val unreadResp = session.api.updateSessionReadState(
+            "s1",
+            app.hapi.protocol.wire.SessionReadStateRequest(type = "unread", expectedVersion = 1),
+        )
+        val unreadReq = server.takeRequest()
+        assertEquals("PUT", unreadReq.method)
+        assertEquals("/v1/sessions/s1/read-state", unreadReq.path)
+        val unreadBody = Json.parseToJsonElement(unreadReq.body.readUtf8()).jsonObject
+        assertEquals("true", unreadBody.getValue("manualUnread").jsonPrimitive.content)
+        assertEquals("1", unreadBody.getValue("expectedVersion").jsonPrimitive.content)
+        assertTrue(unreadResp.readState.manualUnread)
+
+        server.enqueue(ok("""{"contentRevision":5,"readRevision":5,"readStateVersion":3,"manualUnread":false}"""))
+        session.api.updateSessionReadState(
+            "s1",
+            app.hapi.protocol.wire.SessionReadStateRequest(type = "read", readRevision = 5, expectedVersion = 2),
+        )
+        val readBody = lastRequestBody()
+        assertEquals("false", readBody.getValue("manualUnread").jsonPrimitive.content)
+        assertEquals("5", readBody.getValue("readRevision").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `updateSessionSummary patches session title on v1 sessions id`() = runBlocking {
+        server.enqueue(ok("""{"session":{"id":"s1","created_at":1,"updated_at":2}}"""))
+        session.api.updateSessionSummary("s1", "Updated summary")
+        val req = server.takeRequest()
+        assertEquals("PATCH", req.method)
+        assertEquals("/v1/sessions/s1", req.path)
+        assertEquals("Updated summary", Json.parseToJsonElement(req.body.readUtf8()).jsonObject.getValue("title").jsonPrimitive.content)
     }
 
     @Test
@@ -195,7 +231,7 @@ class HapiApiTest {
         session.api.implementCodexPlan("session/1", "plan:thread:turn:item")
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/sessions/session%2F1/codex/plan/implement", request.path)
+        assertEquals("/v1/sessions/session%2F1/codex/plan/implement", request.path)
         assertEquals("Bearer $jwt", request.getHeader("Authorization"))
         assertEquals("""{"planId":"plan:thread:turn:item"}""", request.body.readUtf8())
     }
@@ -222,7 +258,7 @@ class HapiApiTest {
 
         val request = server.takeRequest()
         val url = requireNotNull(request.requestUrl)
-        assertEquals("/api/sessions/s1/messages", url.encodedPath)
+        assertEquals("/v1/sessions/s1/messages", url.encodedPath)
         assertEquals("1755000000000", url.queryParameter("beforeAt"))
         assertEquals("120", url.queryParameter("beforeSeq"))
         assertEquals("3", url.queryParameter("epoch"))
@@ -240,7 +276,7 @@ class HapiApiTest {
         )
 
         runBlocking { session.api.getSession("a/b") }
-        assertEquals("/api/sessions/a%2Fb", server.takeRequest().path)
+        assertEquals("/v1/sessions/a%2Fb", server.takeRequest().path)
     }
 
     @Test
@@ -255,7 +291,7 @@ class HapiApiTest {
         }
 
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/messages", request.path)
+        assertEquals("/v1/sessions/s1/messages", request.path)
         assertEquals("POST", request.method)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals(
@@ -286,7 +322,7 @@ class HapiApiTest {
         }
 
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/messages", request.path)
+        assertEquals("/v1/sessions/s1/messages", request.path)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals(
             buildJsonObject {
@@ -311,7 +347,7 @@ class HapiApiTest {
         assertTrue(response.success)
         assertEquals("/tmp/uploads/shot.jpg", response.path)
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/upload", request.path)
+        assertEquals("/v1/sessions/s1/uploads", request.path)
         assertEquals("POST", request.method)
         assertTrue(request.getHeader("Content-Type")!!.startsWith("application/json"))
         assertEquals(
@@ -332,7 +368,8 @@ class HapiApiTest {
 
         assertTrue(response.success)
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/upload/delete", request.path)
+        assertEquals("DELETE", request.method)
+        assertEquals("/v1/sessions/s1/uploads", request.path)
         assertEquals(
             buildJsonObject { put("path", "/tmp/uploads/shot.jpg") },
             Json.parseToJsonElement(request.body.readUtf8()).jsonObject,
@@ -355,7 +392,7 @@ class HapiApiTest {
         }
 
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/permissions/req-9/approve", request.path)
+        assertEquals("/v1/sessions/s1/permissions/req-9/approve", request.path)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("approved", body.getValue("decision").jsonPrimitive.content)
         val nested = body.getValue("answers").jsonObject.getValue("q1").jsonObject
@@ -371,7 +408,7 @@ class HapiApiTest {
         runBlocking { session.api.denyPermission("s1", "req-9") }
 
         val request = server.takeRequest()
-        assertEquals("/api/sessions/s1/permissions/req-9/deny", request.path)
+        assertEquals("/v1/sessions/s1/permissions/req-9/deny", request.path)
         assertEquals("{}", request.body.readUtf8())
     }
 
@@ -385,31 +422,31 @@ class HapiApiTest {
     }
 
     @Test
-    fun `provider model variant sends the object form`() {
+    fun `provider model variant sends provider slash modelId`() {
         server.enqueue(ok("""{"ok":true}"""))
 
         runBlocking { session.api.setModel("s1", provider = "anthropic", modelId = "claude-4") }
 
-        val model = lastRequestBody().getValue("model").jsonObject
-        assertEquals("anthropic", model.getValue("provider").jsonPrimitive.content)
-        assertEquals("claude-4", model.getValue("modelId").jsonPrimitive.content)
+        val model = lastRequestBody().getValue("model").jsonPrimitive.content
+        assertEquals("anthropic/claude-4", model)
     }
 
     @Test
-    fun `spawn posts to the machine and decodes type-discriminated errors`() {
-        server.enqueue(ok("""{"type":"error","message":"No such directory"}"""))
+    fun `spawn posts to v1 sessions and decodes v1 session envelope`() {
+        server.enqueue(ok("""{"session":{"id":"sess-new","namespace":"default","machine_id":"m1","agent":"claude","directory":"/work","title":"","title_locked":false,"model":"","status":"idle","pinned":false,"pin_mode":"none","archived":false,"meta_rev":0,"state_rev":0,"message_epoch":1,"content_rev":0,"read_rev":0,"read_state_ver":0,"manual_unread":false,"pending_requests":{},"metadata":{},"created_at":1,"updated_at":1,"seq":1}}"""))
 
         val response = runBlocking {
             session.api.spawnSession("m1", SpawnSessionRequest(directory = "/work", agent = "claude", yolo = false))
         }
 
         val request = server.takeRequest()
-        assertEquals("/api/machines/m1/spawn", request.path)
+        assertEquals("/v1/sessions", request.path)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("m1", body.getValue("machine_id").jsonPrimitive.content)
         assertEquals("/work", body.getValue("directory").jsonPrimitive.content)
         assertEquals("claude", body.getValue("agent").jsonPrimitive.content)
-        assertEquals("error", response.type)
-        assertEquals("No such directory", response.message)
+        assertEquals("success", response.type)
+        assertEquals("sess-new", response.sessionId)
     }
 
     @Test
@@ -421,7 +458,7 @@ class HapiApiTest {
         )
 
         val response = runBlocking { session.api.getMachineCodexModels("m1") }
-        assertEquals("/api/machines/m1/codex-models", server.takeRequest().path)
+        assertEquals("/v1/machines/m1/codex-models", server.takeRequest().path)
         assertTrue(response.success)
         val model = response.models!!.single()
         assertEquals("gpt-5.2-codex", model.id)
@@ -453,7 +490,7 @@ class HapiApiTest {
         val response = runBlocking { session.api.getMachineGrokModelsForCwd("m1", "/home/dev/proj") }
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/api/machines/m1/grok-models", request.path!!.substringBefore('?'))
+        assertEquals("/v1/machines/m1/grok-models", request.path!!.substringBefore('?'))
         assertEquals("/home/dev/proj", request.requestUrl!!.queryParameter("cwd"))
         assertTrue(response.success)
         assertEquals(false, response.autoPermissionModeSupported)
@@ -475,7 +512,7 @@ class HapiApiTest {
 
         val request = server.takeRequest()
         assertEquals("DELETE", request.method)
-        assertEquals("/api/devices/register", request.path)
+        assertEquals("/v1/devices/register", request.path)
         assertEquals("fcm-token", Json.parseToJsonElement(request.body.readUtf8()).jsonObject.getValue("token").jsonPrimitive.content)
     }
 
@@ -486,7 +523,7 @@ class HapiApiTest {
         runBlocking { session.api.registerDevice(token = "FCM:MixedCase", deviceId = "install", pushKey = key) }
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/devices/register", request.path)
+        assertEquals("/v1/devices/register", request.path)
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("FCM:MixedCase", body.getValue("token").jsonPrimitive.content)
         assertEquals("phone", body.getValue("platform").jsonPrimitive.content)
@@ -513,7 +550,7 @@ class HapiApiTest {
 
         val request = server.takeRequest()
         val url = requireNotNull(request.requestUrl)
-        assertEquals("/api/usage/summary", url.encodedPath)
+        assertEquals("/v1/usage/summary", url.encodedPath)
         assertEquals("all", url.queryParameter("range"))
         assertEquals("Asia/Shanghai", url.queryParameter("timeZone"))
         assertEquals("Bearer $jwt", request.getHeader("Authorization"))
@@ -527,7 +564,7 @@ class HapiApiTest {
             ok("""{"path":"/x/hapi.db","databaseBytes":100,"walBytes":20,"shmBytes":4,"totalBytes":124}""")
         )
         val storage = runBlocking { session.api.getSqliteStorageUsage() }
-        assertEquals("/api/storage/sqlite", server.takeRequest().path)
+        assertEquals("/v1/storage/sqlite", server.takeRequest().path)
         assertEquals(124L, storage.totalBytes)
 
         server.enqueue(
@@ -563,7 +600,7 @@ class HapiApiTest {
 
         val image = runBlocking { session.api.getGeneratedImage("s1", "img-1") }
 
-        assertEquals("/api/sessions/s1/generated-images/img-1", server.takeRequest().path)
+        assertEquals("/v1/sessions/s1/blobs/img-1", server.takeRequest().path)
         assertContentEquals(bytes, image.bytes)
         assertEquals("image/png", image.mimeType)
     }
@@ -581,7 +618,7 @@ class HapiApiTest {
 
         val result = runBlocking { session.api.getTranscriptionProviders() }
 
-        assertEquals("/api/voice/transcription/providers", server.takeRequest().path)
+        assertEquals("/v1/voice/transcription/providers", server.takeRequest().path)
         assertEquals(listOf("openai", "browser-local"), result.providers.map { it.id })
         assertEquals(listOf("standard", "realtime"), result.providers.first().modes)
         assertEquals("OpenAI", result.providers.first().label)
@@ -602,7 +639,7 @@ class HapiApiTest {
         }
 
         val request = server.takeRequest()
-        assertEquals("/api/voice/transcription", request.path)
+        assertEquals("/v1/voice/transcription", request.path)
         assertTrue(request.getHeader("Content-Type")!!.startsWith("multipart/form-data"))
         val raw = request.body.readUtf8()
         assertTrue("""name="file"; filename="clip.m4a"""" in raw)

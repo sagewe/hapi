@@ -248,15 +248,15 @@ final class SessionNavigationTests: XCTestCase {
             func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
                 let url = request.url ?? URL(string: "http://127.0.0.1:1")!
                 let path = url.path
-                if path.hasSuffix("/api/sessions") {
+                if path.hasSuffix("/v1/sessions") {
                     let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
                     return (childSummaryJSON, response)
                 }
-                if path.hasSuffix("/api/sessions/\(parentId)") {
+                if path.hasSuffix("/v1/sessions/\(parentId)") {
                     let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
                     return (Data("{\"error\":\"Session not found\"}".utf8), response)
                 }
-                if path.hasSuffix("/api/sessions/\(childId)") {
+                if path.hasSuffix("/v1/sessions/\(childId)") {
                     let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
                     return (childDetailJSON, response)
                 }

@@ -22,9 +22,34 @@ public struct ToastPayload: Codable, Equatable, Sendable {
         self.sessionId = sessionId
         self.url = url
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case body
+        case sessionId
+        case session_id
+        case url
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        body = try c.decode(String.self, forKey: .body)
+        sessionId = try c.decodeIfPresent(String.self, forKey: .session_id)
+            ?? c.decode(String.self, forKey: .sessionId)
+        url = try c.decode(String.self, forKey: .url)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(title, forKey: .title)
+        try c.encode(body, forKey: .body)
+        try c.encode(sessionId, forKey: .sessionId)
+        try c.encode(url, forKey: .url)
+    }
 }
 
-/// Reconnect verdict inside `connection-changed`.
+/// Reconnect verdict inside `connection_changed` / `connection-changed`.
 ///
 /// `ok` = the hub replays every missed event right after the handshake, so
 /// the client may skip its REST resync. `gap` — or an absent/unknown verdict
@@ -34,10 +59,10 @@ public enum ResumeVerdict: String, Codable, Sendable {
     case gap
 }
 
-/// Payload of the `connection-changed` handshake frame.
+/// Payload of the `connection_changed` handshake frame.
 public struct ConnectionChangedPayload: Codable, Equatable, Sendable {
     public var status: String
-    /// Needed for `POST /api/visibility`; new on every reconnect.
+    /// Needed for `POST /v1/visibility`; new on every reconnect.
     public var subscriptionId: String?
     /// Decoded leniently: an unknown wire verdict becomes `nil`, which
     /// clients must treat as `gap` (the contract's "absence" rule).
@@ -49,15 +74,30 @@ public struct ConnectionChangedPayload: Codable, Equatable, Sendable {
         self.resume = resume
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case subscriptionId
+        case subscription_id
+        case resume
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         status = try container.decode(String.self, forKey: .status)
-        subscriptionId = try container.decodeIfPresent(String.self, forKey: .subscriptionId)
+        subscriptionId = try container.decodeIfPresent(String.self, forKey: .subscription_id)
+            ?? container.decodeIfPresent(String.self, forKey: .subscriptionId)
         if let raw = try container.decodeIfPresent(String.self, forKey: .resume) {
             resume = ResumeVerdict(rawValue: raw)
         } else {
             resume = nil
         }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(status, forKey: .status)
+        try container.encodeIfPresent(subscriptionId, forKey: .subscriptionId)
+        try container.encodeIfPresent(resume, forKey: .resume)
     }
 }
 
@@ -155,14 +195,24 @@ extension SyncEvent: Decodable {
         case type
         case namespace
         case sessionId
+        case session_id
         case machineId
+        case machine_id
         case data
+        case session
+        case machine
+        case active
+        case updated_at
         case message
         case reason
         case localIds
+        case local_ids
         case invokedAt
+        case invoked_at
         case messageId
+        case message_id
         case localId
+        case local_id
     }
 
     private struct HeartbeatData: Decodable {
@@ -173,62 +223,99 @@ extension SyncEvent: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(String.self, forKey: .type)
         let namespace = try container.decodeIfPresent(String.self, forKey: .namespace)
+
+        func decodeSessionId() throws -> String {
+            if let s = try container.decodeIfPresent(String.self, forKey: .session_id) {
+                return s
+            }
+            return try container.decode(String.self, forKey: .sessionId)
+        }
+
+        func decodeMachineId() throws -> String {
+            if let m = try container.decodeIfPresent(String.self, forKey: .machine_id) {
+                return m
+            }
+            return try container.decode(String.self, forKey: .machineId)
+        }
+
+        func decodeSessionData() throws -> SessionUpdatedData? {
+            if container.contains(.session) {
+                return try container.decodeIfPresent(SessionUpdatedData.self, forKey: .session)
+            }
+            return try container.decodeIfPresent(SessionUpdatedData.self, forKey: .data)
+        }
+
         switch type {
-        case "session-added":
+        case "session_added", "session-added":
             self = .sessionAdded(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                data: try container.decodeIfPresent(SessionUpdatedData.self, forKey: .data)
+                sessionId: try decodeSessionId(),
+                data: try decodeSessionData()
             )
-        case "session-updated":
+        case "session_updated", "session-updated":
             self = .sessionUpdated(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                data: try container.decodeIfPresent(SessionUpdatedData.self, forKey: .data)
+                sessionId: try decodeSessionId(),
+                data: try decodeSessionData()
             )
-        case "session-removed":
+        case "session_removed", "session-removed":
             self = .sessionRemoved(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId)
+                sessionId: try decodeSessionId()
             )
-        case "message-received":
+        case "message_received", "message-received":
             self = .messageReceived(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
+                sessionId: try decodeSessionId(),
                 message: try container.decode(DecryptedMessage.self, forKey: .message)
             )
-        case "messages-invalidated":
+        case "messages_invalidated", "messages-invalidated":
             self = .messagesInvalidated(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId)
+                sessionId: try decodeSessionId()
             )
-        case "scheduled-matured":
+        case "scheduled_matured", "scheduled-matured":
             self = .scheduledMatured(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId)
+                sessionId: try decodeSessionId()
             )
-        case "session-ended":
+        case "session_ended", "session-ended":
             let reason = try container.decodeIfPresent(String.self, forKey: .reason)
                 .flatMap(SessionEndReason.init(rawValue:))
             self = .sessionEnded(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
+                sessionId: try decodeSessionId(),
                 reason: reason
             )
-        case "machine-updated":
-            let machineId = try container.decode(String.self, forKey: .machineId)
-            // `data: null` means "machine removed" and must stay distinct
-            // from an absent `data` (refetch); `decodeIfPresent` would
-            // conflate the two, so probe presence and null by hand.
+        case "machine_updated", "machine-updated":
+            let machineId = try decodeMachineId()
             let data: MachineUpdatedData?
-            if container.contains(.data) {
+            if container.contains(.machine) {
+                if try container.decodeNil(forKey: .machine) {
+                    let active = try container.decodeIfPresent(Bool.self, forKey: .active)
+                    let updatedAt = try container.decodeIfPresent(Int.self, forKey: .updated_at)
+                    if active != nil || updatedAt != nil {
+                        data = .patch(MachinePatch(active: active, activeAt: updatedAt, updatedAt: updatedAt))
+                    } else {
+                        data = .removed
+                    }
+                } else {
+                    data = try container.decode(MachineUpdatedData.self, forKey: .machine)
+                }
+            } else if container.contains(.data) {
                 if try container.decodeNil(forKey: .data) {
                     data = .removed
                 } else {
                     data = try container.decode(MachineUpdatedData.self, forKey: .data)
                 }
             } else {
-                data = nil
+                let active = try container.decodeIfPresent(Bool.self, forKey: .active)
+                let updatedAt = try container.decodeIfPresent(Int.self, forKey: .updated_at)
+                if active != nil || updatedAt != nil {
+                    data = .patch(MachinePatch(active: active, activeAt: updatedAt, updatedAt: updatedAt))
+                } else {
+                    data = nil
+                }
             }
             self = .machineUpdated(namespace: namespace, machineId: machineId, data: data)
         case "toast":
@@ -236,38 +323,50 @@ extension SyncEvent: Decodable {
                 namespace: namespace,
                 data: try container.decode(ToastPayload.self, forKey: .data)
             )
-        case "messages-consumed":
+        case "messages_consumed", "messages-consumed":
+            let localIds = try container.decodeIfPresent([String].self, forKey: .local_ids)
+                ?? container.decode([String].self, forKey: .localIds)
+            let invokedAt = try container.decodeIfPresent(Int.self, forKey: .invoked_at)
+                ?? container.decode(Int.self, forKey: .invokedAt)
             self = .messagesConsumed(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                localIds: try container.decode([String].self, forKey: .localIds),
-                invokedAt: try container.decode(Int.self, forKey: .invokedAt)
+                sessionId: try decodeSessionId(),
+                localIds: localIds,
+                invokedAt: invokedAt
             )
-        case "messages-indeterminate":
+        case "messages_indeterminate", "messages-indeterminate":
+            let localIds = try container.decodeIfPresent([String].self, forKey: .local_ids)
+                ?? container.decode([String].self, forKey: .localIds)
             self = .messagesIndeterminate(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                localIds: try container.decode([String].self, forKey: .localIds)
+                sessionId: try decodeSessionId(),
+                localIds: localIds
             )
-        case "messages-requeued":
+        case "messages_requeued", "messages-requeued":
+            let localIds = try container.decodeIfPresent([String].self, forKey: .local_ids)
+                ?? container.decode([String].self, forKey: .localIds)
             self = .messagesRequeued(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                localIds: try container.decode([String].self, forKey: .localIds)
+                sessionId: try decodeSessionId(),
+                localIds: localIds
             )
-        case "message-cancelled":
+        case "message_cancelled", "message-cancelled":
+            let messageId = try container.decodeIfPresent(String.self, forKey: .message_id)
+                ?? container.decode(String.self, forKey: .messageId)
+            let localId = try container.decodeIfPresent(String.self, forKey: .local_id)
+                ?? container.decodeIfPresent(String.self, forKey: .localId)
             self = .messageCancelled(
                 namespace: namespace,
-                sessionId: try container.decode(String.self, forKey: .sessionId),
-                messageId: try container.decode(String.self, forKey: .messageId),
-                localId: try container.decodeIfPresent(String.self, forKey: .localId)
+                sessionId: try decodeSessionId(),
+                messageId: messageId,
+                localId: localId
             )
         case "heartbeat":
             self = .heartbeat(
                 namespace: namespace,
                 timestamp: try container.decodeIfPresent(HeartbeatData.self, forKey: .data)?.timestamp
             )
-        case "connection-changed":
+        case "connection_changed", "connection-changed":
             self = .connectionChanged(
                 namespace: namespace,
                 data: try container.decodeIfPresent(ConnectionChangedPayload.self, forKey: .data)

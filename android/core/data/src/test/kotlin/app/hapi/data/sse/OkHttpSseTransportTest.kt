@@ -47,7 +47,7 @@ class OkHttpSseTransportTest {
         }
     }
 
-    private fun eventsUrl(): String = server.url("/api/events").toString()
+    private fun eventsUrl(): String = server.url("/v1/events").toString()
 
     @Test
     fun `streams frames with sticky ids through okhttp and SyncEvents parse end to end`() {

@@ -28,7 +28,7 @@ extension APIClient {
         }
         try await requestVoid(
             .post,
-            "/api/devices/register",
+            "/v1/devices/register",
             body: DeviceRegisterRequest(
                 token: token,
                 platform: platform,
@@ -38,7 +38,7 @@ extension APIClient {
         )
     }
 
-    /// `DELETE /api/devices/register` — call on unpair while the JWT is
+    /// `DELETE /v1/devices/register` — call on unpair while the JWT is
     /// still valid (best effort; a leaked registration is pruned hub-side
     /// once the push service reports the token dead).
     public func unregisterDevice(token: String) async throws {
@@ -47,7 +47,7 @@ extension APIClient {
         }
         try await requestVoid(
             .delete,
-            "/api/devices/register",
+            "/v1/devices/register",
             body: DeviceUnregisterRequest(token: token)
         )
     }

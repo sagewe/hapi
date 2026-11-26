@@ -21,7 +21,7 @@ describe('ApiClient error mapping', () => {
         await api.readSessionFile('session-1', 'images/page.png', 10 * 1024 * 1024)
 
         expect(String(fetchMock.mock.calls[0]?.[0])).toContain('path=images%2Fpage.png')
-        expect(String(fetchMock.mock.calls[0]?.[0])).toContain('maxBytes=10485760')
+        expect(String(fetchMock.mock.calls[0]?.[0])).toContain('max_bytes=10485760')
     })
 
     afterEach(() => {
@@ -36,7 +36,7 @@ describe('ApiClient error mapping', () => {
         const api = new ApiClient('test-token')
         const request = api.searchSessionFiles('session /', 'some path', 50, controller.signal)
         const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' })
-        expect(fetchMock.mock.calls[0][0]).toBe('/api/sessions/session%20%2F/files?query=some+path&limit=50')
+        expect(fetchMock.mock.calls[0][0]).toBe('/v1/sessions/session%20%2F/files?query=some+path&limit=50')
         expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal)
         controller.abort()
         await rejected
@@ -148,8 +148,8 @@ describe('ApiClient error mapping', () => {
         await expect(api.getSessionExport('session-1')).resolves.toEqual(warning)
         await expect(api.getSessionExport('session-1', { force: true })).resolves.toEqual(payload)
 
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sessions/session-1/export')
-        expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/sessions/session-1/export?force=true')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/session-1/export')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/sessions/session-1/export?force=true')
     })
 
     it('loads the Cursor chat store status for the selected session', async () => {
@@ -162,7 +162,7 @@ describe('ApiClient error mapping', () => {
             onDisk: false,
             store: null
         })
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sessions/session%20cursor/cursor-chat-store')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/session%20cursor/cursor-chat-store')
     })
 
     it('generates a title and saves the summary through separate session endpoints', async () => {
@@ -174,12 +174,12 @@ describe('ApiClient error mapping', () => {
         await expect(api.suggestSessionTitle('session /?#')).resolves.toEqual({ title: 'Generated title' })
         await api.updateSessionSummary('session /?#', 'Generated title')
 
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sessions/session%20%2F%3F%23/title-suggestion')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/session%20%2F%3F%23/title-suggestion')
         expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' })
-        expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/sessions/session%20%2F%3F%23/summary')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/sessions/session%20%2F%3F%23')
         expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
             method: 'PATCH',
-            body: JSON.stringify({ text: 'Generated title' })
+            body: JSON.stringify({ title: 'Generated title' })
         })
     })
 
@@ -222,8 +222,8 @@ describe('ApiClient error mapping', () => {
         const result = await api.queryMachineUsage('machine /?#', 'claude')
 
         expect(settings.credentials.apiKey.configured).toBe(true)
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/machines/machine%20%2F%3F%23/usage-query/settings?agent=claude')
-        expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/machines/machine%20%2F%3F%23/usage-query/query')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/machines/machine%20%2F%3F%23/usage-query/settings?agent=claude')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/machines/machine%20%2F%3F%23/usage-query/query')
         expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
             method: 'POST',
             body: JSON.stringify({ agent: 'claude', force: false })
@@ -233,16 +233,16 @@ describe('ApiClient error mapping', () => {
 
     it('asks the machine to re-probe agy only when the caller forces a refresh', async () => {
         fetchMock.mockImplementation(() => Promise.resolve(
-            new Response(JSON.stringify({ success: true, availableModels: [] }), { status: 200 })
+            new Response(JSON.stringify({ success: true, available_models: [] }), { status: 200 })
         ))
 
         const api = new ApiClient('test-token')
         await api.getMachineAgyModels('machine-1')
         await api.getMachineAgyModels('machine-1', { refresh: true })
 
-        expect(fetchMock.mock.calls[0][0]).toContain('/api/machines/machine-1/agy-models')
+        expect(fetchMock.mock.calls[0][0]).toContain('/v1/machines/machine-1/agy-models')
         expect(fetchMock.mock.calls[0][0]).not.toContain('refresh')
-        expect(fetchMock.mock.calls[1][0]).toContain('/api/machines/machine-1/agy-models?refresh=true')
+        expect(fetchMock.mock.calls[1][0]).toContain('/v1/machines/machine-1/agy-models?refresh=true')
     })
 
     it('lists and imports Pi sessions through the selected machine', async () => {
@@ -254,8 +254,8 @@ describe('ApiClient error mapping', () => {
         await api.getPiSessions('/tmp/project', 'machine-1')
         await api.importPiSessions({ sessionIds: ['pi-1'], cwd: '/tmp/project', machineId: 'machine-1' })
 
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/pi/sessions?cwd=%2Ftmp%2Fproject&machineId=machine-1')
-        expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/pi/import-sessions')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/pi/sessions?cwd=%2Ftmp%2Fproject&machineId=machine-1')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/pi/import-sessions')
         expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
             method: 'POST',
             body: JSON.stringify({ sessionIds: ['pi-1'], cwd: '/tmp/project', machineId: 'machine-1' })
@@ -277,10 +277,10 @@ describe('ApiClient error mapping', () => {
         })
 
         const [url, init] = fetchMock.mock.calls[0] ?? []
-        expect(url).toBe('/api/sessions/session%20%2F%3F%23/messages/queued-state')
+        expect(url).toBe('/v1/sessions/session%20%2F%3F%23/messages/queued-state')
         expect(init).toMatchObject({
             method: 'POST',
-            body: JSON.stringify({ localIds: ['local-1', 'local-2'] })
+            body: JSON.stringify({ local_ids: ['local-1', 'local-2'] })
         })
         expect(new Headers(init?.headers).get('content-type')).toBe('application/json')
     })
@@ -292,12 +292,12 @@ describe('ApiClient error mapping', () => {
         await api.sendMessage('session /?#', 'steer this', 'local-1', undefined, null, 'steer')
 
         const [url, init] = fetchMock.mock.calls[0] ?? []
-        expect(url).toBe('/api/sessions/session%20%2F%3F%23/messages')
+        expect(url).toBe('/v1/sessions/session%20%2F%3F%23/messages')
         expect(init).toMatchObject({
             method: 'POST',
             body: JSON.stringify({
                 text: 'steer this',
-                localId: 'local-1',
+                local_id: 'local-1',
                 deliveryMode: 'steer',
             })
         })
@@ -315,7 +315,7 @@ describe('ApiClient error mapping', () => {
         })
 
         const [url, init] = fetchMock.mock.calls[0] ?? []
-        expect(url).toBe('/api/sessions/session%20%2F%3F%23/messages/msg-1/steer')
+        expect(url).toBe('/v1/sessions/session%20%2F%3F%23/messages/msg-1/steer')
         expect(init).toMatchObject({ method: 'POST' })
     })
 
@@ -326,7 +326,7 @@ describe('ApiClient error mapping', () => {
         await api.getUsageSummary('7d', 'America/New_York')
 
         expect(fetchMock.mock.calls[0]?.[0]).toBe(
-            '/api/usage/summary?range=7d&timeZone=America%2FNew_York'
+            '/v1/usage/summary?range=7d&timeZone=America%2FNew_York'
         )
     })
 
@@ -349,7 +349,7 @@ describe('ApiClient error mapping', () => {
 
         const api = new ApiClient('test-token')
         await expect(api.fetchVoiceBackend()).resolves.toEqual({ backend: null, backends: [] })
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/voice/backend')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/voice/backend')
     })
 
     it('reads and updates masked transcription credentials', async () => {
@@ -379,32 +379,32 @@ describe('ApiClient error mapping', () => {
 
         const api = new ApiClient('test-token')
         await expect(api.fetchTranscriptionCredentials()).resolves.toEqual(status)
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/voice/transcription/credentials')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/voice/transcription/credentials')
 
         await expect(api.updateTranscriptionCredentials({ openai: 'sk-test' })).resolves.toEqual(status)
         const [, init] = fetchMock.mock.calls[1] ?? []
-        expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/voice/transcription/credentials')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/voice/transcription/credentials')
         expect(init?.method).toBe('PUT')
         expect(init?.body).toBe(JSON.stringify({ openai: 'sk-test' }))
     })
 })
 
 describe('ApiClient session content search', () => {
-    it('uses the opt-in content-search endpoint with encoded query, limit, and session scope', async () => {
+    it('uses the v1 search endpoint with encoded query, limit, and session scope', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-            new Response(JSON.stringify({ results: [] }), { status: 200 })
+            new Response(JSON.stringify({ hits: [], sessions: {}, has_potentially_incomplete_results: false }), { status: 200 })
         )
         try {
             const api = new ApiClient('test-token')
             await api.searchSessionContent(' cache search ', 12, undefined, ['session /?#', 'session /?#', 'other'])
             const request = fetchMock.mock.calls[0]?.[0]
             const init = fetchMock.mock.calls[0]?.[1]
-            expect(String(request)).toBe('/api/sessions/content-search')
+            expect(String(request)).toBe('/v1/search')
             expect(init?.method).toBe('POST')
             expect(init?.body).toBe(JSON.stringify({
                 query: 'cache search',
                 limit: 12,
-                sessionIds: ['session /?#', 'other']
+                session_ids: ['session /?#', 'other']
             }))
         } finally {
             fetchMock.mockRestore()
@@ -414,16 +414,16 @@ describe('ApiClient session content search', () => {
     it('chunks oversized session scopes and merges results before applying the limit', async () => {
         const requests: string[][] = []
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
-            const body = JSON.parse(String(init?.body)) as { sessionIds: string[] }
-            requests.push(body.sessionIds)
-            const resultSessionId = body.sessionIds.at(-1) ?? ''
+            const body = JSON.parse(String(init?.body)) as { session_ids: string[] }
+            requests.push(body.session_ids)
+            const resultSessionId = body.session_ids.at(-1) ?? ''
             const index = Number(resultSessionId.match(/session-(\d+)/)?.[1] ?? 0)
             return new Response(JSON.stringify({
                 results: [{
                     session: { id: resultSessionId, updatedAt: index },
                     match: { messageId: `message-${index}`, role: 'user', seq: index, createdAt: index, snippet: `hit-${index}`, truncated: false }
                 }],
-                hasPotentiallyIncompleteResults: body.sessionIds.some(id => id.startsWith('session-0-'))
+                hasPotentiallyIncompleteResults: body.session_ids.some(id => id.startsWith('session-0-'))
             }), { status: 200 })
         })
 
@@ -459,7 +459,7 @@ describe('ApiClient session content search', () => {
             const api = new ApiClient('test-token')
             await expect(api.getMessageContext('session /?#', 'message /?#')).resolves.toBeNull()
             expect(fetchMock.mock.calls[0]?.[0]).toBe(
-                '/api/sessions/session%20%2F%3F%23/messages/message%20%2F%3F%23/context'
+                '/v1/sessions/session%20%2F%3F%23/messages/message%20%2F%3F%23/context'
             )
         } finally {
             fetchMock.mockRestore()
@@ -468,14 +468,14 @@ describe('ApiClient session content search', () => {
 
     it('loads all matching messages for an opened session', async () => {
         const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-            new Response(JSON.stringify({ matches: [], total: 0 }), { status: 200 })
+            new Response(JSON.stringify({ hits: [], total: 0, has_potentially_incomplete_results: false }), { status: 200 })
         )
         try {
             const api = new ApiClient('test-token')
             await api.searchSessionContentMatches('session /?#', ' cache search ', 42)
             const request = fetchMock.mock.calls[0]?.[0]
             expect(String(request)).toContain(
-                '/api/sessions/session%20%2F%3F%23/content-search?query=cache+search&limit=42'
+                '/v1/sessions/session%20%2F%3F%23/search?query=cache+search&limit=42'
             )
         } finally {
             fetchMock.mockRestore()
@@ -509,7 +509,7 @@ describe('ApiClient Kimi session model discovery', () => {
 
         const api = new ApiClient('test-token')
         await expect(api.getSessionKimiModels('session/1')).resolves.toEqual(catalog)
-        expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/sessions/session%2F1/kimi-models')
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/session%2F1/kimi-models')
     })
 })
 

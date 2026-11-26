@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Manager, type Socket } from 'socket.io-client'
+import { buildV1TerminalWsUrl } from '@/api/v1Adapters'
 
 type AgentTerminalConnectionState =
     | { status: 'idle' }
@@ -13,10 +13,17 @@ type UseAgentTerminalSocketOptions = {
     sessionId: string
 }
 
-type TerminalOutputPayload = {
-    terminalId: string
-    data: string
+type ServerTerminalFrame = {
+    type?: string
+    terminal_id?: string
+    terminalId?: string
+    data?: string
+    message?: string
 }
+
+const AGENT_TERMINAL_ID = 'agent'
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 5_000
 
 export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): {
     state: AgentTerminalConnectionState
@@ -29,11 +36,15 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
     sendInput: (data: string) => void
 } {
     const [state, setState] = useState<AgentTerminalConnectionState>({ status: 'idle' })
-    const socketRef = useRef<Socket | null>(null)
+    const wsRef = useRef<WebSocket | null>(null)
+    const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const reconnectAttemptRef = useRef(0)
+    const manualCloseRef = useRef(false)
     const outputHandlerRef = useRef<(data: string) => void>(() => {})
     const sessionIdRef = useRef(options.sessionId)
     const tokenRef = useRef(options.token)
     const baseUrlRef = useRef(options.baseUrl)
+    const lastSizeRef = useRef<{ cols: number; rows: number }>({ cols: 80, rows: 24 })
     // Whether the viewer currently wants the PTY streamed. Connecting alone must
     // NOT subscribe — SessionChat mounts this hidden for every PTY session, and
     // an unconditional subscribe-on-connect would stream the high-frequency raw
@@ -46,26 +57,22 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
         baseUrlRef.current = options.baseUrl
     }, [options.sessionId, options.baseUrl])
 
-    useEffect(() => {
-        tokenRef.current = options.token
-        const socket = socketRef.current
-        if (!socket) {
-            return
+    const clearReconnectTimer = useCallback(() => {
+        if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current)
+            reconnectTimerRef.current = null
         }
-        if (!options.token) {
-            if (socket.connected) {
-                socket.disconnect()
-            }
-            return
-        }
-        socket.auth = { token: options.token }
-        if (socket.connected) {
-            socket.disconnect()
-            socket.connect()
-        }
-    }, [options.token])
+    }, [])
 
-    const connect = useCallback(() => {
+    const sendFrame = useCallback((ws: WebSocket | null, frame: Record<string, unknown>) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            return
+        }
+        ws.send(JSON.stringify(frame))
+    }, [])
+
+    const openSocket = useCallback(() => {
+        clearReconnectTimer()
         const token = tokenRef.current
         const sessionId = sessionIdRef.current
 
@@ -74,89 +81,150 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
             return
         }
 
-        if (socketRef.current) {
-            const socket = socketRef.current
-            socket.auth = { token }
-            if (socket.connected) {
-                setState({ status: 'connected' })
-            } else {
-                socket.connect()
+        const existing = wsRef.current
+        if (existing) {
+            existing.onopen = null
+            existing.onmessage = null
+            existing.onerror = null
+            existing.onclose = null
+            if (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING) {
+                existing.close()
             }
-            return
+            wsRef.current = null
         }
 
-        const manager = new Manager(baseUrlRef.current, {
-            path: '/socket.io/',
-            reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            transports: ['polling', 'websocket'],
-            // Once a websocket upgrade has succeeded, reconnects go straight
-            // to websocket instead of repeating the HTTP long-polling
-            // handshake — several fewer round-trips through the relay tunnel
-            // on every reconnect. First-ever connects keep the polling
-            // fallback for networks that block websockets.
-            rememberUpgrade: true,
-            autoConnect: false
-        })
-        const socket = manager.socket('/terminal', {
-            auth: { token }
-        })
-
-        socketRef.current = socket
+        manualCloseRef.current = false
         setState({ status: 'connecting' })
 
-        socket.on('connect', () => {
+        const url = buildV1TerminalWsUrl(baseUrlRef.current, sessionId, token)
+        const ws = new WebSocket(url)
+        wsRef.current = ws
+
+        ws.onopen = () => {
+            if (wsRef.current !== ws) return
+            reconnectAttemptRef.current = 0
             // Re-subscribe across reconnects only if the viewer still wants it.
             if (subscribedRef.current) {
-                socket.emit('agent-terminal:subscribe', { sessionId })
+                const { cols, rows } = lastSizeRef.current
+                sendFrame(ws, {
+                    type: 'open',
+                    terminal_id: AGENT_TERMINAL_ID,
+                    cols,
+                    rows
+                })
             }
             setState({ status: 'connected' })
-        })
+        }
 
-        socket.on('agent-terminal:output', (payload: TerminalOutputPayload) => {
-            if (payload.terminalId !== 'agent') {
+        ws.onmessage = (event) => {
+            if (wsRef.current !== ws || typeof event.data !== 'string') return
+            let frame: ServerTerminalFrame
+            try {
+                frame = JSON.parse(event.data) as ServerTerminalFrame
+            } catch {
                 return
             }
-            outputHandlerRef.current(payload.data)
-        })
+            const tid = frame.terminal_id ?? frame.terminalId
+            if (frame.type === 'output' && tid === AGENT_TERMINAL_ID && typeof frame.data === 'string') {
+                outputHandlerRef.current(frame.data)
+            } else if (frame.type === 'error' && tid === AGENT_TERMINAL_ID) {
+                setState({ status: 'error', error: frame.message || 'Terminal error' })
+            }
+        }
 
-        socket.on('connect_error', (error) => {
-            const message = error instanceof Error ? error.message : 'Connection error'
-            setState({ status: 'error', error: message })
-        })
+        ws.onerror = () => {
+            if (wsRef.current !== ws) return
+            setState({ status: 'error', error: 'Connection error' })
+        }
 
-        socket.on('disconnect', (reason) => {
-            if (reason === 'io client disconnect') {
+        ws.onclose = (event) => {
+            if (wsRef.current !== ws) return
+            wsRef.current = null
+            if (manualCloseRef.current) {
                 setState({ status: 'idle' })
                 return
             }
+            const reason = event.reason || `code ${event.code}`
             setState({ status: 'error', error: `Disconnected: ${reason}` })
-        })
+            const delay = Math.min(
+                RECONNECT_BASE_DELAY_MS * (2 ** reconnectAttemptRef.current),
+                RECONNECT_MAX_DELAY_MS
+            )
+            reconnectAttemptRef.current += 1
+            reconnectTimerRef.current = setTimeout(() => {
+                reconnectTimerRef.current = null
+                if (!manualCloseRef.current) {
+                    openSocket()
+                }
+            }, delay)
+        }
+    }, [clearReconnectTimer, sendFrame])
 
-        socket.connect()
-    }, [])
-
-    const disconnect = useCallback(() => {
-        const socket = socketRef.current
-        if (!socket) {
+    useEffect(() => {
+        tokenRef.current = options.token
+        const ws = wsRef.current
+        if (!ws) {
             return
         }
-        socket.removeAllListeners()
-        socket.disconnect()
-        socketRef.current = null
+        if (!options.token) {
+            manualCloseRef.current = true
+            clearReconnectTimer()
+            ws.close()
+            wsRef.current = null
+            return
+        }
+        if (ws.readyState === WebSocket.OPEN) {
+            openSocket()
+        }
+    }, [options.token, clearReconnectTimer, openSocket])
+
+    const connect = useCallback(() => {
+        const ws = wsRef.current
+        if (ws) {
+            if (ws.readyState === WebSocket.OPEN) {
+                setState({ status: 'connected' })
+                return
+            }
+            if (ws.readyState === WebSocket.CONNECTING) {
+                return
+            }
+        }
+        openSocket()
+    }, [openSocket])
+
+    const disconnect = useCallback(() => {
+        manualCloseRef.current = true
+        clearReconnectTimer()
+        const ws = wsRef.current
+        if (!ws) {
+            return
+        }
+        if (ws.readyState === WebSocket.OPEN && subscribedRef.current) {
+            sendFrame(ws, { type: 'close', terminal_id: AGENT_TERMINAL_ID })
+        }
+        ws.onopen = null
+        ws.onmessage = null
+        ws.onerror = null
+        ws.onclose = null
+        ws.close()
+        wsRef.current = null
         setState({ status: 'idle' })
-    }, [])
+    }, [clearReconnectTimer, sendFrame])
 
     const resubscribe = useCallback(() => {
         subscribedRef.current = true
-        const socket = socketRef.current
+        const ws = wsRef.current
         const sessionId = sessionIdRef.current
-        if (socket?.connected && sessionId) {
-            socket.emit('agent-terminal:subscribe', { sessionId })
+        if (ws?.readyState === WebSocket.OPEN && sessionId) {
+            const { cols, rows } = lastSizeRef.current
+            sendFrame(ws, {
+                type: 'open',
+                terminal_id: AGENT_TERMINAL_ID,
+                cols,
+                rows
+            })
         }
-    }, [])
+    }, [sendFrame])
 
     // Tell the hub we're no longer viewing, so the CLI can stop streaming the PTY
     // when no viewers remain. (Safe to miss — the runner keeps streaming until it
@@ -164,34 +232,47 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
     // causes a black screen.)
     const unsubscribe = useCallback(() => {
         subscribedRef.current = false
-        const socket = socketRef.current
+        const ws = wsRef.current
         const sessionId = sessionIdRef.current
-        if (socket?.connected && sessionId) {
-            socket.emit('agent-terminal:unsubscribe', { sessionId })
+        if (ws?.readyState === WebSocket.OPEN && sessionId) {
+            sendFrame(ws, { type: 'close', terminal_id: AGENT_TERMINAL_ID })
         }
-    }, [])
+    }, [sendFrame])
 
     const resize = useCallback((cols: number, rows: number) => {
-        const socket = socketRef.current
-        const sessionId = sessionIdRef.current
-        if (!socket?.connected || !sessionId || cols < 1 || rows < 1) {
+        if (cols < 1 || rows < 1) {
             return
         }
-        socket.emit('agent-terminal:resize', { sessionId, cols, rows })
-    }, [])
+        lastSizeRef.current = { cols, rows }
+        const ws = wsRef.current
+        const sessionId = sessionIdRef.current
+        if (ws?.readyState !== WebSocket.OPEN || !sessionId) {
+            return
+        }
+        sendFrame(ws, {
+            type: 'resize',
+            terminal_id: AGENT_TERMINAL_ID,
+            cols,
+            rows
+        })
+    }, [sendFrame])
 
     const onOutput = useCallback((handler: (data: string) => void) => {
         outputHandlerRef.current = handler
     }, [])
 
     const sendInput = useCallback((data: string) => {
-        const socket = socketRef.current
+        const ws = wsRef.current
         const sessionId = sessionIdRef.current
-        if (!socket?.connected || !sessionId || !data) {
+        if (ws?.readyState !== WebSocket.OPEN || !sessionId || !data) {
             return
         }
-        socket.emit('agent-terminal:input', { sessionId, data })
-    }, [])
+        sendFrame(ws, {
+            type: 'write',
+            terminal_id: AGENT_TERMINAL_ID,
+            data
+        })
+    }, [sendFrame])
 
     return {
         state,

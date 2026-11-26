@@ -23,7 +23,7 @@ struct DeviceEndpointTests {
         )
 
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/devices/register")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/devices/register")
         #expect(request?.httpMethod == "POST")
         #expect(request?.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request?.value(forHTTPHeaderField: "Authorization") == "Bearer \(token)")
@@ -40,7 +40,7 @@ struct DeviceEndpointTests {
         try await harness.client.unregisterDevice(token: "a1b2c3")
 
         let request = await harness.performer.requests.first
-        #expect(request?.url?.absoluteString == "\(testHubURLString)/api/devices/register")
+        #expect(request?.url?.absoluteString == "\(testHubURLString)/v1/devices/register")
         #expect(request?.httpMethod == "DELETE")
         #expect(bodyString(request) == "{\"token\":\"a1b2c3\"}")
     }
