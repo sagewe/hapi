@@ -725,7 +725,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.34.3;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.qiqiwork;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG QIQI_WORK_STANDALONE $(inherited)";
@@ -759,7 +759,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.34.3;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.qiqiwork;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "QIQI_WORK_STANDALONE $(inherited)";
@@ -786,7 +786,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.34.3;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance.HapiNotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.qiqiwork.NotificationService;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SUPPORTS_MACCATALYST = NO;
@@ -814,7 +814,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.34.3;
-				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance.HapiNotificationService;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.qiqiwork.NotificationService;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SUPPORTS_MACCATALYST = NO;

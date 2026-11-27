@@ -2,13 +2,13 @@ import Foundation
 import SwiftUI
 
 /// Compile-time app identity separating personal HAPI (`com.sagewe.hapi`) from
-/// the standalone 「琪琪工作」 (`com.sagewe.hapi.compliance`) iOS build.
+/// the standalone 「琪琪工作」 (`com.sagewe.qiqiwork`) iOS build.
 enum AppBrand {
     #if QIQI_WORK_STANDALONE
     static let isQiqiWork = true
     static let displayName = "琪琪工作"
-    static let loggerSubsystem = "com.sagewe.hapi.compliance"
-    static let pushKeychainService = "com.sagewe.hapi.compliance.push"
+    static let loggerSubsystem = "com.sagewe.qiqiwork"
+    static let pushKeychainService = "com.sagewe.qiqiwork.push"
     static let pairingIcon = "checkmark.shield.fill"
     static let showsSetupGuideLink = false
     static let pairingTitle = "连接合规工作台"

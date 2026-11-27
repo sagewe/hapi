@@ -45,7 +45,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.sagewe.hapi.compliance.pairing</string>
+			<string>com.sagewe.qiqiwork.pairing</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>qiqiwork</string>

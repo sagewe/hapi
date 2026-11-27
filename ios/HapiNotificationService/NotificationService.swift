@@ -177,7 +177,7 @@ final class NotificationService: UNNotificationServiceExtension {
     /// after the first unlock since boot).
     static func readPushKey() -> Data? {
         #if QIQI_WORK_STANDALONE
-        let serviceName = "com.sagewe.hapi.compliance.push"
+        let serviceName = "com.sagewe.qiqiwork.push"
         #else
         let serviceName = "run.hapi.companion.push"
         #endif
