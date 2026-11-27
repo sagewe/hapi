@@ -176,6 +176,8 @@ public enum SyncEvent: Equatable, Sendable {
     case sessionEnded(namespace: String?, sessionId: String, reason: SessionEndReason?)
     /// `data` is `nil` when the wire field is absent (refetch machines).
     case machineUpdated(namespace: String?, machineId: String, data: MachineUpdatedData?)
+    /// Model catalog refreshed on a machine (`machine_models_updated`).
+    case machineModelsUpdated(namespace: String?, machineId: String, agent: String?)
     case toast(namespace: String?, data: ToastPayload)
     /// Queued user messages were consumed: stamp `invokedAt` on the rows.
     case messagesConsumed(namespace: String?, sessionId: String, localIds: [String], invokedAt: Int)
@@ -205,6 +207,7 @@ extension SyncEvent: Decodable {
         case updated_at
         case message
         case reason
+        case agent
         case localIds
         case local_ids
         case invokedAt
@@ -280,12 +283,19 @@ extension SyncEvent: Decodable {
                 sessionId: try decodeSessionId()
             )
         case "session_ended", "session-ended":
-            let reason = try container.decodeIfPresent(String.self, forKey: .reason)
+            let reason = (try? container.decodeIfPresent(JSONValue.self, forKey: .reason))?
+                .stringValue
                 .flatMap(SessionEndReason.init(rawValue:))
             self = .sessionEnded(
                 namespace: namespace,
                 sessionId: try decodeSessionId(),
                 reason: reason
+            )
+        case "machine_models_updated", "machine-agy-models-updated":
+            self = .machineModelsUpdated(
+                namespace: namespace,
+                machineId: try decodeMachineId(),
+                agent: try container.decodeIfPresent(String.self, forKey: .agent)
             )
         case "machine_updated", "machine-updated":
             let machineId = try decodeMachineId()

@@ -68,6 +68,27 @@ public func normalizeDecryptedMessage(_ message: DecryptedMessage) -> Normalized
         )
     }
 
+    if record.role == "system" {
+        let systemText: String
+        if let text = record.content.stringValue {
+            systemText = text
+        } else if let obj = record.content.objectValue,
+                  let text = obj["text"]?.stringValue {
+            systemText = text
+        } else {
+            systemText = safeStringify(record.content)
+        }
+        return NormalizedMessage(
+            id: message.id,
+            localId: message.localId,
+            createdAt: message.createdAt,
+            content: .agent([.text(.init(text: systemText, uuid: message.id, parentUUID: nil))]),
+            isSidechain: false,
+            meta: record.meta,
+            invokedAt: message.invokedAt
+        )
+    }
+
     return NormalizedMessage(
         id: message.id,
         localId: message.localId,

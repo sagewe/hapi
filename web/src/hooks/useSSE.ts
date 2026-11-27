@@ -251,6 +251,7 @@ export function useSSE(options: {
     onConnect?: (info: { resumed: boolean }) => void
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
+    onAuthError?: () => void
     onToast?: (event: ToastEvent) => void
 }): { subscriptionId: string | null } {
     const queryClient = useQueryClient()
@@ -258,6 +259,7 @@ export function useSSE(options: {
     const onConnectRef = useRef(options.onConnect)
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
+    const onAuthErrorRef = useRef(options.onAuthError)
     const onToastRef = useRef(options.onToast)
     const eventSourceRef = useRef<EventSource | null>(null)
     const invalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -289,6 +291,10 @@ export function useSSE(options: {
     useEffect(() => {
         onErrorRef.current = options.onError
     }, [options.onError])
+
+    useEffect(() => {
+        onAuthErrorRef.current = options.onAuthError
+    }, [options.onAuthError])
 
     useEffect(() => {
         onConnectRef.current = options.onConnect
@@ -340,6 +346,7 @@ export function useSSE(options: {
             sessionId: subscription.sessionId ?? undefined
         }, getVisibilityState(), resumeCursor)
         const eventSource = new EventSource(url)
+        let didOpen = false
         let disconnectNotified = false
         let reconnectRequested = false
         eventSourceRef.current = eventSource
@@ -853,6 +860,7 @@ export function useSSE(options: {
         }, CONNECT_TIMEOUT_MS)
 
         eventSource.onopen = () => {
+            didOpen = true
             clearTimeout(connectDeadlineTimer)
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current)
@@ -867,6 +875,9 @@ export function useSSE(options: {
         }
         eventSource.onerror = (error) => {
             onErrorRef.current?.(error)
+            if (!didOpen && reconnectAttemptRef.current >= 1) {
+                onAuthErrorRef.current?.()
+            }
             if (eventSource.readyState === EventSource.CLOSED) {
                 requestReconnect('closed')
                 return

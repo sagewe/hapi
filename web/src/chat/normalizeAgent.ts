@@ -374,6 +374,21 @@ function normalizeAssistantOutput(
                 const input = 'input' in block ? (block as Record<string, unknown>).input : undefined
                 const description = isObject(input) && typeof input.description === 'string' ? input.description : null
                 blocks.push({ type: 'tool-call', id: block.id, name, input, description, uuid, parentUUID })
+                continue
+            }
+            if (block.type === 'generated_media' || block.type === 'generated-image') {
+                const rec = block as Record<string, unknown>
+                const imageId = asString(rec.imageId ?? rec.image_id ?? rec.id)
+                if (imageId) {
+                    blocks.push({
+                        type: 'generated-image',
+                        imageId,
+                        fileName: asString(rec.fileName ?? rec.file_name ?? rec.filename) ?? 'generated-image',
+                        mimeType: asString(rec.mimeType ?? rec.mime_type) ?? null,
+                        uuid,
+                        parentUUID,
+                    })
+                }
             }
         }
     }

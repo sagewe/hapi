@@ -40,6 +40,15 @@ object RunnerSkew {
         missingRequiredCapabilities(advertised).isNotEmpty()
 
     /**
+     * Machine-level skew check: Reins Native v1 machines (`happyCliVersion == "reins-v1"`)
+     * do not participate in legacy HAPI CLI capability skew checks.
+     */
+    fun isMachineSkewed(metadata: MachineMetadata?): Boolean {
+        if (metadata?.happyCliVersion == "reins-v1") return false
+        return isMachineCapabilitySkewed(metadata?.capabilities)
+    }
+
+    /**
      * True when the running process started from a different CLI binary than
      * what is installed now (mtime drift). Both stamps must be present —
      * the reference's `Number.isFinite` guards are vacuous for `Long`.

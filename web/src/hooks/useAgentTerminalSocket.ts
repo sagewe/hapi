@@ -11,6 +11,7 @@ type UseAgentTerminalSocketOptions = {
     baseUrl: string
     token: string
     sessionId: string
+    onAuthError?: () => void
 }
 
 type ServerTerminalFrame = {
@@ -39,8 +40,11 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
     const wsRef = useRef<WebSocket | null>(null)
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const reconnectAttemptRef = useRef(0)
+    const consecutivePreOpenFailuresRef = useRef(0)
     const manualCloseRef = useRef(false)
+    const exitedRef = useRef(false)
     const outputHandlerRef = useRef<(data: string) => void>(() => {})
+    const onAuthErrorRef = useRef(options.onAuthError)
     const sessionIdRef = useRef(options.sessionId)
     const tokenRef = useRef(options.token)
     const baseUrlRef = useRef(options.baseUrl)
@@ -55,7 +59,8 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
     useEffect(() => {
         sessionIdRef.current = options.sessionId
         baseUrlRef.current = options.baseUrl
-    }, [options.sessionId, options.baseUrl])
+        onAuthErrorRef.current = options.onAuthError
+    }, [options.sessionId, options.baseUrl, options.onAuthError])
 
     const clearReconnectTimer = useCallback(() => {
         if (reconnectTimerRef.current) {
@@ -94,15 +99,19 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
         }
 
         manualCloseRef.current = false
+        exitedRef.current = false
         setState({ status: 'connecting' })
 
         const url = buildV1TerminalWsUrl(baseUrlRef.current, sessionId, token)
         const ws = new WebSocket(url)
+        let didOpen = false
         wsRef.current = ws
 
         ws.onopen = () => {
             if (wsRef.current !== ws) return
+            didOpen = true
             reconnectAttemptRef.current = 0
+            consecutivePreOpenFailuresRef.current = 0
             // Re-subscribe across reconnects only if the viewer still wants it.
             if (subscribedRef.current) {
                 const { cols, rows } = lastSizeRef.current
@@ -125,9 +134,18 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
                 return
             }
             const tid = frame.terminal_id ?? frame.terminalId
-            if (frame.type === 'output' && tid === AGENT_TERMINAL_ID && typeof frame.data === 'string') {
+            if (tid !== AGENT_TERMINAL_ID) return
+            if (frame.type === 'ready') {
+                setState({ status: 'connected' })
+            } else if (frame.type === 'output' && typeof frame.data === 'string') {
                 outputHandlerRef.current(frame.data)
-            } else if (frame.type === 'error' && tid === AGENT_TERMINAL_ID) {
+            } else if (frame.type === 'exit') {
+                exitedRef.current = true
+                manualCloseRef.current = true
+                clearReconnectTimer()
+                setState({ status: 'error', error: 'Terminal exited.' })
+                ws.close()
+            } else if (frame.type === 'error') {
                 setState({ status: 'error', error: frame.message || 'Terminal error' })
             }
         }
@@ -140,9 +158,19 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
         ws.onclose = (event) => {
             if (wsRef.current !== ws) return
             wsRef.current = null
+            if (exitedRef.current) {
+                return
+            }
             if (manualCloseRef.current) {
                 setState({ status: 'idle' })
                 return
+            }
+            const isExplicitAuthClose = event.code === 1008 || /auth|token|jwt|unauthorized/i.test(event.reason || '')
+            if (!didOpen) {
+                consecutivePreOpenFailuresRef.current += 1
+            }
+            if (isExplicitAuthClose || consecutivePreOpenFailuresRef.current >= 2) {
+                onAuthErrorRef.current?.()
             }
             const reason = event.reason || `code ${event.code}`
             setState({ status: 'error', error: `Disconnected: ${reason}` })
@@ -153,7 +181,7 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
             reconnectAttemptRef.current += 1
             reconnectTimerRef.current = setTimeout(() => {
                 reconnectTimerRef.current = null
-                if (!manualCloseRef.current) {
+                if (!manualCloseRef.current && !exitedRef.current) {
                     openSocket()
                 }
             }, delay)
@@ -210,6 +238,8 @@ export function useAgentTerminalSocket(options: UseAgentTerminalSocketOptions): 
         wsRef.current = null
         setState({ status: 'idle' })
     }, [clearReconnectTimer, sendFrame])
+
+    useEffect(() => () => disconnect(), [disconnect])
 
     const resubscribe = useCallback(() => {
         subscribedRef.current = true

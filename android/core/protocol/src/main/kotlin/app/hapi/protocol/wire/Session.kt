@@ -219,6 +219,7 @@ internal fun decodeV1Session(obj: JsonObject): Session {
         thinkingAt = updatedAt,
         backgroundTaskCount = 0,
         model = obj["model"].stringOrNull?.takeIf { it.isNotEmpty() },
+        modelReasoningEffort = obj["effort"].stringOrNull,
         effort = obj["effort"].stringOrNull,
         permissionMode = obj["permission_mode"].stringOrNull,
         contentRevision = contentRev,

@@ -278,6 +278,20 @@ private fun normalizeAssistantOutput(
                         parentUUID = parentUUID,
                     )
                 )
+                continue
+            }
+            if (type == "generated_media" || type == "generated-image") {
+                val imageId = asString(record["imageId"].orNull() ?: record["image_id"].orNull() ?: record["id"]) ?: continue
+                blocks.add(
+                    NormalizedAgentContent.GeneratedImage(
+                        imageId = imageId,
+                        fileName = asString(record["fileName"].orNull() ?: record["file_name"].orNull() ?: record["filename"]) ?: "generated-image",
+                        mimeType = asString(record["mimeType"].orNull() ?: record["mime_type"]),
+                        uuid = uuid,
+                        parentUUID = parentUUID,
+                        source = inlineMediaSourceFromWire(record["source"]),
+                    )
+                )
             }
         }
     }

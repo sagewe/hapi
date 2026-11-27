@@ -115,4 +115,38 @@ describe('useAgentTerminalSocket subscribe gating (Reins Native v1 WebSocket)', 
         expect(ws.openFrameCount()).toBe(1)
         expect(ws.closeFrameCount()).toBe(1)
     })
+
+    it('handles ready and exit frames, closes cleanly on unmount, and fires onAuthError on 1008', () => {
+        const onAuthError = vi.fn()
+        const { result, unmount } = renderHook(() => useAgentTerminalSocket({ ...options, onAuthError }))
+
+        act(() => result.current.connect())
+        const ws = FakeWebSocket.instances[0]!
+        act(() => ws.simulateOpen())
+        act(() => {
+            ws.onmessage?.({ data: JSON.stringify({ type: 'ready', terminal_id: 'agent' }) })
+        })
+        expect(result.current.state).toEqual({ status: 'connected' })
+
+        act(() => {
+            ws.onmessage?.({ data: JSON.stringify({ type: 'exit', terminal_id: 'agent', code: 0 }) })
+        })
+        expect(result.current.state).toEqual({ status: 'error', error: 'Terminal exited.' })
+        expect(ws.readyState).toBe(FakeWebSocket.CLOSED)
+
+        // Reconnect and test explicit auth close (1008)
+        act(() => result.current.connect())
+        const ws2 = FakeWebSocket.instances[1]!
+        act(() => {
+            ws2.onclose?.({ code: 1008, reason: 'unauthorized' })
+        })
+        expect(onAuthError).toHaveBeenCalledTimes(1)
+
+        // Unmount closes active socket
+        act(() => result.current.connect())
+        const ws3 = FakeWebSocket.instances[2]!
+        act(() => ws3.simulateOpen())
+        unmount()
+        expect(ws3.readyState).toBe(FakeWebSocket.CLOSED)
+    })
 })

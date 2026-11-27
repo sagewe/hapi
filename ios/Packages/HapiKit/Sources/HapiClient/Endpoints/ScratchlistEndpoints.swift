@@ -76,7 +76,7 @@ extension APIClient {
         )
         if response.attachment == nil, response.success, let path = response.path, !path.isEmpty {
             response.attachment = ScratchlistAttachment(
-                id: UUID().uuidString,
+                id: response.mediaId ?? UUID().uuidString,
                 filename: filename,
                 mimeType: mimeType,
                 size: data.count,

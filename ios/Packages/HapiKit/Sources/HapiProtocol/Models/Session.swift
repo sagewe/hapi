@@ -142,6 +142,7 @@ public struct Session: Codable, Equatable, Sendable {
         case updated_at
         case seq
         case message_count
+        case last_preview
     }
 
     public init(from decoder: Decoder) throws {
@@ -182,9 +183,11 @@ public struct Session: Codable, Equatable, Sendable {
             let msgCount = try v1.decodeIfPresent(Int.self, forKey: .message_count) ?? 0
             hasConversationContent = msgCount > 0
 
-            model = try v1.decodeIfPresent(String.self, forKey: .model)
-            modelReasoningEffort = nil
-            effort = try v1.decodeIfPresent(String.self, forKey: .effort)
+            let rawModel = try v1.decodeIfPresent(String.self, forKey: .model)
+            model = rawModel.flatMap { $0.isEmpty ? nil : $0 }
+            let rawEffort = try v1.decodeIfPresent(String.self, forKey: .effort)
+            effort = rawEffort
+            modelReasoningEffort = rawEffort
             serviceTier = nil
             if let pmRaw = try v1.decodeIfPresent(String.self, forKey: .permission_mode) {
                 permissionMode = PermissionMode(rawValue: pmRaw)
@@ -228,6 +231,10 @@ public struct Session: Codable, Equatable, Sendable {
             mergedObj["lifecycleState"] = .string(archived ? "archived" : "running")
             if case .string(let sumText)? = mergedObj["summary"] {
                 mergedObj["summary"] = .object(["text": .string(sumText), "updatedAt": .number(Double(updatedAt))])
+            } else if mergedObj["summary"] == nil,
+                      let preview = try v1.decodeIfPresent(String.self, forKey: .last_preview),
+                      !preview.isEmpty {
+                mergedObj["summary"] = .object(["text": .string(preview), "updatedAt": .number(Double(updatedAt))])
             }
             if let encoded = try? JSONEncoder().encode(JSONValue.object(mergedObj)),
                let decodedMeta = try? JSONDecoder().decode(SessionMetadata.self, from: encoded) {

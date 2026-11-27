@@ -120,29 +120,18 @@ extension APIClient {
         try await requestVoid(.delete, "/v1/sessions/\(encodePathComponent(id))")
     }
 
-    /// `PATCH /v1/sessions/:id` — rename / lock (plus `POST /v1/sessions/:id/tags` when tags are non-empty).
+    /// `PATCH /v1/sessions/:id` — rename / lock / replace tags (including `[]` to clear).
     public func renameSession(id: String, name: String? = nil, titleLocked: Bool? = nil, tags: [String]? = nil) async throws {
         struct PatchSessionRequest: Encodable {
             let title: String?
             let titleLocked: Bool?
             let tags: [String]?
         }
-        let encodedId = encodePathComponent(id)
-        if name != nil || titleLocked != nil || tags == nil {
-            try await requestVoid(
-                .patch,
-                "/v1/sessions/\(encodedId)",
-                body: PatchSessionRequest(title: name, titleLocked: titleLocked, tags: tags)
-            )
-        }
-        if let tags, !tags.isEmpty {
-            struct TagsRequest: Encodable { let tags: [String] }
-            try await requestVoid(
-                .post,
-                "/v1/sessions/\(encodedId)/tags",
-                body: TagsRequest(tags: Array(tags.prefix(3)))
-            )
-        }
+        try await requestVoid(
+            .patch,
+            "/v1/sessions/\(encodePathComponent(id))",
+            body: PatchSessionRequest(title: name, titleLocked: titleLocked, tags: tags)
+        )
     }
 
     /// `PATCH /v1/sessions/:id` (`title`, 1–255 chars).

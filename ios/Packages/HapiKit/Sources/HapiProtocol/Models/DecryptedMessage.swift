@@ -158,7 +158,7 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
                let mediaId = obj["id"]?.stringValue,
                let filename = obj["filename"]?.stringValue {
                 let mimeType = obj["mime_type"]?.stringValue ?? obj["mimeType"]?.stringValue ?? "image/png"
-                return .object([
+                var envelope: [String: JSONValue] = [
                     "role": .string("agent"),
                     "content": .object([
                         "type": .string("codex"),
@@ -170,7 +170,9 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
                             "mimeType": .string(mimeType),
                         ]),
                     ]),
-                ])
+                ]
+                if let meta, meta != .null { envelope["meta"] = meta }
+                return .object(envelope)
             }
             var contentBlocks: [JSONValue] = []
             for blk in blocks {
@@ -191,6 +193,17 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
                         "name": obj["name"] ?? .string(""),
                         "input": obj["input"] ?? .object([:]),
                     ]))
+                case "generated_media":
+                    if let mediaId = obj["id"]?.stringValue, !mediaId.isEmpty {
+                        let filename = obj["filename"]?.stringValue ?? "generated-media"
+                        let mimeType = obj["mime_type"]?.stringValue ?? obj["mimeType"]?.stringValue ?? "application/octet-stream"
+                        contentBlocks.append(.object([
+                            "type": .string("generated_media"),
+                            "id": .string(mediaId),
+                            "filename": .string(filename),
+                            "mime_type": .string(mimeType),
+                        ]))
+                    }
                 default:
                     break
                 }

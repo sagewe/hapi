@@ -375,14 +375,14 @@ public final class ComposerAttachments {
                 errorMessage = error.localizedDescription
             }
             guard let index = entries.firstIndex(where: { $0.ui.id == id }) else {
-                if let attachment { try? await api.deleteScratchlistAttachment(sessionId: sessionId, attachmentId: attachment.id) }
+                if let attachment { try? await api.deleteScratchlistAttachment(sessionId: sessionId, attachmentId: attachment.path) }
                 return
             }
             entries[index].ui = entries[index].ui.with(status: attachment == nil ? .failed : .ready, errorMessage: errorMessage)
             entries[index].scratchlist = attachment
             if let attachment {
                 entries[index].bytes = nil
-                ownedScratchlistIds.set(id: id, path: OwnedUpload(sessionId: sessionId, path: attachment.id))
+                ownedScratchlistIds.set(id: id, path: OwnedUpload(sessionId: sessionId, path: attachment.path))
             }
         }
     }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { MachineSchema, SessionSchema } from '@hapi/protocol/schemas'
 import {
     adaptV1AgyModelsResponse,
     adaptV1AuthResponse,
@@ -226,5 +227,130 @@ describe('v1Adapters', () => {
 
         const remEv = adaptV1SyncEvent({ type: 'session_removed', namespace: 'default', session_id: 's1' })
         expect(remEv).toEqual({ type: 'session-removed', namespace: 'default', sessionId: 's1' })
+    })
+
+    it('passes SessionSchema and MachineSchema strict validation for nullable/object v1 fields', () => {
+        const session = adaptV1Session({
+            id: 'sess-null-pm',
+            namespace: 'default',
+            machine_id: 'mac-1',
+            agent: 'codex',
+            directory: '/tmp/repo',
+            title: 'Title',
+            title_locked: false,
+            prompt_title: null,
+            model: '',
+            effort: 'high',
+            permission_mode: null,
+            status: 'idle',
+            pinned: false,
+            pin_mode: 'none',
+            archived: false,
+            meta_rev: 1,
+            state_rev: 1,
+            message_epoch: 0,
+            content_rev: 1,
+            read_rev: 0,
+            read_state_ver: 0,
+            manual_unread: false,
+            pending_requests: {},
+            metadata: {},
+            created_at: 1000,
+            updated_at: 2000,
+            seq: 1
+        })
+        expect(session.permissionMode).toBeUndefined()
+        expect(session.model).toBeNull()
+        expect(session.modelReasoningEffort).toBe('high')
+        expect(SessionSchema.safeParse(session).success).toBe(true)
+
+        const machine = adaptV1Machine({
+            id: 'mac-obj-caps',
+            namespace: 'default',
+            name: 'Mac Studio',
+            platform: 'darwin',
+            capabilities: { pty: true },
+            active: true,
+            last_seen_at: 5000
+        })
+        expect(machine.metadata?.capabilities).toBeUndefined()
+        expect(MachineSchema.safeParse(machine).success).toBe(true)
+    })
+
+    it('maps deliveryState/deliveryPending and multi-block generated_media accurately', () => {
+        const invoked = adaptV1Message({
+            id: 'm-invoked',
+            session_id: 's1',
+            seq: 1,
+            local_id: null,
+            role: 'user',
+            content_rev: 1,
+            invoked_at: 100,
+            delivery_state: 'invoked',
+            blocks: [{ type: 'text', text: 'hi' }],
+            meta: {},
+            created_at: 100
+        })
+        expect(invoked.deliveryState).toBeUndefined()
+        expect((invoked as { deliveryPending?: boolean }).deliveryPending).toBeUndefined()
+
+        const dispatching = adaptV1Message({
+            id: 'm-disp',
+            session_id: 's1',
+            seq: 2,
+            local_id: 'l-1',
+            role: 'user',
+            content_rev: 2,
+            invoked_at: null,
+            delivery_state: 'dispatching',
+            blocks: [{ type: 'text', text: 'hi' }],
+            meta: {},
+            created_at: 100
+        })
+        expect(dispatching.deliveryState).toBeUndefined()
+        expect((dispatching as { deliveryPending?: boolean }).deliveryPending).toBe(true)
+
+        const indet = adaptV1Message({
+            id: 'm-indet',
+            session_id: 's1',
+            seq: 3,
+            local_id: 'l-2',
+            role: 'user',
+            content_rev: 3,
+            invoked_at: null,
+            delivery_state: 'indeterminate',
+            blocks: [{ type: 'text', text: 'hi' }],
+            meta: {},
+            created_at: 100
+        })
+        expect(indet.deliveryState).toBe('indeterminate')
+
+        const multi = adaptV1Message({
+            id: 'm-multi',
+            session_id: 's1',
+            seq: 4,
+            local_id: null,
+            role: 'assistant',
+            content_rev: 4,
+            invoked_at: 200,
+            delivery_state: 'invoked',
+            blocks: [
+                { type: 'text', text: 'Here is the chart:' },
+                { type: 'generated_media', id: 'img_2', filename: 'plot.png', mime_type: 'image/png' }
+            ],
+            meta: {},
+            created_at: 200
+        })
+        const contentBlocks = (multi.content as { content?: { data?: { message?: { content?: Array<Record<string, unknown>> } } } }).content?.data?.message?.content ?? []
+        expect(contentBlocks).toHaveLength(2)
+        expect(contentBlocks[1]).toMatchObject({ type: 'generated_media', imageId: 'img_2', fileName: 'plot.png' })
+    })
+
+    it('always populates peerSpawnDefaults in adaptV1HubSettingsResponse', () => {
+        expect(adaptV1HubSettingsResponse({ ok: true })).toEqual({
+            sessionSummaryContract: false,
+            sessionSummaryInChat: false,
+            peerSpawnDefaults: { agent: 'claude', model: 'sonnet', permissionMode: 'yolo' }
+        })
     })
 })

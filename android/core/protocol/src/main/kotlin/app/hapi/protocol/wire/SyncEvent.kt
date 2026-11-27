@@ -105,33 +105,47 @@ sealed interface SyncEvent {
     }
 
     /** The agent consumed queued user messages: stamp `invokedAt`, leave the queued bar. */
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class MessagesConsumed(
         override val namespace: String? = null,
+        @JsonNames("session_id")
         val sessionId: String,
+        @JsonNames("local_ids")
         val localIds: List<String>,
+        @JsonNames("invoked_at")
         val invokedAt: Long,
     ) : SyncEvent
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class MessagesIndeterminate(
         override val namespace: String? = null,
+        @JsonNames("session_id")
         val sessionId: String,
+        @JsonNames("local_ids")
         val localIds: List<String>,
     ) : SyncEvent
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class MessagesRequeued(
         override val namespace: String? = null,
+        @JsonNames("session_id")
         val sessionId: String,
+        @JsonNames("local_ids")
         val localIds: List<String>,
     ) : SyncEvent
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Serializable
     data class MessageCancelled(
         override val namespace: String? = null,
+        @JsonNames("session_id")
         val sessionId: String,
+        @JsonNames("message_id")
         val messageId: String,
+        @JsonNames("local_id")
         val localId: String? = null,
     ) : SyncEvent
 

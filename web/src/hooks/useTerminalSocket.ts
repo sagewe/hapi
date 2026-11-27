@@ -12,6 +12,7 @@ type UseTerminalSocketOptions = {
     token: string
     sessionId: string
     terminalId: string
+    onAuthError?: () => void
 }
 
 type ServerTerminalFrame =
@@ -37,9 +38,12 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
     const wsRef = useRef<WebSocket | null>(null)
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const reconnectAttemptRef = useRef(0)
+    const consecutivePreOpenFailuresRef = useRef(0)
     const manualCloseRef = useRef(false)
+    const exitedRef = useRef(false)
     const outputHandlerRef = useRef<(data: string) => void>(() => {})
     const exitHandlerRef = useRef<(code: number | null, signal: string | null) => void>(() => {})
+    const onAuthErrorRef = useRef(options.onAuthError)
     const sessionIdRef = useRef(options.sessionId)
     const terminalIdRef = useRef(options.terminalId)
     const tokenRef = useRef(options.token)
@@ -50,7 +54,8 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         sessionIdRef.current = options.sessionId
         terminalIdRef.current = options.terminalId
         baseUrlRef.current = options.baseUrl
-    }, [options.sessionId, options.terminalId, options.baseUrl])
+        onAuthErrorRef.current = options.onAuthError
+    }, [options.sessionId, options.terminalId, options.baseUrl, options.onAuthError])
 
     const isCurrentTerminal = useCallback(
         (terminalId?: string) => terminalId === terminalIdRef.current,
@@ -108,15 +113,19 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         }
 
         manualCloseRef.current = false
+        exitedRef.current = false
         setState({ status: 'connecting' })
 
         const url = buildV1TerminalWsUrl(baseUrlRef.current, sessionId, token)
         const ws = new WebSocket(url)
+        let didOpen = false
         wsRef.current = ws
 
         ws.onopen = () => {
             if (wsRef.current !== ws) return
+            didOpen = true
             reconnectAttemptRef.current = 0
+            consecutivePreOpenFailuresRef.current = 0
             const size = lastSizeRef.current ?? { cols, rows }
             setState({ status: 'connecting' })
             emitOpen(ws, size)
@@ -140,9 +149,12 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             } else if (frame.type === 'output' && typeof frame.data === 'string') {
                 outputHandlerRef.current(frame.data)
             } else if (frame.type === 'exit') {
+                exitedRef.current = true
                 manualCloseRef.current = true
+                clearReconnectTimer()
                 exitHandlerRef.current(frame.code ?? null, frame.signal ?? null)
                 setErrorState('Terminal exited.')
+                ws.close()
             } else if (frame.type === 'error') {
                 setErrorState(frame.message || 'Terminal error')
             }
@@ -156,9 +168,19 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         ws.onclose = (event) => {
             if (wsRef.current !== ws) return
             wsRef.current = null
+            if (exitedRef.current) {
+                return
+            }
             if (manualCloseRef.current) {
                 setState({ status: 'idle' })
                 return
+            }
+            const isExplicitAuthClose = event.code === 1008 || /auth|token|jwt|unauthorized/i.test(event.reason || '')
+            if (!didOpen) {
+                consecutivePreOpenFailuresRef.current += 1
+            }
+            if (isExplicitAuthClose || consecutivePreOpenFailuresRef.current >= 2) {
+                onAuthErrorRef.current?.()
             }
             const reason = event.reason || `code ${event.code}`
             setErrorState(`Disconnected: ${reason}`)
@@ -169,7 +191,7 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             reconnectAttemptRef.current += 1
             reconnectTimerRef.current = setTimeout(() => {
                 reconnectTimerRef.current = null
-                if (!manualCloseRef.current) {
+                if (!manualCloseRef.current && !exitedRef.current) {
                     const size = lastSizeRef.current ?? { cols, rows }
                     openSocket(size.cols, size.rows)
                 }
@@ -243,6 +265,8 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         wsRef.current = null
         setState({ status: 'idle' })
     }, [clearReconnectTimer, sendFrame])
+
+    useEffect(() => () => disconnect(), [disconnect])
 
     const onOutput = useCallback((handler: (data: string) => void) => {
         outputHandlerRef.current = handler

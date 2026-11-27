@@ -513,6 +513,109 @@ describe('ApiClient Kimi session model discovery', () => {
     })
 })
 
+describe('ApiClient Reins Native v1 contract fixes', () => {
+    let originalFetch: typeof globalThis.fetch
+    let fetchMock: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+        originalFetch = globalThis.fetch
+        fetchMock = vi.fn()
+        globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+    })
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch
+    })
+
+    it('requests up to 500 sessions on GET /v1/sessions', async () => {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [] }), { status: 200 }))
+        const api = new ApiClient('test-token')
+        await api.getSessions()
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions?limit=500')
+    })
+
+    it('returns null from getMessageContext on HTTP 404', async () => {
+        fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }))
+        const api = new ApiClient('test-token')
+        await expect(api.getMessageContext('sess-1', 'msg-missing')).resolves.toBeNull()
+    })
+
+    it('routes reopenSession to POST /v1/sessions/{id}/resume', async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(JSON.stringify({ ok: true, session: { id: 'sess-1' } }), { status: 200 })
+        )
+        const api = new ApiClient('test-token')
+        await expect(api.reopenSession('sess-1')).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            resumed: true
+        })
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/sess-1/resume')
+    })
+
+    it('sends explicit null in setModel and setEffort to reset to default', async () => {
+        fetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ session: {} }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ session: {} }), { status: 200 }))
+        const api = new ApiClient('test-token')
+        await api.setModel('sess-1', null, { effort: null })
+        await api.setEffort('sess-1', null)
+        expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ model: null, effort: null }))
+        expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ effort: null }))
+    })
+
+    it('refetches GET /v1/settings when PUT /v1/settings returns { ok: true }', async () => {
+        fetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                session_summary_contract: true,
+                session_summary_in_chat: false,
+                peer_spawn_defaults: { agent: 'claude', model: 'sonnet', permission_mode: 'yolo' },
+                client_profile: { quickActions: [] }
+            }), { status: 200 }))
+        const api = new ApiClient('test-token')
+        const updated = await api.updateHubSettings({ sessionSummaryContract: true })
+        expect(updated.sessionSummaryContract).toBe(true)
+        expect(updated.peerSpawnDefaults.agent).toBe('claude')
+        expect(updated.clientProfile).toEqual({ quickActions: [] })
+    })
+
+    it('normalizes scratchlist upload attachment metadata and resolves id -> path on delete', async () => {
+        fetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({
+                success: true,
+                path: '.reins/uploads/att-1.png',
+                media_id: 'media_1',
+                attachment: {
+                    id: 'media_1',
+                    filename: 'shot.png',
+                    mimeType: 'image/png',
+                    size: 128,
+                    path: '.reins/uploads/att-1.png'
+                }
+            }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }))
+        const api = new ApiClient('test-token')
+        const uploaded = await api.uploadScratchlistAttachment('sess-1', 'shot.png', 'YWJj', 'image/png')
+        expect(uploaded).toEqual({
+            success: true,
+            attachment: {
+                id: 'media_1',
+                filename: 'shot.png',
+                mimeType: 'image/png',
+                size: 128,
+                path: '.reins/uploads/att-1.png'
+            }
+        })
+        await api.deleteScratchlistAttachment('sess-1', 'media_1')
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/sessions/sess-1/uploads')
+        expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+            method: 'DELETE',
+            body: JSON.stringify({ path: '.reins/uploads/att-1.png' })
+        })
+    })
+})
+
 describe('ApiClient auth proxy redirect', () => {
     let originalFetch: typeof globalThis.fetch
     let fetchMock: ReturnType<typeof vi.fn>

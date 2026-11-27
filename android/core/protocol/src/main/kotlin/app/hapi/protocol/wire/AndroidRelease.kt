@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonNames
     @JsonNames("file_name") val fileName: String,
     val sha256: String,
     val size: Long,
-    @JsonNames("release_notes") val releaseNotes: String,
-    @JsonNames("published_at") val publishedAt: String,
+    @JsonNames("release_notes") val releaseNotes: String = "",
+    @JsonNames("published_at") val publishedAt: String = "",
     @JsonNames("download_path") val downloadPath: String,
 )

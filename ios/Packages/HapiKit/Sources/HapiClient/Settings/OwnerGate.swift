@@ -12,7 +12,7 @@ public enum OwnerGate {
     public static let ownerNamespace = "default"
 
     public static func isOwnerNamespace(jwt: String?) -> Bool {
-        guard let jwt else { return false }
-        return JWT.claims(from: jwt)?.ns == ownerNamespace
+        guard let jwt, let claims = JWT.claims(from: jwt) else { return false }
+        return claims.owner == true || claims.ns == ownerNamespace
     }
 }

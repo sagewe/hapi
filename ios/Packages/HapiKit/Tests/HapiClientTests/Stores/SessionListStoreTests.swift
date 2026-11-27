@@ -93,7 +93,7 @@ struct SessionListStoreTests {
         await performer.enqueue(json: "{}")
         try await store.updateTags(sessionId: "s1", tags: ["  Frontend ", "frontend", "Urgent"])
         let requests = await performer.requests
-        let request = try #require(requests.first { $0.httpMethod == "POST" && $0.url?.path == "/v1/sessions/s1/tags" })
+        let request = try #require(requests.first { $0.httpMethod == "PATCH" && $0.url?.path == "/v1/sessions/s1" })
         let payload = try #require(request.httpBody)
         let object = try #require(JSONSerialization.jsonObject(with: payload) as? [String: Any])
         #expect(object["tags"] as? [String] == ["Frontend", "Urgent"])

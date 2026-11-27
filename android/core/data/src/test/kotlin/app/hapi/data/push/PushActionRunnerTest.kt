@@ -172,6 +172,19 @@ class PushActionRunnerTest {
     }
 
     @Test
+    fun `400 session_closed also maps to SessionInactive`() {
+        serverA.enqueue(
+            MockResponse().setResponseCode(400)
+                .setBody("""{"error":"session_closed"}""")
+        )
+
+        val outcome = runBlocking { runner.sendMessage("s1", "hi", "l1") }
+
+        assertEquals(PushActionOutcome.SessionInactive(hubA), outcome)
+        assertEquals(0, serverB.requestCount)
+    }
+
+    @Test
     fun `session unknown everywhere is a permanent miss`() {
         serverA.enqueue(sessionNotFound())
         serverB.enqueue(sessionNotFound())

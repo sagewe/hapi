@@ -80,7 +80,8 @@ internal class HoldDictation(private val api: HapiApi,private val scope: Corouti
                     } finally { runCatching { mic.stop() };mic.release();if(record===mic) record=null }
                     if(recording && token==generation) withContext(Dispatchers.Main) { finish(false) }
                 }
-                api.prepareStreamingAsr(draft,java.util.UUID.randomUUID().toString())
+                val recordingId=java.util.UUID.randomUUID().toString()
+                api.prepareStreamingAsr(draft,recordingId)
                 if(token!=generation || !recording) return@launch
                 socket=api.openStreamingAsr(draft,object: WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket,response: Response) {
@@ -101,7 +102,7 @@ internal class HoldDictation(private val api: HapiApi,private val scope: Corouti
                     }
                     override fun onFailure(webSocket: WebSocket,t: Throwable,response: Response?) { if(token==generation) { failed=true;final.complete(null) } }
                     override fun onClosed(webSocket: WebSocket,code: Int,reason: String) { if(token==generation) final.complete(null) }
-                })
+                },recordingId=recordingId)
 
             } catch(e: Exception) { if(e is CancellationException) throw e;if(token==generation) { this@HoldDictation.cancel();error("无法开始录音，请使用语音听写重试") } }
         }

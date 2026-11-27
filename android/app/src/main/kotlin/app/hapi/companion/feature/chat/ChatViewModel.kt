@@ -2043,7 +2043,7 @@ class ChatViewModel(
                             ?: models.models.firstOrNull { it.isDefault }
                         val efforts = selected?.supportedReasoningEfforts.orEmpty()
                         if (efforts.isNotEmpty()) {
-                            effort = detail?.modelReasoningEffort
+                            effort = detail?.modelReasoningEffort ?: detail?.effort ?: summary?.modelReasoningEffort ?: summary?.effort
                             effortOptions = listOf(CatalogOption(null, "Default")) + efforts.map { level ->
                                 CatalogOption(level, level.replaceFirstChar { it.uppercaseChar() })
                             }
@@ -2320,7 +2320,10 @@ class ChatViewModel(
         const val DRAFT_SAVE_DEBOUNCE_MS: Long = 300
 
         fun Exception.isSessionInactive(): Boolean =
-            this is ApiError && status == 409 && code == "session_inactive"
+            this is ApiError && (
+                (status == 409 && code == "session_inactive") ||
+                    (status == 400 && code == "session_closed")
+                )
 
         /**
          * Codex-style approval UX (`PermissionFooter.isCodexSession`): codex

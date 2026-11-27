@@ -115,9 +115,13 @@ extension APIClient {
     /// gap-recovery sweep re-reads out-of-page merged rows through it (web
     /// `getMessageContext`).
     public func messageContext(sessionId: String, messageId: String) async throws -> MessageContextResponse? {
-        try await request(
-            .get,
-            "/v1/sessions/\(encodePathComponent(sessionId))/messages/\(encodePathComponent(messageId))/context"
-        )
+        do {
+            return try await request(
+                .get,
+                "/v1/sessions/\(encodePathComponent(sessionId))/messages/\(encodePathComponent(messageId))/context"
+            )
+        } catch let error as APIError where error.status == 404 {
+            return nil
+        }
     }
 }

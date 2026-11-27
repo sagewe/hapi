@@ -24,6 +24,16 @@ export type VoiceBackendSessionProps = RealtimeVoiceSessionProps & {
  * Queries GET /voice/backend once on mount and renders the appropriate component.
  * Only signals readiness after the selected backend has mounted and registered its session.
  */
+const SUPPORTED_REALTIME_VOICE_BACKENDS = new Set<VoiceBackendType>([
+    'elevenlabs',
+    'gemini-live',
+    'qwen-realtime'
+])
+
+function isSupportedRealtimeBackend(value: string | null | undefined): value is VoiceBackendType {
+    return typeof value === 'string' && SUPPORTED_REALTIME_VOICE_BACKENDS.has(value as VoiceBackendType)
+}
+
 export function VoiceBackendSession(props: VoiceBackendSessionProps) {
     const [backend, setBackend] = useState<VoiceBackendType | null>(null)
 
@@ -32,7 +42,9 @@ export function VoiceBackendSession(props: VoiceBackendSessionProps) {
         setBackend(null)
         fetchVoiceBackend(props.api).then((resp) => {
             if (!cancelled) {
-                setBackend(resolveSelectedVoiceBackend(resp.backends, resp.backend))
+                const supportedBackends = resp.backends.filter(isSupportedRealtimeBackend)
+                const supportedDefault = isSupportedRealtimeBackend(resp.backend) ? resp.backend : null
+                setBackend(resolveSelectedVoiceBackend(supportedBackends, supportedDefault))
             }
         }).catch((err: unknown) => {
             if (!cancelled) {

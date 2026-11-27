@@ -145,11 +145,14 @@ data class ScratchlistLimitsResponse(
  * [ScratchlistErrorCodes.ATTACHMENT_TOO_LARGE] / 400) and surface as
  * `ApiError`, so a decoded body always carries [attachment].
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ScratchlistUploadResponse(
     val success: Boolean,
     val attachment: ScratchlistAttachment? = null,
     val path: String? = null,
+    @JsonNames("media_id")
+    val mediaId: String? = null,
     val error: String? = null,
     val code: String? = null,
 )

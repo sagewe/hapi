@@ -676,7 +676,8 @@ struct PushActionRunner {
     /// request gone. An unrecognizable 404 body degrades to "not this hub".
     private static func classify(_ error: APIError) -> HubVerdict {
         switch true {
-        case error.status == 404 && error.code == "Request not found":
+        case (error.status == 404 && error.code == "Request not found"),
+             (error.status == 409 && error.code == "request_not_found"):
             return .alreadyHandled
         case error.status == 404, error.status == 403:
             return .notThisHub

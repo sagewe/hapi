@@ -130,12 +130,16 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
                     "text" -> blk["text"].stringOrNull?.let(texts::add)
                     "attachment" -> {
                         val filename = blk["filename"].stringOrNull ?: ""
+                        val previewUrl = blk["previewUrl"].stringOrNull ?: blk["preview_url"].stringOrNull
                         attachments.add(buildJsonObject {
                             blk["id"]?.let { put("id", it) }
                             put("filename", JsonPrimitive(filename))
                             put("mimeType", JsonPrimitive(blk["mimeType"].stringOrNull ?: blk["mime_type"].stringOrNull ?: "application/octet-stream"))
                             put("size", JsonPrimitive(blk["size"].longOrNull ?: 0L))
-                            put("path", JsonPrimitive(blk["previewUrl"].stringOrNull ?: blk["preview_url"].stringOrNull ?: filename))
+                            put("path", JsonPrimitive(previewUrl ?: filename))
+                            if (!previewUrl.isNullOrBlank()) {
+                                put("previewUrl", JsonPrimitive(previewUrl))
+                            }
                         })
                     }
                 }
@@ -168,6 +172,7 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
                             put("mimeType", JsonPrimitive(singleGenMedia["mime_type"].stringOrNull ?: singleGenMedia["mimeType"].stringOrNull ?: "image/png"))
                         })
                     })
+                    if (meta != null && meta.isNotEmpty()) put("meta", meta)
                 }
             } else {
                 val contentBlocks = buildJsonArray {
@@ -186,6 +191,12 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
                                 put("id", JsonPrimitive(blk["id"].stringOrNull ?: ""))
                                 put("name", JsonPrimitive(blk["name"].stringOrNull ?: ""))
                                 put("input", blk["input"] ?: JsonObject(emptyMap()))
+                            })
+                            "generated_media" -> add(buildJsonObject {
+                                put("type", JsonPrimitive("generated_media"))
+                                put("id", JsonPrimitive(blk["id"].stringOrNull ?: msgId))
+                                put("filename", JsonPrimitive(blk["filename"].stringOrNull ?: "media"))
+                                put("mime_type", JsonPrimitive(blk["mime_type"].stringOrNull ?: blk["mimeType"].stringOrNull ?: "image/png"))
                             })
                         }
                     }

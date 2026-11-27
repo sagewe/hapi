@@ -119,7 +119,8 @@ class PushActionRunner(private val hubAccess: PushHubAccess) {
             (error.status == 404 && error.code == REQUEST_NOT_FOUND) -> HubVerdict.ALREADY_HANDLED
         error.status == 404 -> HubVerdict.NOT_THIS_HUB
         error.status == 403 -> HubVerdict.NOT_THIS_HUB // session owned by another namespace there
-        error.status == 409 && error.code == SESSION_INACTIVE_CODE -> HubVerdict.SESSION_INACTIVE
+        (error.status == 409 && error.code == SESSION_INACTIVE_CODE) ||
+            (error.status == 400 && error.code == SESSION_CLOSED_CODE) -> HubVerdict.SESSION_INACTIVE
         // 401 surfacing here means the silent re-auth itself failed (offline
         // auth endpoint, rotating secret) — retryable, not a verdict on the
         // session. 5xx / 503 `Not connected` (CLI away from the hub): same.
@@ -132,5 +133,6 @@ class PushActionRunner(private val hubAccess: PushHubAccess) {
         const val V1_REQUEST_NOT_FOUND = "request_not_found"
         const val REQUEST_NOT_FOUND = "Request not found"
         const val SESSION_INACTIVE_CODE = "session_inactive"
+        const val SESSION_CLOSED_CODE = "session_closed"
     }
 }

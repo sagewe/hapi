@@ -76,7 +76,7 @@ enum ScratchlistTransfer {
     @MainActor
     static func cleanupPark(store: any SessionScratchlistStoring, sessionId: String, attachments: [ScratchlistAttachment]) async {
         for attachment in attachments {
-            _ = await store.deleteAttachment(sessionId: sessionId, attachmentId: attachment.id)
+            _ = await store.deleteAttachment(sessionId: sessionId, attachmentId: attachment.path)
         }
     }
 

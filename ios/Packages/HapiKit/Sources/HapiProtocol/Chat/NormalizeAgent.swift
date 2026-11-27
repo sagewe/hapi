@@ -297,6 +297,19 @@ func normalizeAssistantOutput(
                 blocks.append(.reasoning(.init(text: thinking, uuid: uuid, parentUUID: parentUUID)))
                 continue
             }
+            if type == "generated_media",
+               let imageId = asString(jsCoalesce(object["id"], object["imageId"], object["image_id"])),
+               !imageId.isEmpty {
+                blocks.append(.generatedImage(GeneratedImageContent(
+                    imageId: imageId,
+                    fileName: asString(jsCoalesce(object["filename"], object["fileName"], object["file_name"])) ?? "generated-image",
+                    mimeType: asString(jsCoalesce(object["mime_type"], object["mimeType"])),
+                    uuid: uuid,
+                    parentUUID: parentUUID,
+                    source: nil
+                )))
+                continue
+            }
             if type == "tool_use", let id = object["id"]?.stringValue {
                 let name = asString(object["name"]) ?? "Tool"
                 let input = object["input"] // key-presence == TS `'input' in block`

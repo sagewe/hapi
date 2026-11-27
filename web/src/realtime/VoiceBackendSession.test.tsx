@@ -82,4 +82,26 @@ describe('VoiceBackendSession', () => {
         })
         expect(onStatusChange).not.toHaveBeenCalled()
     })
+
+    it('gates unsupported backends like home-gateway so realtime voice UI stays disabled', async () => {
+        fetchVoiceBackendMock.mockResolvedValue({ backend: 'home-gateway', backends: ['home-gateway'] })
+        const onReadyChange = vi.fn()
+
+        const view = render(
+            <VoiceBackendSession
+                api={api}
+                micMuted={false}
+                onStatusChange={vi.fn()}
+                onReadyChange={onReadyChange}
+            />
+        )
+        await act(async () => {
+            await Promise.resolve()
+        })
+
+        expect(view.queryByTestId('elevenlabs-session')).toBeNull()
+        expect(view.queryByTestId('gemini-session')).toBeNull()
+        expect(view.queryByTestId('qwen-session')).toBeNull()
+        expect(onReadyChange).not.toHaveBeenCalled()
+    })
 })

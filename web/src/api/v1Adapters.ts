@@ -75,24 +75,36 @@ export function adaptV1AuthResponse(raw: unknown): AuthResponse {
     }
 }
 
+const DEFAULT_PEER_SPAWN_DEFAULTS = {
+    agent: 'claude',
+    model: 'sonnet',
+    permissionMode: 'yolo'
+}
+
 export function adaptV1HubSettingsResponse(raw: unknown): HubSettingsResponse {
     if (!isRecord(raw)) {
         return raw as HubSettingsResponse
     }
     if ('sessionSummaryContract' in raw || 'peerSpawnDefaults' in raw) {
-        return raw as unknown as HubSettingsResponse
+        const existing = raw as UnknownRecord
+        return {
+            ...existing,
+            peerSpawnDefaults: isRecord(existing.peerSpawnDefaults)
+                ? existing.peerSpawnDefaults
+                : { ...DEFAULT_PEER_SPAWN_DEFAULTS }
+        } as unknown as HubSettingsResponse
     }
     const peerRaw = isRecord(raw.peer_spawn_defaults) ? raw.peer_spawn_defaults : undefined
     const result: UnknownRecord = {
         sessionSummaryContract: asBoolean(raw.session_summary_contract) ?? false,
         sessionSummaryInChat: asBoolean(raw.session_summary_in_chat) ?? false,
-        ...(peerRaw ? {
-            peerSpawnDefaults: {
-                agent: asString(peerRaw.agent) ?? 'claude',
-                model: asString(peerRaw.model) ?? 'sonnet',
-                permissionMode: asString(peerRaw.permission_mode) ?? asString(peerRaw.permissionMode) ?? 'yolo'
+        peerSpawnDefaults: peerRaw
+            ? {
+                agent: asString(peerRaw.agent) ?? DEFAULT_PEER_SPAWN_DEFAULTS.agent,
+                model: asString(peerRaw.model) ?? DEFAULT_PEER_SPAWN_DEFAULTS.model,
+                permissionMode: asString(peerRaw.permission_mode) ?? asString(peerRaw.permissionMode) ?? DEFAULT_PEER_SPAWN_DEFAULTS.permissionMode
             }
-        } : {}),
+            : { ...DEFAULT_PEER_SPAWN_DEFAULTS },
         ...(raw.client_profile !== undefined ? { clientProfile: raw.client_profile } : {})
     }
     return result as unknown as HubSettingsResponse
@@ -209,15 +221,20 @@ export function adaptV1Session(raw: unknown): Session {
     const readRev = asNumber(raw.read_rev) ?? 0
     const readStateVer = asNumber(raw.read_state_ver) ?? 0
     const manualUnread = asBoolean(raw.manual_unread) ?? false
+    const rawModel = asString(raw.model)
+    const normalizedModel = rawModel && rawModel.length > 0 ? rawModel : null
+    const normalizedEffort = asString(raw.effort) ?? null
+    const rawPermissionMode = asString(raw.permission_mode)
 
     const adapted: UnknownRecord = {
         id: asString(raw.id) ?? '',
         namespace: asString(raw.namespace) ?? 'default',
         seq: asNumber(raw.seq) ?? 0,
-        model: asString(raw.model) ?? null,
-        effort: asString(raw.effort) ?? null,
+        model: normalizedModel,
+        effort: normalizedEffort,
+        modelReasoningEffort: normalizedEffort,
         agent,
-        permissionMode: asString(raw.permission_mode) ?? null,
+        ...(rawPermissionMode && rawPermissionMode.length > 0 ? { permissionMode: rawPermissionMode } : {}),
         active: !archived,
         activeAt: updatedAt,
         thinking,
@@ -264,6 +281,9 @@ export function adaptV1Machine(raw: unknown): Machine {
     }
     const lastSeen = asNumber(raw.last_seen_at) ?? Date.now()
     const active = asBoolean(raw.active) ?? false
+    const capabilities = Array.isArray(raw.capabilities)
+        ? raw.capabilities.filter((item): item is string => typeof item === 'string')
+        : undefined
     const adapted: UnknownRecord = {
         id: asString(raw.id) ?? '',
         namespace: asString(raw.namespace) ?? 'default',
@@ -279,7 +299,7 @@ export function adaptV1Machine(raw: unknown): Machine {
             host: asString(raw.name) ?? asString(raw.id) ?? '',
             platform: asString(raw.platform) ?? 'unknown',
             happyCliVersion: '0.34.3',
-            capabilities: raw.capabilities ?? {}
+            ...(capabilities !== undefined ? { capabilities } : {})
         }
     }
     return adapted as unknown as Machine
@@ -357,6 +377,14 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
                         name: asString(blk.name) ?? '',
                         input: blk.input ?? {}
                     })
+                } else if (blk.type === 'generated_media') {
+                    contentBlocks.push({
+                        type: 'generated_media',
+                        id: asString(blk.id) ?? '',
+                        imageId: asString(blk.id) ?? '',
+                        fileName: asString(blk.filename) ?? 'image',
+                        mimeType: asString(blk.mime_type ?? blk.mimeType) ?? 'image/png'
+                    })
                 }
             }
             content = {
@@ -427,6 +455,7 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
         }
     }
 
+    const rawDeliveryState = asString(raw.delivery_state)
     const adapted: UnknownRecord = {
         id,
         seq,
@@ -434,7 +463,8 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
         contentRevision: asNumber(raw.content_rev) ?? 0,
         createdAt,
         invokedAt,
-        deliveryState: asString(raw.delivery_state) ?? 'invoked',
+        ...(rawDeliveryState === 'indeterminate' ? { deliveryState: 'indeterminate' as const } : {}),
+        ...(rawDeliveryState === 'dispatching' ? { deliveryPending: true as const } : {}),
         content
     }
     return adapted as unknown as DecryptedMessage

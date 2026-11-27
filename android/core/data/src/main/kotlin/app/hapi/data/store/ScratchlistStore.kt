@@ -174,6 +174,9 @@ class ScratchlistStore(
     /** Optimistic-create entry ids whose POST has not settled (refresh keeps them). */
     private val pendingCreates = ConcurrentHashMap.newKeySet<String>()
 
+    /** Maps attachment `id` (`media_id`) to remote `path` for `DELETE /v1/sessions/:id/uploads`. */
+    private val attachmentPaths = ConcurrentHashMap<String, String>()
+
     @Volatile
     private var cachedLimits: ScratchlistAttachmentLimits? = null
 
@@ -212,6 +215,13 @@ class ScratchlistStore(
                     st.copy(isRefreshing = false, loadFailed = !st.loaded)
                 }
                 throw error
+            }
+            fetched.forEach { entry ->
+                entry.attachments.forEach { att ->
+                    if (att.id.isNotBlank() && att.path.isNotBlank()) {
+                        attachmentPaths[att.id] = att.path
+                    }
+                }
             }
             update(sessionId) { st ->
                 // Keep optimistic rows whose POST is still in flight — a
@@ -400,6 +410,9 @@ class ScratchlistStore(
             )
             val attachment = response.attachment
             if (response.success && attachment != null) {
+                if (attachment.id.isNotBlank() && attachment.path.isNotBlank()) {
+                    attachmentPaths[attachment.id] = attachment.path
+                }
                 ScratchlistUploadResult.Uploaded(attachment)
             } else {
                 ScratchlistUploadResult.Failed(response.error ?: "Upload failed", response.code)
@@ -417,7 +430,9 @@ class ScratchlistStore(
         sessionId: String,
         attachmentId: String,
     ): ScratchlistAttachmentDeleteResult = try {
-        api.deleteScratchlistAttachment(sessionId, attachmentId)
+        val pathOrId = attachmentPaths[attachmentId] ?: attachmentId
+        api.deleteScratchlistAttachment(sessionId, pathOrId)
+        attachmentPaths.remove(attachmentId)
         ScratchlistAttachmentDeleteResult.Removed
     } catch (error: Exception) {
         when {

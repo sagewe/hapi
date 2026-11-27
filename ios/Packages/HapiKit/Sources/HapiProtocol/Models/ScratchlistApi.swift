@@ -224,6 +224,7 @@ public struct ScratchlistUploadResponse: Codable, Equatable, Sendable {
     public var success: Bool
     public var attachment: ScratchlistAttachment?
     public var path: String?
+    public var mediaId: String?
     public var error: String?
     public var code: String?
 
@@ -231,13 +232,46 @@ public struct ScratchlistUploadResponse: Codable, Equatable, Sendable {
         success: Bool,
         attachment: ScratchlistAttachment? = nil,
         path: String? = nil,
+        mediaId: String? = nil,
         error: String? = nil,
         code: String? = nil
     ) {
         self.success = success
         self.attachment = attachment
         self.path = path
+        self.mediaId = mediaId
         self.error = error
         self.code = code
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case success
+        case attachment
+        case path
+        case mediaId
+        case media_id
+        case error
+        case code
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        success = try c.decode(Bool.self, forKey: .success)
+        attachment = try c.decodeIfPresent(ScratchlistAttachment.self, forKey: .attachment)
+        path = try c.decodeIfPresent(String.self, forKey: .path)
+        mediaId = try c.decodeIfPresent(String.self, forKey: .media_id)
+            ?? c.decodeIfPresent(String.self, forKey: .mediaId)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(success, forKey: .success)
+        try c.encodeIfPresent(attachment, forKey: .attachment)
+        try c.encodeIfPresent(path, forKey: .path)
+        try c.encodeIfPresent(mediaId, forKey: .media_id)
+        try c.encodeIfPresent(error, forKey: .error)
+        try c.encodeIfPresent(code, forKey: .code)
     }
 }

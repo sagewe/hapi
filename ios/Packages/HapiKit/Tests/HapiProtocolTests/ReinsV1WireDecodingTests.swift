@@ -300,4 +300,116 @@ struct ReinsV1WireDecodingTests {
         )
         #expect(scratch.entryId == "e1")
     }
+
+    @Test func regressionAuditFixesDecodeCleanly() throws {
+        // 1. System message normalizes to plain text, never raw JSON
+        let sysJSON = """
+        {
+          "id": "sys-1",
+          "session_id": "s1",
+          "seq": 4,
+          "local_id": null,
+          "role": "system",
+          "content_rev": 4,
+          "invoked_at": 1700000003000,
+          "delivery_state": "invoked",
+          "blocks": [{"type": "text", "text": "Session resumed"}],
+          "meta": {},
+          "created_at": 1700000003000
+        }
+        """
+        let sysMsg = try JSONDecoder().decode(DecryptedMessage.self, from: Data(sysJSON.utf8))
+        let normSys = try #require(normalizeDecryptedMessage(sysMsg))
+        if case .agent(let blocks) = normSys.content,
+           case .text(let t) = blocks.first {
+            #expect(t.text == "Session resumed")
+        } else {
+            Issue.record("Expected clean text block for system message")
+        }
+
+        // 2. Multi-block assistant message preserves generated_media alongside text
+        let multiJSON = """
+        {
+          "id": "a-multi",
+          "session_id": "s1",
+          "seq": 5,
+          "local_id": null,
+          "role": "assistant",
+          "content_rev": 5,
+          "invoked_at": 1700000004000,
+          "delivery_state": "invoked",
+          "blocks": [
+            {"type": "text", "text": "Here is the chart:"},
+            {"type": "generated_media", "id": "media-42", "filename": "plot.png", "mime_type": "image/png"}
+          ],
+          "meta": {},
+          "created_at": 1700000004000
+        }
+        """
+        let multiMsg = try JSONDecoder().decode(DecryptedMessage.self, from: Data(multiJSON.utf8))
+        let normMulti = try #require(normalizeDecryptedMessage(multiMsg))
+        if case .agent(let blocks) = normMulti.content {
+            #expect(blocks.count == 2)
+            if case .text(let t) = blocks[0] { #expect(t.text == "Here is the chart:") }
+            else { Issue.record("Expected text block first") }
+            if case .generatedImage(let img) = blocks[1] {
+                #expect(img.imageId == "media-42")
+                #expect(img.fileName == "plot.png")
+            } else {
+                Issue.record("Expected generatedImage block second")
+            }
+        } else {
+            Issue.record("Expected agent blocks")
+        }
+
+        // 3. session_ended with non-string reason does not throw, and machine_models_updated decodes
+        let endedObj = """
+        {"type":"session_ended","namespace":"default","session_id":"s1","reason":{"code":0,"detail":"eof"}}
+        """
+        let endedEvent = try JSONDecoder().decode(SyncEvent.self, from: Data(endedObj.utf8))
+        #expect(endedEvent == .sessionEnded(namespace: "default", sessionId: "s1", reason: nil))
+
+        let modelsEvJSON = """
+        {"type":"machine_models_updated","namespace":"default","machine_id":"m1","agent":"agy"}
+        """
+        let modelsEv = try JSONDecoder().decode(SyncEvent.self, from: Data(modelsEvJSON.utf8))
+        #expect(modelsEv == .machineModelsUpdated(namespace: "default", machineId: "m1", agent: "agy"))
+
+        // 4. Session v1: last_preview -> summary fallback, effort -> modelReasoningEffort, empty model -> nil
+        let sessJSON = """
+        {
+          "id": "s-empty-model",
+          "namespace": "default",
+          "machine_id": "m1",
+          "agent": "codex",
+          "directory": "/repo",
+          "title": "Codex Task",
+          "title_locked": false,
+          "model": "",
+          "effort": "high",
+          "status": "idle",
+          "pinned": false,
+          "pin_mode": "none",
+          "archived": false,
+          "meta_rev": 1,
+          "state_rev": 1,
+          "content_rev": 2,
+          "read_rev": 2,
+          "read_state_ver": 1,
+          "manual_unread": false,
+          "pending_requests": {},
+          "metadata": {},
+          "created_at": 1700000000000,
+          "updated_at": 1700000002000,
+          "seq": 1,
+          "message_count": 2,
+          "last_preview": "Latest preview snippet"
+        }
+        """
+        let sess = try JSONDecoder().decode(Session.self, from: Data(sessJSON.utf8))
+        #expect(sess.model == nil)
+        #expect(sess.effort == "high")
+        #expect(sess.modelReasoningEffort == "high")
+        #expect(sess.metadata?.summary?.text == "Latest preview snippet")
+    }
 }

@@ -81,6 +81,11 @@ public struct SyncEventRouter {
         case .machineUpdated(_, let machineId, let data):
             machines.applyMachineEvent(machineId: machineId, data: data)
 
+        case .machineModelsUpdated:
+            guard scope == .global else { return }
+            let machines = self.machines
+            Task { @MainActor in try? await machines.refresh() }
+
         case .messagesInvalidated, .messagesConsumed, .messagesIndeterminate, .messagesRequeued, .messageCancelled, .scheduledMatured:
             guard scope == .global else { return }
             sessions.scheduleRefresh()

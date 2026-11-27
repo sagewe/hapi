@@ -12,11 +12,17 @@ public struct JWTClaims: Equatable, Sendable {
     public let ns: String
     /// Expiry, seconds since the Unix epoch; `nil` when the payload has none.
     public let exp: Int?
+    /// Reins v1 subject claim (`sub`), when present.
+    public let sub: String?
+    /// Reins v1 owner claim (`owner`), when present.
+    public let owner: Bool?
 
-    public init(uid: Int, ns: String, exp: Int? = nil) {
+    public init(uid: Int = 0, ns: String, exp: Int? = nil, sub: String? = nil, owner: Bool? = nil) {
         self.uid = uid
         self.ns = ns
         self.exp = exp
+        self.sub = sub
+        self.owner = owner
     }
 
     public var expiresAt: Date? {
@@ -29,7 +35,7 @@ public struct JWTClaims: Equatable, Sendable {
 public enum JWT {
     /// Decodes the base64url middle segment of `token` into ``JWTClaims``.
     /// Returns `nil` for anything that is not a well-formed hub JWT payload
-    /// (wrong segment count, invalid base64url, non-JSON, missing `uid`/`ns`).
+    /// (wrong segment count, invalid base64url, non-JSON, missing `ns`).
     public static func claims(from token: String) -> JWTClaims? {
         // `components(separatedBy:)` keeps empty segments, so "a..b" cannot
         // shift the payload position the way `split` would.
@@ -38,12 +44,20 @@ public enum JWT {
         guard let payload = decodeBase64URLSegment(segments[1]) else { return nil }
 
         struct RawClaims: Decodable {
-            let uid: Int
+            let uid: Int?
+            let sub: String?
             let ns: String
+            let owner: Bool?
             let exp: Double?
         }
         guard let raw = try? JSONDecoder().decode(RawClaims.self, from: payload) else { return nil }
-        return JWTClaims(uid: raw.uid, ns: raw.ns, exp: raw.exp.flatMap(safeInt))
+        return JWTClaims(
+            uid: raw.uid ?? 0,
+            ns: raw.ns,
+            exp: raw.exp.flatMap(safeInt),
+            sub: raw.sub,
+            owner: raw.owner
+        )
     }
 
     /// base64url → `Data`: translate the URL-safe alphabet and restore the

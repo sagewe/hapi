@@ -11,7 +11,7 @@ function spaFallback(): Plugin {
         configureServer(server) {
             server.middlewares.use((req, _res, next) => {
                 const url = (req.url ?? '').split('?')[0]
-                if (url === '/' || url === '' || url.includes('.') || url.startsWith('/@') || url.startsWith('/v1') || url.startsWith('/src/')) {
+                if (url === '/' || url === '' || url.includes('.') || url.startsWith('/@') || url.startsWith('/v1') || url.startsWith('/health') || url.startsWith('/src/')) {
                     next()
                     return
                 }
@@ -24,7 +24,7 @@ function spaFallback(): Plugin {
 
 const base = process.env.VITE_BASE_URL || '/'
 const shareAction = shareTargetPathnameFromBase(base)
-const hubTarget = process.env.VITE_HUB_PROXY || 'http://127.0.0.1:3006'
+const hubTarget = process.env.VITE_HUB_PROXY || 'http://127.0.0.1:3016'
 const appVersion = readAppVersion()
 
 function readAppVersion(): string {
@@ -97,6 +97,10 @@ export default defineConfig({
                 target: hubTarget,
                 changeOrigin: true,
                 ws: true
+            },
+            '/health': {
+                target: hubTarget,
+                changeOrigin: true
             }
         }
     },

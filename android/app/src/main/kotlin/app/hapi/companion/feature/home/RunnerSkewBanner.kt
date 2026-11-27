@@ -91,7 +91,7 @@ class RunnerSkewChrome(
         combine(machines, minimized, dismissedUntilMs, restartingId, restartError) { list, isMin, until, restarting, error ->
                 RunnerSkewUiState(
                     rows = list
-                        .filter { RunnerSkew.isMachineCapabilitySkewed(it.metadata?.capabilities) }
+                        .filter { RunnerSkew.isMachineSkewed(it.metadata) }
                         .map { machine ->
                             val metadata = machine.metadata
                             val newerOnDisk = RunnerSkew.cliBinaryUpdatedOnDisk(metadata)

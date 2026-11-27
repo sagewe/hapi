@@ -184,16 +184,35 @@ class HapiApi internal constructor(
     suspend fun streamingAsrAvailable(): Boolean =
         request<kotlinx.serialization.json.JsonObject>("GET", url("v1", "voice", "asr-config").build())["available"].toString() == "true"
 
-    suspend fun prepareStreamingAsr(draft: String, recordingId: String) {
+    suspend fun prepareStreamingAsr(draft: String, recordingId: String, sessionId: String? = null) {
         request<Unit>("POST", url("v1", "voice", "asr-context").build(), jsonBody(kotlinx.serialization.json.buildJsonObject {
             put("draft", kotlinx.serialization.json.JsonPrimitive(draft.take(8000)))
             put("recording_id", kotlinx.serialization.json.JsonPrimitive(recordingId))
+            sessionId?.takeIf { it.isNotBlank() }?.let { put("session_id", kotlinx.serialization.json.JsonPrimitive(it)) }
         }))
     }
 
-    fun openStreamingAsr(draft: String, listener: okhttp3.WebSocketListener): okhttp3.WebSocket =
-        client.newWebSocket(okhttp3.Request.Builder().url(url("v1", "voice", "asr-ws").addQueryParameter("sample_rate", "16000").build())
-            .header("X-ASR-Draft", java.util.Base64.getEncoder().encodeToString(draft.take(2000).toByteArray())).build(), listener)
+    fun openStreamingAsr(
+        draft: String,
+        listener: okhttp3.WebSocketListener,
+        recordingId: String? = null,
+        sessionId: String? = null,
+    ): okhttp3.WebSocket {
+        val target = url("v1", "voice", "asr-ws")
+            .addQueryParameter("sample_rate", "16000")
+            .apply {
+                recordingId?.takeIf { it.isNotBlank() }?.let { addQueryParameter("recording_id", it) }
+                sessionId?.takeIf { it.isNotBlank() }?.let { addQueryParameter("session_id", it) }
+            }
+            .build()
+        return client.newWebSocket(
+            okhttp3.Request.Builder()
+                .url(target)
+                .header("X-ASR-Draft", java.util.Base64.getEncoder().encodeToString(draft.take(2000).toByteArray()))
+                .build(),
+            listener,
+        )
+    }
 
     suspend fun health(): HubHealthResponse =
         request("GET", url("health").build(), client = authClient)
@@ -286,8 +305,11 @@ class HapiApi internal constructor(
      * `GET /v1/sessions/:id/messages/:messageId/context` — a bounded history
      * window centered on one message, or null when it does not resolve.
      */
-    override suspend fun getMessageContext(sessionId: String, messageId: String): MessageContextResponse? =
+    override suspend fun getMessageContext(sessionId: String, messageId: String): MessageContextResponse? = try {
         request("GET", url("v1", "sessions", sessionId, "messages", messageId, "context").build())
+    } catch (error: ApiError) {
+        if (error.status == 404) null else throw error
+    }
 
     /**
      * `POST /v1/sessions/:id/messages` — submits a user message; the row also
@@ -833,9 +855,13 @@ class HapiApi internal constructor(
         val decodedBytes = runCatching {
             java.util.Base64.getDecoder().decode(contentBase64).size.toLong()
         }.getOrDefault(0L)
+        val mediaId = raw.mediaId?.takeIf { it.isNotBlank() }
+            ?: java.security.MessageDigest.getInstance("SHA-256")
+                .digest(uploadedPath.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         return raw.copy(
             attachment = app.hapi.protocol.wire.ScratchlistAttachment(
-                id = uploadedPath.substringAfterLast('/').ifBlank { filename },
+                id = mediaId,
                 filename = filename,
                 mimeType = mimeType,
                 size = decodedBytes,

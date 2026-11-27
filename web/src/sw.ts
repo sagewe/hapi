@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import { precacheAndRoute } from 'workbox-precaching'
 import { registerRoute } from 'workbox-routing'
-import { CacheFirst, NetworkFirst } from 'workbox-strategies'
+import { CacheFirst, NetworkOnly } from 'workbox-strategies'
 import { ExpirationPlugin } from 'workbox-expiration'
 import {
     cleanupExpiredShareTransfers,
@@ -9,7 +9,7 @@ import {
     putShareTransfer,
 } from './lib/shareTransfer'
 import { shareTargetPathname } from './lib/sharePath'
-import { cacheOkResponsesOnly, cacheJavaScriptOnly } from './lib/swCachePolicy'
+import { cacheJavaScriptOnly } from './lib/swCachePolicy'
 
 const sharePath = shareTargetPathname()
 
@@ -43,49 +43,14 @@ registerRoute(
     }),
 )
 
+// Never cache authenticated Reins v1 API responses in the shared service worker
+// cache — responses are scoped by Bearer JWT namespace, so URL-keyed caching
+// would leak across accounts/namespaces on timeout or offline fallback.
 registerRoute(
-    ({ url }) => url.pathname === '/v1/sessions',
-    new NetworkFirst({
-        cacheName: 'v1-sessions',
-        networkTimeoutSeconds: 10,
-        plugins: [
-            cacheOkResponsesOnly,
-            new ExpirationPlugin({
-                maxEntries: 10,
-                maxAgeSeconds: 60 * 5
-            })
-        ]
-    })
-)
-
-registerRoute(
-    ({ url }) => /^\/v1\/sessions\/[^/]+$/.test(url.pathname),
-    new NetworkFirst({
-        cacheName: 'v1-session-detail',
-        networkTimeoutSeconds: 10,
-        plugins: [
-            cacheOkResponsesOnly,
-            new ExpirationPlugin({
-                maxEntries: 20,
-                maxAgeSeconds: 60 * 5
-            })
-        ]
-    })
-)
-
-registerRoute(
-    ({ url }) => url.pathname === '/v1/machines',
-    new NetworkFirst({
-        cacheName: 'v1-machines',
-        networkTimeoutSeconds: 10,
-        plugins: [
-            cacheOkResponsesOnly,
-            new ExpirationPlugin({
-                maxEntries: 5,
-                maxAgeSeconds: 60 * 10
-            })
-        ]
-    })
+    ({ url }) => url.pathname === '/v1/sessions'
+        || /^\/v1\/sessions\/[^/]+$/.test(url.pathname)
+        || url.pathname === '/v1/machines',
+    new NetworkOnly()
 )
 
 registerRoute(

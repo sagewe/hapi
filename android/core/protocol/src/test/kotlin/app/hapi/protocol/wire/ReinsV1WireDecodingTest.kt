@@ -1,5 +1,6 @@
 package app.hapi.protocol.wire
 
+import app.hapi.protocol.chat.AgentEvent
 import app.hapi.protocol.chat.NormalizedAgentContent
 import app.hapi.protocol.chat.NormalizedMessage
 import app.hapi.protocol.chat.normalizeDecryptedMessage
@@ -206,5 +207,91 @@ class ReinsV1WireDecodingTest {
             SyncEvents.parse("""{"type":"toast","namespace":"default","data":{"title":"T","body":"B","session_id":"s1","url":"/s/s1"}}""")
         )
         assertEquals("s1", toast.data.sessionId)
+
+        val consumed = assertIs<SyncEvent.MessagesConsumed>(
+            SyncEvents.parse("""{"type":"messages_consumed","namespace":"default","session_id":"s1","local_ids":["l1"],"invoked_at":999}""")
+        )
+        assertEquals("s1", consumed.sessionId)
+        assertEquals(listOf("l1"), consumed.localIds)
+        assertEquals(999L, consumed.invokedAt)
+
+        val indet = assertIs<SyncEvent.MessagesIndeterminate>(
+            SyncEvents.parse("""{"type":"messages_indeterminate","session_id":"s1","local_ids":["l2"]}""")
+        )
+        assertEquals(listOf("l2"), indet.localIds)
+
+        val requeued = assertIs<SyncEvent.MessagesRequeued>(
+            SyncEvents.parse("""{"type":"messages_requeued","session_id":"s1","local_ids":["l3"]}""")
+        )
+        assertEquals(listOf("l3"), requeued.localIds)
+
+        val cancelled = assertIs<SyncEvent.MessageCancelled>(
+            SyncEvents.parse("""{"type":"message_cancelled","session_id":"s1","message_id":"m9","local_id":"l9"}""")
+        )
+        assertEquals("m9", cancelled.messageId)
+        assertEquals("l9", cancelled.localId)
+    }
+
+    @Test
+    fun `v1 multi-block generated_media, system role, user attachment previewUrl, and session modelReasoningEffort`() {
+        val multi = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-multi","session_id":"s1","seq":4,"role":"assistant","content_rev":4,
+                "invoked_at":1700000000300,"delivery_state":"invoked",
+                "blocks":[
+                    {"type":"text","text":"Report ready:"},
+                    {"type":"generated_media","id":"pdf-1","filename":"report.pdf","mime_type":"application/pdf"}
+                ],
+                "meta":{"model":"sonnet"},"created_at":1700000000300
+            }"""
+        )
+        val normMulti = assertIs<NormalizedMessage.Agent>(normalizeDecryptedMessage(multi))
+        assertEquals(2, normMulti.content.size)
+        assertEquals("Report ready:", assertIs<NormalizedAgentContent.Text>(normMulti.content[0]).text)
+        val genImg = assertIs<NormalizedAgentContent.GeneratedImage>(normMulti.content[1])
+        assertEquals("pdf-1", genImg.imageId)
+        assertEquals("report.pdf", genImg.fileName)
+        assertEquals("application/pdf", genImg.mimeType)
+
+        val sys = HapiJson.decodeFromString<DecryptedMessage>(
+            """{"id":"m-sys","session_id":"s1","seq":5,"role":"system","blocks":[{"type":"text","text":"Session resumed"}],"created_at":1700000000400}"""
+        )
+        val normSys = assertIs<NormalizedMessage.Event>(normalizeDecryptedMessage(sys))
+        assertEquals("Session resumed", assertIs<AgentEvent.Message>(normSys.event).message)
+
+        val userAtt = HapiJson.decodeFromString<DecryptedMessage>(
+            """{"id":"m-u","session_id":"s1","seq":6,"role":"user","blocks":[{"type":"text","text":"check"},{"type":"attachment","id":"a1","filename":"doc.pdf","mimeType":"application/pdf","size":123,"previewUrl":"/v1/sessions/s1/blobs/a1"}],"created_at":1700000000500}"""
+        )
+        val normUser = assertIs<NormalizedMessage.User>(normalizeDecryptedMessage(userAtt))
+        assertEquals("/v1/sessions/s1/blobs/a1", normUser.attachments?.single()?.previewUrl)
+
+        val sess = HapiJson.decodeFromString<Session>(
+            """{"id":"s-codex","agent":"codex","effort":"high","created_at":1,"updated_at":2}"""
+        )
+        assertEquals("high", sess.effort)
+        assertEquals("high", sess.modelReasoningEffort)
+    }
+
+    @Test
+    fun `reins-v1 machines are exempt from legacy runner skew and snake_case ClientProfile and AndroidRelease defaults decode`() {
+        val m = HapiJson.decodeFromString<Machine>(
+            """{"id":"m-reins","namespace":"default","name":"studio","platform":"darwin","capabilities":{},"active":true,"last_seen_at":1}"""
+        )
+        assertFalse(RunnerSkew.isMachineSkewed(m.metadata))
+
+        val settings = HapiJson.decodeFromString<HubSettingsResponse>(
+            """{"client_profile":{"mode":"assistant","app_title":"Qiqi","default_agent":"agy","default_model":"m1","default_permission_mode":"yolo","default_directory":"/cases","hide_execution_details":true,"model_presets":[{"id":"p1","label":"Fast","model":"m1","is_default":true}],"quick_actions":[{"id":"q1","title":"Check","prompt":"Go"}]}}"""
+        )
+        val cp = assertNotNull(settings.clientProfile)
+        assertEquals("Qiqi", cp.appTitle)
+        assertEquals("/cases", cp.defaultDirectory)
+        assertTrue(cp.hideExecutionDetails)
+        assertTrue(cp.modelPresets.single().isDefault)
+
+        val rel = HapiJson.decodeFromString<AndroidRelease>(
+            """{"package_name":"com.sagewe.hapi.compliance","version_code":6,"version_name":"0.34.3","file_name":"QiqiWork-0.34.3-6.apk","sha256":"${"a".repeat(64)}","size":100,"download_path":"/v1/app-updates/android/download/QiqiWork-0.34.3-6.apk"}"""
+        )
+        assertEquals("", rel.releaseNotes)
+        assertEquals("", rel.publishedAt)
     }
 }

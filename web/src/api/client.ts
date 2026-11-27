@@ -245,6 +245,7 @@ export class ApiClient {
     private readonly baseUrl: string | null
     private readonly getToken: (() => string | null) | null
     private readonly onUnauthorized: (() => Promise<string | null>) | null
+    private readonly scratchlistAttachmentPaths = new Map<string, string>()
 
     constructor(token: string, options?: ApiClientOptions) {
         this.token = token
@@ -376,7 +377,7 @@ export class ApiClient {
     }
 
     async getSessions(): Promise<SessionsResponse> {
-        const raw = await this.request<{ sessions?: unknown[] }>('/v1/sessions')
+        const raw = await this.request<{ sessions?: unknown[] }>('/v1/sessions?limit=500')
         return {
             sessions: Array.isArray(raw?.sessions) ? raw.sessions.map(adaptV1SessionSummary) : []
         }
@@ -617,10 +618,17 @@ export class ApiClient {
     }
 
     async getMessageContext(sessionId: string, messageId: string): Promise<MessageContextResponse | null> {
-        const raw = await this.request<unknown>(
-            `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/context`
-        )
-        return adaptV1MessageContextResponse(raw)
+        try {
+            const raw = await this.request<unknown>(
+                `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/context`
+            )
+            return adaptV1MessageContextResponse(raw)
+        } catch (error) {
+            if (error instanceof ApiError && error.status === 404) {
+                return null
+            }
+            throw error
+        }
     }
 
     async getGitStatus(sessionId: string): Promise<GitCommandResponse> {
@@ -833,10 +841,22 @@ export class ApiClient {
     }
 
     async reopenSession(sessionId: string): Promise<ReopenSessionResponse> {
-        return await this.request<ReopenSessionResponse>(
-            `/v1/sessions/${encodeURIComponent(sessionId)}/reopen`,
+        const raw = await this.request<{
+            ok?: boolean
+            sessionId?: string
+            resumed?: boolean
+            cursorSessionProtocol?: 'acp' | 'stream-json'
+            session?: { id?: string }
+        }>(
+            `/v1/sessions/${encodeURIComponent(sessionId)}/resume`,
             { method: 'POST', body: JSON.stringify({}) }
         )
+        return {
+            ok: true,
+            sessionId: raw.session?.id ?? raw.sessionId ?? sessionId,
+            resumed: raw.resumed ?? true,
+            ...(raw.cursorSessionProtocol ? { cursorSessionProtocol: raw.cursorSessionProtocol } : {})
+        }
     }
 
     /**
@@ -917,11 +937,11 @@ export class ApiClient {
             ? model
             : model
                 ? `${model.provider}/${model.modelId}`
-                : undefined
+                : null
         await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'PATCH',
             body: JSON.stringify(options
-                ? { model: modelStr, effort: options.effort ?? undefined }
+                ? { model: modelStr, effort: options.effort }
                 : { model: modelStr })
         })
     }
@@ -929,14 +949,14 @@ export class ApiClient {
     async setModelReasoningEffort(sessionId: string, modelReasoningEffort: string | null): Promise<void> {
         await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'PATCH',
-            body: JSON.stringify({ effort: modelReasoningEffort ?? undefined })
+            body: JSON.stringify({ effort: modelReasoningEffort })
         })
     }
 
     async setEffort(sessionId: string, effort: string | null): Promise<void> {
         await this.request(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'PATCH',
-            body: JSON.stringify({ effort: effort ?? undefined })
+            body: JSON.stringify({ effort })
         })
     }
 
@@ -1009,10 +1029,22 @@ export class ApiClient {
     }
 
     async updateHubSettings(settings: UpdateHubSettingsRequest): Promise<HubSettingsResponse> {
-        const raw = await this.request<unknown>('/v1/settings', {
+        const raw = await this.request<Record<string, unknown>>('/v1/settings', {
             method: 'PUT',
             body: JSON.stringify(settings)
         })
+        if (
+            raw
+            && typeof raw === 'object'
+            && !('session_summary_contract' in raw)
+            && !('sessionSummaryContract' in raw)
+            && !('peer_spawn_defaults' in raw)
+            && !('peerSpawnDefaults' in raw)
+            && !('client_profile' in raw)
+            && !('clientProfile' in raw)
+        ) {
+            return await this.getHubSettings()
+        }
         return adaptV1HubSettingsResponse(raw)
     }
 
@@ -1374,13 +1406,46 @@ export class ApiClient {
         error?: string
         code?: string
     }> {
-        return await this.request(
+        const raw = await this.request<{
+            success: boolean
+            path?: string
+            media_id?: string
+            mediaId?: string
+            attachment?: {
+                id?: string
+                filename?: string
+                mimeType?: string
+                mime_type?: string
+                size?: number
+                path?: string
+            }
+            error?: string
+            code?: string
+        }>(
             `/v1/sessions/${encodeURIComponent(sessionId)}/uploads`,
             {
                 method: 'POST',
                 body: JSON.stringify({ filename, content, mime_type: mimeType })
             }
         )
+        if (!raw.success) {
+            return { success: false, error: raw.error, code: raw.code }
+        }
+        const att = raw.attachment
+        const id = att?.id ?? raw.media_id ?? raw.mediaId
+        const path = att?.path ?? raw.path
+        if (id && path) {
+            const normalized: import('@hapi/protocol').ScratchlistAttachmentMetadata = {
+                id,
+                filename: att?.filename ?? filename,
+                mimeType: att?.mimeType ?? att?.mime_type ?? mimeType,
+                size: typeof att?.size === 'number' ? att.size : Math.floor((content.length * 3) / 4),
+                path
+            }
+            this.scratchlistAttachmentPaths.set(id, path)
+            return { success: true, attachment: normalized }
+        }
+        return { success: false, error: raw.error ?? 'missing_attachment_metadata', code: raw.code }
     }
 
     async fetchScratchlistAttachmentBlob(sessionId: string, attachmentId: string): Promise<Blob> {
@@ -1402,12 +1467,14 @@ export class ApiClient {
         return await response.blob()
     }
 
-    async deleteScratchlistAttachment(sessionId: string, attachmentId: string): Promise<void> {
+    async deleteScratchlistAttachment(sessionId: string, attachmentIdOrPath: string): Promise<void> {
+        const resolvedPath = this.scratchlistAttachmentPaths.get(attachmentIdOrPath) ?? attachmentIdOrPath
+        this.scratchlistAttachmentPaths.delete(attachmentIdOrPath)
         await this.request(
             `/v1/sessions/${encodeURIComponent(sessionId)}/uploads`,
             {
                 method: 'DELETE',
-                body: JSON.stringify({ path: attachmentId })
+                body: JSON.stringify({ path: resolvedPath })
             }
         )
     }

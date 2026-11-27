@@ -1,6 +1,8 @@
 package app.hapi.protocol.chat
 
 import app.hapi.protocol.wire.DecryptedMessage
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** Port of `web/src/chat/normalize.ts` — the decode-tree entry point. */
 
@@ -60,6 +62,25 @@ fun normalizeDecryptedMessage(message: DecryptedMessage): NormalizedMessage? {
             is NormalizedMessage.Event -> normalized.copy(invokedAt = invokedAt)
             null -> stringifiedAgentFallback(message, safeStringify(record.content), meta = record.meta, invokedAt = invokedAt)
         }
+    }
+
+    if (record.role == "system") {
+        val text = asString(record.content)
+            ?: asObject(record.content)?.let { asString(it["text"]) }
+            ?: safeStringify(record.content)
+        if (text.isBlank()) return null
+        return NormalizedMessage.Event(
+            id = message.id,
+            localId = message.localId,
+            createdAt = message.createdAt,
+            event = AgentEvent.of(buildJsonObject {
+                put("type", "message")
+                put("message", text)
+            }),
+            isSidechain = false,
+            meta = record.meta,
+            invokedAt = invokedAt,
+        )
     }
 
     return stringifiedAgentFallback(message, safeStringify(record.content), meta = record.meta, invokedAt = invokedAt)

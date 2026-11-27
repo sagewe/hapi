@@ -372,6 +372,27 @@ class ScratchlistStoreTest {
     }
 
     @Test
+    fun `upload with v1 media_id and path uses media_id for id and sends path on delete`() =
+        runScratchlistTest { store, server ->
+            server.enqueueJson(
+                """{"success":true,"path":"/workspace/.reins-uploads/report.pdf","media_id":"deadbeef0123456789"}"""
+            )
+            val uploaded = assertIs<ScratchlistUploadResult.Uploaded>(
+                store.uploadAttachment("s1", "report.pdf", byteArrayOf(1, 2, 3), "application/pdf")
+            )
+            assertEquals("deadbeef0123456789", uploaded.attachment.id)
+            assertEquals("/workspace/.reins-uploads/report.pdf", uploaded.attachment.path)
+
+            server.enqueueJson("""{"success":true}""")
+            assertEquals(ScratchlistAttachmentDeleteResult.Removed, store.deleteAttachment("s1", uploaded.attachment.id))
+            server.takeRequest() // POST
+            val del = server.takeRequest()
+            assertEquals("DELETE", del.method)
+            assertEquals("/v1/sessions/s1/uploads", del.path)
+            assertEquals("/workspace/.reins-uploads/report.pdf", body(del)["path"]?.jsonPrimitive?.content)
+        }
+
+    @Test
     fun `limits default offline and cache after the first success`() =
         runScratchlistTest { store, server ->
             server.enqueueJson("""{"error":"boom"}""", code = 500)
