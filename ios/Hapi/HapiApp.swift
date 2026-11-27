@@ -10,7 +10,7 @@ struct HapiApp: App {
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 
-    private let log = Logger(subsystem: "run.hapi.companion", category: "app")
+    private let log = Logger(subsystem: AppBrand.loggerSubsystem, category: "app")
 
     var body: some Scene {
         WindowGroup {

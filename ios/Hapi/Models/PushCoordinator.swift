@@ -710,7 +710,7 @@ struct PushActionRunner {
 /// and is required here: the extension must decrypt pushes while the device
 /// is locked (any time after the first unlock since boot).
 enum PushKeychain {
-    static let service = "run.hapi.companion.push"
+    static let service = AppBrand.pushKeychainService
     static let pushKeyAccount = "pushKey"
     static let deviceIdAccount = "deviceId"
 

@@ -411,5 +411,10 @@ struct ReinsV1WireDecodingTests {
         #expect(sess.effort == "high")
         #expect(sess.modelReasoningEffort == "high")
         #expect(sess.metadata?.summary?.text == "Latest preview snippet")
+
+        // 5. Standalone QiqiWork URL scheme parses via BindLink
+        let qiqiLink = try #require(BindLink.parse("qiqiwork://bind?hub=https%3A%2F%2Fhapi.example.com&code=secret%3Acompliance"))
+        #expect(qiqiLink.hubUrl == "https://hapi.example.com")
+        #expect(qiqiLink.accessToken == "secret:compliance")
     }
 }

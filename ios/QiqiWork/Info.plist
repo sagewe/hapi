@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>HAPISourceRevision</key>
+	<string>$(HAPI_SOURCE_REVISION)</string>
+	<key>HAPIBuildDate</key>
+	<string>$(HAPI_BUILD_DATE)</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>琪琪工作用于在局域网内直连已配对的合规工作台。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>琪琪工作使用相机扫描配对二维码或拍摄需要送审的资料照片。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>琪琪工作使用麦克风进行语音输入转写。</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Business Documents</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.sagewe.hapi.compliance.pairing</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>qiqiwork</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

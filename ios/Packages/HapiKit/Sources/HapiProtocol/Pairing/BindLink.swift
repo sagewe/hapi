@@ -57,7 +57,7 @@ public struct BindLink: Equatable, Sendable {
             return nil
         }
         switch scheme {
-        case Self.scheme:
+        case Self.scheme, "qiqiwork":
             return parseCompanionDeeplink(components)
         case "http", "https":
             return parseWebDirectAccessURL(components)

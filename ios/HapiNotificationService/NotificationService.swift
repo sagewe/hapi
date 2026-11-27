@@ -81,7 +81,12 @@ final class NotificationService: UNNotificationServiceExtension {
         let contractVersion = fields["contractVersion"]
         let knownVersion = contractVersion == nil || isBlank(contractVersion!) || contractVersion == "1"
 
-        content.title = firstNonBlank(fields["title"], fields["sessionName"]) ?? "HAPI"
+        #if QIQI_WORK_STANDALONE
+        let fallbackTitle = "琪琪工作"
+        #else
+        let fallbackTitle = "HAPI"
+        #endif
+        content.title = firstNonBlank(fields["title"], fields["sessionName"]) ?? fallbackTitle
         content.body = displayBody(fields, type: type)
         content.sound = .default
 
@@ -171,9 +176,14 @@ final class NotificationService: UNNotificationServiceExtension {
     /// `AfterFirstUnlock`, so decryption works on the lock screen (any time
     /// after the first unlock since boot).
     static func readPushKey() -> Data? {
+        #if QIQI_WORK_STANDALONE
+        let serviceName = "com.sagewe.hapi.compliance.push"
+        #else
+        let serviceName = "run.hapi.companion.push"
+        #endif
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "run.hapi.companion.push",
+            kSecAttrService as String: serviceName,
             kSecAttrAccount as String: "pushKey",
             kSecUseDataProtectionKeychain as String: true,
             kSecReturnData as String: true,

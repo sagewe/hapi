@@ -20,11 +20,7 @@ struct PairingFlowView: View {
     @State private var showScanner = false
 
     private static var introText: LocalizedStringKey {
-        #if targetEnvironment(macCatalyst)
-        "HAPI is self-hosted: your agent sessions run on your own machine, served by a hub you operate. Start the hub, then enter its URL and access token, or paste the pairing link it prints."
-        #else
-        "HAPI is self-hosted: your agent sessions run on your own machine, served by a hub you operate. Start the hub on your computer, then pair this app with the QR code it prints — or enter the hub URL and access token by hand."
-        #endif
+        AppBrand.pairingIntro
     }
     @State private var showManualEntry = false
 
@@ -39,19 +35,19 @@ struct PairingFlowView: View {
                     }
 
                     VStack(spacing: 12) {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
+                        Image(systemName: AppBrand.pairingIcon)
                             .font(.system(size: 56))
                             .foregroundStyle(.tint)
                             .padding(.top, context == .initial ? 48 : 24)
                         Text(context == .initial
-                            ? String(localized: "Pair with your hub")
-                            : String(localized: "Add another hub"))
+                            ? AppBrand.pairingTitle
+                            : AppBrand.addHubTitle)
                             .font(.title.bold())
                         Text(Self.introText)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                        if let docsURL = Self.docsURL {
+                        if AppBrand.showsSetupGuideLink, let docsURL = Self.docsURL {
                             Link("Setup guide", destination: docsURL)
                                 .font(.subheadline)
                         }

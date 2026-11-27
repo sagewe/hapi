@@ -14,6 +14,10 @@
 		A300000000000000000000C4 /* HapiProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C2 /* HapiProtocol */; };
 		A300000000000000000000C5 /* HapiClient in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C3 /* HapiClient */; };
 		A300000000000000000000C8 /* HapiUI in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C7 /* HapiUI */; };
+		A400000000000000000000C4 /* HapiProtocol in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C2 /* HapiProtocol */; };
+		A400000000000000000000C5 /* HapiClient in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C3 /* HapiClient */; };
+		A400000000000000000000C8 /* HapiUI in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000C7 /* HapiUI */; };
+		A500000000000000000000D4 /* QiqiWorkNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A500000000000000000000A4 /* QiqiWorkNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,6 +35,13 @@
 			remoteGlobalIDString = A100000000000000000000A5;
 			remoteInfo = Hapi;
 		};
+		A500000000000000000000D2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A100000000000000000000A6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A500000000000000000000A5;
+			remoteInfo = QiqiWorkNotificationService;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -45,12 +56,25 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A500000000000000000000D3 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A500000000000000000000D4 /* QiqiWorkNotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A100000000000000000000A4 /* Hapi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hapi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A200000000000000000000A4 /* HapiNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HapiNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A300000000000000000000A4 /* HapiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = HapiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A400000000000000000000A4 /* QiqiWork.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QiqiWork.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A500000000000000000000A4 /* QiqiWorkNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = QiqiWorkNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -69,6 +93,21 @@
 			);
 			target = A200000000000000000000A5 /* HapiNotificationService */;
 		};
+		A400000000000000000000C6 /* Exceptions for "Hapi" folder in "QiqiWork" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppIcon.icon,
+				Info.plist,
+			);
+			target = A400000000000000000000A5 /* QiqiWork */;
+		};
+		A500000000000000000000C6 /* Exceptions for "HapiNotificationService" folder in "QiqiWorkNotificationService" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A500000000000000000000A5 /* QiqiWorkNotificationService */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -76,6 +115,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A100000000000000000000C6 /* Exceptions for "Hapi" folder in "Hapi" target */,
+				A400000000000000000000C6 /* Exceptions for "Hapi" folder in "QiqiWork" target */,
 			);
 			path = Hapi;
 			sourceTree = "<group>";
@@ -84,6 +124,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A200000000000000000000C6 /* Exceptions for "HapiNotificationService" folder in "HapiNotificationService" target */,
+				A500000000000000000000C6 /* Exceptions for "HapiNotificationService" folder in "QiqiWorkNotificationService" target */,
 			);
 			path = HapiNotificationService;
 			sourceTree = "<group>";
@@ -123,6 +164,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A400000000000000000000A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A400000000000000000000C4 /* HapiProtocol in Frameworks */,
+				A400000000000000000000C5 /* HapiClient in Frameworks */,
+				A400000000000000000000C8 /* HapiUI in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A500000000000000000000A8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -142,6 +200,8 @@
 				A100000000000000000000A4 /* Hapi.app */,
 				A200000000000000000000A4 /* HapiNotificationService.appex */,
 				A300000000000000000000A4 /* HapiTests.xctest */,
+				A400000000000000000000A4 /* QiqiWork.app */,
+				A500000000000000000000A4 /* QiqiWorkNotificationService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -224,6 +284,55 @@
 			productReference = A300000000000000000000A4 /* HapiTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A400000000000000000000A5 /* QiqiWork */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A400000000000000000000B4 /* Build configuration list for PBXNativeTarget "QiqiWork" */;
+			buildPhases = (
+				A400000000000000000000A7 /* Sources */,
+				A400000000000000000000A8 /* Frameworks */,
+				A400000000000000000000A9 /* Resources */,
+				A500000000000000000000D3 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A500000000000000000000D1 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A100000000000000000000A2 /* Hapi */,
+			);
+			name = QiqiWork;
+			packageProductDependencies = (
+				A100000000000000000000C2 /* HapiProtocol */,
+				A100000000000000000000C3 /* HapiClient */,
+				A100000000000000000000C7 /* HapiUI */,
+			);
+			productName = QiqiWork;
+			productReference = A400000000000000000000A4 /* QiqiWork.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A500000000000000000000A5 /* QiqiWorkNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A500000000000000000000B4 /* Build configuration list for PBXNativeTarget "QiqiWorkNotificationService" */;
+			buildPhases = (
+				A500000000000000000000A7 /* Sources */,
+				A500000000000000000000A8 /* Frameworks */,
+				A500000000000000000000A9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A200000000000000000000A2 /* HapiNotificationService */,
+			);
+			name = QiqiWorkNotificationService;
+			packageProductDependencies = (
+			);
+			productName = QiqiWorkNotificationService;
+			productReference = A500000000000000000000A4 /* QiqiWorkNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -238,6 +347,12 @@
 						CreatedOnToolsVersion = 16.0;
 					};
 					A200000000000000000000A5 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A400000000000000000000A5 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A500000000000000000000A5 = {
 						CreatedOnToolsVersion = 16.0;
 					};
 				};
@@ -264,6 +379,8 @@
 				A100000000000000000000A5 /* Hapi */,
 				A200000000000000000000A5 /* HapiNotificationService */,
 				A300000000000000000000A5 /* HapiTests */,
+				A400000000000000000000A5 /* QiqiWork */,
+				A500000000000000000000A5 /* QiqiWorkNotificationService */,
 			);
 		};
 /* End PBXProject section */
@@ -284,6 +401,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A300000000000000000000A9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A400000000000000000000A9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A500000000000000000000A9 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -314,6 +445,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A400000000000000000000A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A500000000000000000000A7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -326,6 +471,11 @@
 			isa = PBXTargetDependency;
 			target = A100000000000000000000A5 /* Hapi */;
 			targetProxy = A300000000000000000000D2 /* PBXContainerItemProxy */;
+		};
+		A500000000000000000000D1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A500000000000000000000A5 /* QiqiWorkNotificationService */;
+			targetProxy = A500000000000000000000D2 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -551,6 +701,130 @@
 			};
 			name = Release;
 		};
+		A400000000000000000000B5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = QiqiWorkIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = QiqiWork/QiqiWork.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y64389SULV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QiqiWork/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "琪琪工作";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.34.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG QIQI_WORK_STANDALONE $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A400000000000000000000B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = QiqiWorkIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = QiqiWork/QiqiWork.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y64389SULV;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = QiqiWork/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "琪琪工作";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.34.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "QIQI_WORK_STANDALONE $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A500000000000000000000B5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = QiqiWork/QiqiWorkNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y64389SULV;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HapiNotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = QiqiWorkNotificationService;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.34.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance.HapiNotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG QIQI_WORK_STANDALONE $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A500000000000000000000B6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = QiqiWork/QiqiWorkNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Y64389SULV;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HapiNotificationService/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = QiqiWorkNotificationService;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.34.3;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sagewe.hapi.compliance.HapiNotificationService;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "QIQI_WORK_STANDALONE $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -586,6 +860,24 @@
 			buildConfigurations = (
 				A300000000000000000000B5 /* Debug */,
 				A300000000000000000000B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A400000000000000000000B4 /* Build configuration list for PBXNativeTarget "QiqiWork" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A400000000000000000000B5 /* Debug */,
+				A400000000000000000000B6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A500000000000000000000B4 /* Build configuration list for PBXNativeTarget "QiqiWorkNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A500000000000000000000B5 /* Debug */,
+				A500000000000000000000B6 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
