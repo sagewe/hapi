@@ -1,7 +1,9 @@
 package app.hapi.protocol.wire
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.json.JsonNull
 
 /**
@@ -13,6 +15,7 @@ import kotlinx.serialization.json.JsonNull
  * raw strings on the wire so a hub that grows a new value can never make an
  * entire `Session` undecodable; interpret them via `app.hapi.protocol.catalog`.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AgentState(
     val controlledByUser: Boolean? = null,
@@ -24,6 +27,9 @@ data class AgentState(
     val completedRequests: Map<String, AgentStateCompletedRequest>? = null,
     /** Current actionable shared Codex proposal's tool-call id; null withdraws its menu. */
     val codexPlanProposalId: String? = null,
+    /** Whether mid-turn soft-steer is active on this session (Reins v1 Phase B). */
+    @JsonNames("steering_active")
+    val steeringActive: Boolean? = null,
 )
 
 /** A pending tool-permission / user-input request (`AgentStateRequestSchema`). */

@@ -49,6 +49,22 @@ data class DecryptedMessage(
 
     /** Display position: `invokedAt ?? createdAt` (see pagination.md "Position key"). */
     val positionAt: Long get() = invokedAtOrNull ?: createdAt
+
+    /** Phase A/B streaming metadata on the wire envelope, if present. */
+    private val envelopeMeta: JsonObject?
+        get() = (content as? JsonObject)?.get("meta") as? JsonObject
+
+    /** `true` when this stored message is an in-progress Phase A streaming upsert. */
+    val isStreaming: Boolean
+        get() = envelopeMeta?.get("streaming")?.boolOrNull == true
+
+    /** Segment id (`meta.segmentId` / `meta.segment_id`) used to reconcile `/stream` overlays. */
+    val streamSegmentId: String?
+        get() = envelopeMeta?.let { it["segmentId"].stringOrNull ?: it["segment_id"].stringOrNull }
+
+    /** Turn id (`meta.turnId` / `meta.turn_id`) if attached to message metadata. */
+    val streamTurnId: String?
+        get() = envelopeMeta?.let { it["turnId"].stringOrNull ?: it["turn_id"].stringOrNull }
 }
 
 internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
@@ -210,6 +226,8 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
                             put("message", buildJsonObject {
                                 put("role", JsonPrimitive("assistant"))
                                 put("content", contentBlocks)
+                                meta?.get("model")?.takeIf { it !is JsonNull }?.let { put("model", it) }
+                                meta?.get("usage")?.takeIf { it !is JsonNull }?.let { put("usage", it) }
                             })
                         })
                     })

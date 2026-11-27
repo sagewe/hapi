@@ -304,7 +304,8 @@ final class HubSession {
             windows: windows,
             drafts: UserDefaultsChatDrafts(scope: hubUrl),
             machineStore: machineStore,
-            attachments: composer?.attachments
+            attachments: composer?.attachments,
+            streamTransport: api.eventTransport
         )
         if let composer { interactor.setComposerText(composer.text) }
         var didSupersede = false

@@ -23,6 +23,7 @@ import app.hapi.companion.feature.sessions.SessionListViewModel
 import app.hapi.companion.feature.sessions.formatReopenError
 import app.hapi.data.api.ApiError
 import app.hapi.data.api.ChatSessionApi
+import app.hapi.data.sse.SessionStreamSource
 import app.hapi.data.sse.SseEngine
 import app.hapi.data.sse.SseSubscriptionKey
 import app.hapi.data.sse.SyncEventRouter
@@ -42,6 +43,7 @@ import app.hapi.protocol.catalog.PermissionMode
 import app.hapi.protocol.catalog.PermissionModes
 import app.hapi.protocol.chat.ChatBlock
 import app.hapi.protocol.chat.NormalizedMessage
+import app.hapi.protocol.chat.SessionStreamBuffer
 import app.hapi.protocol.chat.ToolGroupBlock
 import app.hapi.protocol.chat.ToolCallBlock
 import app.hapi.protocol.chat.ToolGroupingOptions
@@ -66,6 +68,7 @@ import app.hapi.protocol.wire.Machine
 import app.hapi.protocol.wire.SendMessageRequest
 import app.hapi.protocol.wire.Session
 import app.hapi.protocol.wire.SessionReadState
+import app.hapi.protocol.wire.SessionStreamEvent
 import app.hapi.protocol.wire.SessionSummary
 import app.hapi.protocol.wire.SlashCommand
 import app.hapi.protocol.wire.arrayOrNull
@@ -389,6 +392,8 @@ class ChatViewModel(
     private val localIdGenerator: () -> String = { "local-${UUID.randomUUID()}" },
     /** Serialized UI event loop; JVM tests inject their UI dispatcher. */
     uiDispatcher: CoroutineDispatcher = Dispatchers.Main,
+    /** Live token stream (`GET /v1/sessions/{id}/stream`); null disables live delta overlay. */
+    private val sessionStreamSource: SessionStreamSource? = null,
 ) {
     // The holder's scope is a Default worker scope, NOT the coordinator's
     // executor. Share its lifetime, but serialize all history/lifecycle state
@@ -401,8 +406,10 @@ class ChatViewModel(
 
     private val windowStore = MutableStateFlow<MessageWindowStore?>(null)
     private val detailLoadFailed = MutableStateFlow(false)
+    private val streamBuffer = MutableStateFlow(SessionStreamBuffer())
 
     private var sseJob: Job? = null
+    private var streamJob: Job? = null
     private var initJob: Job? = null
     private var olderJob: Job? = null
     private var jumpJob: Job? = null
@@ -576,6 +583,7 @@ class ChatViewModel(
         val machines: List<Machine>,
         val detailLoadFailed: Boolean,
         val permissionOverrides: Map<String, PermissionRowOverride>,
+        val streamBuffer: SessionStreamBuffer,
     )
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -589,6 +597,7 @@ class ChatViewModel(
                 machineStore.machines,
                 detailLoadFailed,
                 permissionOverrides,
+                streamBuffer,
             ) { values: Array<Any?> -> pipelineInputs(values) }
         }
         // The web samples pipeline runs through React batching; here: emit the
@@ -613,7 +622,7 @@ class ChatViewModel(
         ComposerUiState(
             text = draft.text,
             isSending = sending,
-            canSteer = session.thinking && session.active,
+            canSteer = session.canSteer,
             focusRequest = focusRequest,
             isImportingShare = importing,
             caretPosition = draft.selectionEnd,
@@ -626,7 +635,7 @@ class ChatViewModel(
         .filterNotNull()
         .flatMapLatest { store ->
             combine(store.state, queuedOpPending, sessionStateFlow()) { window, opPending, session ->
-                buildQueuedRows(window, opPending, session.thinking)
+                buildQueuedRows(window, opPending, session.canSteer)
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -750,6 +759,7 @@ class ChatViewModel(
             historyObserver?.cancel()
             historyObserver = uiScope.launch {
                 store.state.collect { window ->
+                    streamBuffer.update { it.reconcileSealed(window.messages.map { m -> m.wire }) }
                     mutableHistoryPaging.value = mutableHistoryPaging.value.refreshAvailability(window.hasMore)
                     val epoch = window.epoch
                     if (epoch != null) {
@@ -771,6 +781,18 @@ class ChatViewModel(
                 sseEngine.events(subscriptionKey)
                     .onSubscription { sseEngine.subscribe(subscriptionKey) }
                     .collect { router.route(subscriptionKey, it) }
+            }
+
+            streamJob?.cancel()
+            streamJob = sessionStreamSource?.let { source ->
+                scope.launch {
+                    source.stream(sessionId).collect { event ->
+                        streamBuffer.update { it.apply(event, now()) }
+                        if (event is SessionStreamEvent.Error && event.resync) {
+                            runCatching { store.syncTail(ensureAfterCurrent = true) }
+                        }
+                    }
+                }
             }
 
             launch(workerContext) {
@@ -797,6 +819,9 @@ class ChatViewModel(
         historyObserver = null
         sseJob?.cancel()
         sseJob = null
+        streamJob?.cancel()
+        streamJob = null
+        streamBuffer.value = SessionStreamBuffer()
         initJob?.cancel()
         cancelHistory()
         jumpJob?.cancel()
@@ -2086,13 +2111,31 @@ class ChatViewModel(
         currentDetail()?.metadata?.flavor
             ?: sessionStore.sessions.value.firstOrNull { it.id == sessionId }?.metadata?.flavor
 
-    private class SessionLiveState(val active: Boolean, val thinking: Boolean)
+    private class SessionLiveState(
+        val active: Boolean,
+        val thinking: Boolean,
+        val canSteer: Boolean,
+    )
+
+    private fun canSteerSession(detail: Session?, summary: SessionSummary?): Boolean {
+        val active = detail?.active ?: summary?.active ?: false
+        val thinking = detail?.thinking ?: summary?.thinking ?: false
+        if (!active || !thinking) return false
+        val steeringActive = detail?.agentState?.steeringActive
+        if (steeringActive != null) return steeringActive
+        val flavor = detail?.metadata?.flavor ?: summary?.metadata?.flavor
+        if (flavor == "agy") {
+            return detail?.metadata?.agySessionProtocol == "acp"
+        }
+        return true
+    }
 
     private fun currentSessionState(): SessionLiveState {
         val detail = currentDetail()
-        if (detail != null) return SessionLiveState(detail.active, detail.thinking)
         val summary = sessionStore.sessions.value.firstOrNull { it.id == sessionId }
-        return SessionLiveState(summary?.active ?: false, summary?.thinking ?: false)
+        val active = detail?.active ?: summary?.active ?: false
+        val thinking = detail?.thinking ?: summary?.thinking ?: false
+        return SessionLiveState(active, thinking, canSteerSession(detail, summary))
     }
 
     private fun sessionStateFlow() = combine(
@@ -2102,6 +2145,7 @@ class ChatViewModel(
         SessionLiveState(
             active = detail?.active ?: summary?.active ?: false,
             thinking = detail?.thinking ?: summary?.thinking ?: false,
+            canSteer = canSteerSession(detail, summary),
         )
     }
 
@@ -2132,6 +2176,7 @@ class ChatViewModel(
             machines = values[3] as List<Machine>,
             detailLoadFailed = values[4] as Boolean,
             permissionOverrides = values[5] as Map<String, PermissionRowOverride>,
+            streamBuffer = values[6] as SessionStreamBuffer,
         )
     }
 
@@ -2155,12 +2200,14 @@ class ChatViewModel(
 
     private fun buildUiState(inputs: PipelineInputs): ChatUiState {
         val window = inputs.window
+        val liveStream = inputs.streamBuffer
 
         // Queued-not-yet-invoked rows belong to the composer bar, not the
         // thread — shared predicate with the window store, like the web.
-        val visibleMessages = window.messages.filter { !it.isQueuedForInvocation }
+        val rawVisibleMessages = window.messages.filter { !it.isQueuedForInvocation }
+        val visibleMessages = rawVisibleMessages.filter { !liveStream.shouldSuppressPersisted(it.wire) }
 
-        val normalized = ArrayList<NormalizedMessage>(visibleMessages.size)
+        val normalized = ArrayList<NormalizedMessage>(visibleMessages.size + liveStream.segments.size)
         val seen = HashSet<String>(visibleMessages.size * 2)
         for (message in visibleMessages) {
             if (!seen.add(message.id)) continue
@@ -2185,6 +2232,9 @@ class ChatViewModel(
             next?.let(normalized::add)
         }
         normalizeCache.keys.retainAll(seen)
+        if (liveStream.hasActiveOverlay) {
+            normalized.addAll(liveStream.overlayMessages(rawVisibleMessages.map { it.wire }))
+        }
 
         val agentState = inputs.detail?.agentState
         val reduced = reduceChatBlocks(normalized, agentState)

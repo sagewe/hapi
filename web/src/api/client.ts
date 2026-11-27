@@ -71,18 +71,23 @@ import { fetchThroughAuthProxy } from '@/api/authProxy'
 import {
     adaptV1AgyModelsResponse,
     adaptV1AuthResponse,
+    adaptV1CancelMessageResponse,
     adaptV1HubSettingsResponse,
     adaptV1Machine,
     adaptV1MessageContextResponse,
     adaptV1MessagesResponse,
+    adaptV1QueuedStateResponse,
     adaptV1ReadStateRequest,
     adaptV1ReadStateResponse,
+    adaptV1RetryIndeterminateMessageResponse,
     adaptV1ScratchlistEntry,
     adaptV1SearchResponse,
     adaptV1Session,
     adaptV1SessionSearchResponse,
     adaptV1SessionSummary,
-    adaptV1SpawnResponse
+    adaptV1SpawnResponse,
+    adaptV1SteerQueuedMessageResponse,
+    type RetryIndeterminateMessageResponse
 } from '@/api/v1Adapters'
 import type { SessionReadState, SessionReadStateRequest, AgentFlavor, MessageDeliveryMode } from '@hapi/protocol'
 import type { CancelMessageResponse, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
@@ -95,10 +100,7 @@ import type {
     UsageQueryTemplate
 } from '@hapi/protocol/usageQuery'
 
-export type RetryIndeterminateMessageResponse =
-    | { status: 'retried' | 'already-queued' | 'retry-unavailable'; localId: string | null }
-    | { status: 'invoked'; message: DecryptedMessage }
-    | { status: 'not-found' }
+export type { RetryIndeterminateMessageResponse }
 
 export type ProviderCredentialSource = 'env' | 'settings' | 'none'
 
@@ -764,36 +766,38 @@ export class ApiClient {
     }
 
     async getQueuedState(sessionId: string, localIds: string[]): Promise<QueuedStateResponse> {
-        return await this.request<QueuedStateResponse>(
+        const raw = await this.request<unknown>(
             `/v1/sessions/${encodeURIComponent(sessionId)}/messages/queued-state`,
             {
                 method: 'POST',
                 body: JSON.stringify({ local_ids: localIds })
             }
         )
+        return adaptV1QueuedStateResponse(raw)
     }
 
     async cancelMessage(sessionId: string, messageId: string): Promise<CancelMessageResponse> {
-        const response = await this.request(
+        const raw = await this.request<unknown>(
             `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
             { method: 'DELETE' }
         )
-        return response as CancelMessageResponse
+        return adaptV1CancelMessageResponse(raw)
     }
 
     async steerMessage(sessionId: string, messageId: string): Promise<SteerQueuedMessageResponse> {
-        const response = await this.request(
+        const raw = await this.request<unknown>(
             `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/steer`,
             { method: 'POST' }
         )
-        return response as SteerQueuedMessageResponse
+        return adaptV1SteerQueuedMessageResponse(raw)
     }
 
     async retryIndeterminateMessage(sessionId: string, messageId: string): Promise<RetryIndeterminateMessageResponse> {
-        return await this.request<RetryIndeterminateMessageResponse>(
+        const raw = await this.request<unknown>(
             `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/retry`,
             { method: 'POST' }
         )
+        return adaptV1RetryIndeterminateMessageResponse(raw)
     }
 
     async abortSession(sessionId: string): Promise<void> {

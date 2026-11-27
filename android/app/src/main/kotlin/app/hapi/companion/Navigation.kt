@@ -884,6 +884,7 @@ private class ChatViewModelHolder(
         scope = scope,
         drafts = hubGraph.chatDrafts,
         scratchlist = hubGraph.scratchlistStore,
+        sessionStreamSource = hubGraph.sessionStreamSource,
     )
 
     /**

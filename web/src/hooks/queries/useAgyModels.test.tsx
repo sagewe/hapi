@@ -58,6 +58,29 @@ describe('useAgyModels', () => {
         expect(result.current.warning).toContain('Authentication required')
         expect(result.current.isFetching).toBe(false)
     })
+
+    it('surfaces hard auth-required failure when runner reports success: false with auth_required', async () => {
+        const { adaptV1AgyModelsResponse } = await import('@/api/v1Adapters')
+        const getMachineAgyModels = vi.fn(async () => adaptV1AgyModelsResponse({
+            success: false,
+            available_models: [],
+            current_model_id: null,
+            auth_required: true
+        }))
+        const api = { getMachineAgyModels } as unknown as ApiClient
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+        const { result } = renderHook(() => useAgyModels({
+            api,
+            machineId: 'machine-1',
+            enabled: true
+        }), { wrapper: wrapper(queryClient) })
+
+        await waitFor(() => expect(result.current.isLoading).toBe(false))
+        expect(result.current.availableModels).toEqual([])
+        expect(result.current.error).toContain('Authentication required')
+        expect(result.current.warning).toBeNull()
+    })
 })
 
 describe('useAgyModels catalog invalidation', () => {

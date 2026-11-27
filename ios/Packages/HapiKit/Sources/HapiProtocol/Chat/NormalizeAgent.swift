@@ -332,15 +332,17 @@ func normalizeAssistantOutput(
     let usage = message["usage"]?.objectValue
     let inputTokens = usage.flatMap { asNumber($0["input_tokens"]) }
     let outputTokens = usage.flatMap { asNumber($0["output_tokens"]) }
+    let contextTokens = usage.flatMap { asNumber($0["context_tokens"]) }
     let model = asString(message["model"])
 
     let usageData: UsageData? = {
-        guard let inputTokens, let outputTokens else { return nil }
+        guard (inputTokens != nil && outputTokens != nil) || contextTokens != nil else { return nil }
         return UsageData(
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
+            inputTokens: inputTokens ?? 0,
+            outputTokens: outputTokens ?? 0,
             cacheCreationInputTokens: usage.flatMap { asNumber($0["cache_creation_input_tokens"]) },
             cacheReadInputTokens: usage.flatMap { asNumber($0["cache_read_input_tokens"]) },
+            contextTokens: contextTokens,
             contextWindow: usage.flatMap { asNumber($0["context_window"]) },
             serviceTier: usage.flatMap { asString($0["service_tier"]) }
         )

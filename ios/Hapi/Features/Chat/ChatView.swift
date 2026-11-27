@@ -154,6 +154,9 @@ struct ChatView: View {
                 if session.isAssistantMode && !keyboardVisible && model.interactor.attachments.items.isEmpty && (!caseFiles.files.isEmpty || model.showsJumpToLatest) {
                     assistantCaseBar.padding(.top, 8).padding(.bottom, 8).transition(.opacity)
                 }
+                if let usage = model.latestUsage, usage.contextSize > 0 {
+                    ContextUsageBarView(usage: usage)
+                }
                 QueuedMessagesBarView(interactor: model.interactor)
                 #if targetEnvironment(macCatalyst)
                 ChatComposerView(

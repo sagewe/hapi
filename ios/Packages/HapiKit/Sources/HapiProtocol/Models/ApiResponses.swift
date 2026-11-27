@@ -380,15 +380,18 @@ public struct QueuedStateResponse: Codable, Equatable, Sendable {
     public var queuedLocalIds: [String]
     public var invokedLocalMessages: [InvokedLocalMessage]
     public var indeterminateLocalIds: [String]?
+    public var dispatchingLocalIds: [String]?
 
     public init(
         queuedLocalIds: [String],
         invokedLocalMessages: [InvokedLocalMessage],
-        indeterminateLocalIds: [String]? = nil
+        indeterminateLocalIds: [String]? = nil,
+        dispatchingLocalIds: [String]? = nil
     ) {
         self.queuedLocalIds = queuedLocalIds
         self.invokedLocalMessages = invokedLocalMessages
         self.indeterminateLocalIds = indeterminateLocalIds
+        self.dispatchingLocalIds = dispatchingLocalIds
     }
 }
 

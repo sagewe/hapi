@@ -362,11 +362,13 @@ function normalizeAssistantOutput(
         for (const block of modelContent) {
             if (!isObject(block) || typeof block.type !== 'string') continue
             if (block.type === 'text' && typeof block.text === 'string') {
-                blocks.push({ type: 'text', text: block.text, uuid, parentUUID })
+                const streamId = asString(block.streamId) ?? undefined
+                blocks.push({ type: 'text', text: block.text, uuid, ...(streamId ? { streamId } : {}), parentUUID })
                 continue
             }
             if (block.type === 'thinking' && typeof block.thinking === 'string') {
-                blocks.push({ type: 'reasoning', text: block.thinking, uuid, parentUUID })
+                const streamId = asString(block.streamId) ?? undefined
+                blocks.push({ type: 'reasoning', text: block.thinking, uuid, ...(streamId ? { streamId } : {}), parentUUID })
                 continue
             }
             if (block.type === 'tool_use' && typeof block.id === 'string') {
@@ -396,6 +398,7 @@ function normalizeAssistantOutput(
     const usage = isObject(message.usage) ? (message.usage as Record<string, unknown>) : null
     const inputTokens = usage ? asNumber(usage.input_tokens) : null
     const outputTokens = usage ? asNumber(usage.output_tokens) : null
+    const contextTokens = usage ? asNumber(usage.context_tokens) : null
     const model = asString(message.model) ?? null
 
     return {
@@ -409,11 +412,12 @@ function normalizeAssistantOutput(
         content: blocks,
         meta,
         agentTimestamp,
-        usage: inputTokens !== null && outputTokens !== null ? {
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
+        usage: (inputTokens !== null && outputTokens !== null) || contextTokens !== null ? {
+            input_tokens: inputTokens ?? 0,
+            output_tokens: outputTokens ?? 0,
             cache_creation_input_tokens: asNumber(usage?.cache_creation_input_tokens) ?? undefined,
             cache_read_input_tokens: asNumber(usage?.cache_read_input_tokens) ?? undefined,
+            context_tokens: contextTokens ?? undefined,
             service_tier: asString(usage?.service_tier) ?? undefined,
             context_window: asNumber(usage?.context_window) ?? undefined
         } : undefined

@@ -717,6 +717,9 @@ export function useSSE(options: {
                 }
                 if (event.type === 'message-cancelled') {
                     removeOptimisticMessage(event.sessionId, event.messageId)
+                    if (event.localId && event.localId !== event.messageId) {
+                        removeOptimisticMessage(event.sessionId, event.localId)
+                    }
                 }
                 onEventRef.current(event)
                 return
@@ -740,6 +743,9 @@ export function useSSE(options: {
                 // Remove the cancelled message from the store. If the local
                 // optimistic removal already cleared it, this is a no-op.
                 removeOptimisticMessage(event.sessionId, event.messageId)
+                if (event.localId && event.localId !== event.messageId) {
+                    removeOptimisticMessage(event.sessionId, event.localId)
+                }
             }
 
             if (event.type === 'message-received') {

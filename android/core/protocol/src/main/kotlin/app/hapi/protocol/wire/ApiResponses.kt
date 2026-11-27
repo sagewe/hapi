@@ -236,51 +236,66 @@ internal object ReopenSessionResponseSerializer : KSerializer<ReopenSessionRespo
 }
 
 /**
- * `DELETE /api/sessions/:id/messages/:messageId`
+ * `DELETE /v1/sessions/:id/messages/:messageId`
  * (`CancelMessageResponseSchema` — discriminated on [status]):
- * `'cancelled'` carries [localId]; `'invoked'` (too late) carries [message].
+ * `'cancelled'` carries [localId]; `'invoked'` (too late) carries [message]; `'busy'` when dispatching.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class CancelMessageResponse(
     val status: String,
+    @JsonNames("local_id")
     val localId: String? = null,
     val message: DecryptedMessage? = null,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class RetryIndeterminateMessageResponse(
     val status: String,
+    @JsonNames("local_id")
     val localId: String? = null,
     val message: DecryptedMessage? = null,
 )
 
 /**
- * `POST /api/sessions/:id/messages/:messageId/steer`
+ * `POST /v1/sessions/:id/messages/:messageId/steer`
  * (`SteerQueuedMessageResponseSchema` — discriminated on [status]):
  * `'steered'` → [localId]; `'invoked'` → [message]; `'failed'` → [error] + [localId].
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class SteerQueuedMessageResponse(
     val status: String,
+    @JsonNames("local_id")
     val localId: String? = null,
     val message: DecryptedMessage? = null,
     val error: String? = null,
 )
 
 /**
- * `POST /api/sessions/:id/messages/queued-state` — resyncs optimistic sends
+ * `POST /v1/sessions/:id/messages/queued-state` — resyncs optimistic sends
  * after reconnect (`QueuedStateResponse`, `shared/src/apiTypes.ts`).
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class QueuedStateResponse(
-    val queuedLocalIds: List<String>,
-    val invokedLocalMessages: List<InvokedLocalMessage>,
+    @JsonNames("queued_local_ids")
+    val queuedLocalIds: List<String> = emptyList(),
+    @JsonNames("invoked_local_messages")
+    val invokedLocalMessages: List<InvokedLocalMessage> = emptyList(),
+    @JsonNames("indeterminate_local_ids")
     val indeterminateLocalIds: List<String> = emptyList(),
+    @JsonNames("dispatching_local_ids")
+    val dispatchingLocalIds: List<String> = emptyList(),
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class InvokedLocalMessage(
+    @JsonNames("local_id")
     val localId: String,
+    @JsonNames("invoked_at")
     val invokedAt: Long,
 )
 

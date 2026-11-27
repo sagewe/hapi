@@ -1,4 +1,5 @@
 import type {
+    AgyModelSummary,
     AgyModelsResponse,
     AuthResponse,
     DecryptedMessage,
@@ -13,8 +14,16 @@ import type {
     SpawnResponse,
     SyncEvent
 } from '@/types/api'
-import type { HubSettingsResponse } from '@hapi/protocol/apiTypes'
+import type { HubSettingsResponse, QueuedStateResponse } from '@hapi/protocol/apiTypes'
 import type { ScratchlistAttachmentMetadata, SessionReadState, SessionReadStateRequest } from '@hapi/protocol'
+import type { CancelMessageResponse, SteerQueuedMessageResponse } from '@hapi/protocol/schemas'
+
+export type RetryIndeterminateMessageResponse =
+    | { status: 'retried' | 'already-queued' | 'retry-unavailable'; localId: string | null }
+    | { status: 'invoked'; message: DecryptedMessage }
+    | { status: 'not-found' }
+
+const DEFAULT_AGY_AUTH_REQUIRED_ERROR = 'Authentication required. Please run `agy` in a terminal to sign in with Google.'
 
 type UnknownRecord = Record<string, unknown>
 
@@ -54,6 +63,26 @@ export function buildV1TerminalWsUrl(baseUrl: string, sessionId: string, token: 
         url.protocol = 'ws:'
     }
     return url.toString()
+}
+
+/**
+ * Build the native Reins v1 live token stream SSE URL (`/v1/sessions/{id}/stream?token=...`).
+ */
+export function buildV1SessionStreamUrl(baseUrl: string, sessionId: string, token: string): string {
+    const params = new URLSearchParams()
+    if (token) {
+        params.set('token', token)
+    }
+    const qs = params.toString()
+    const path = `/v1/sessions/${encodeURIComponent(sessionId)}/stream${qs ? `?${qs}` : ''}`
+    if (!baseUrl) {
+        return path
+    }
+    try {
+        return new URL(path, baseUrl).toString()
+    } catch {
+        return path
+    }
 }
 
 export function adaptV1AuthResponse(raw: unknown): AuthResponse {
@@ -193,7 +222,13 @@ export function adaptV1Session(raw: unknown): Session {
         metadata.lifecycleState = 'running'
     }
 
-    const agentState: UnknownRecord = isRecord(raw.pending_requests) ? raw.pending_requests : {}
+    const agentState: UnknownRecord = isRecord(raw.pending_requests) ? { ...raw.pending_requests } : {}
+    if (agentState.steeringActive === undefined) {
+        const steeringActive = asBoolean(raw.steering_active ?? raw.steeringActive)
+        if (steeringActive !== undefined) {
+            agentState.steeringActive = steeringActive
+        }
+    }
     const pendingRequestsVec: Array<{ id: string; kind: 'permission' | 'input'; tool: string; since: number }> = []
     const pendingKinds: Array<'permission' | 'input'> = []
     let pendingCount = 0
@@ -309,6 +344,33 @@ function isV1StoredMessage(raw: UnknownRecord): boolean {
     return Array.isArray(raw.blocks) && typeof raw.role === 'string'
 }
 
+function adaptV1MessageUsage(raw: unknown): UnknownRecord | undefined {
+    if (!isRecord(raw)) return undefined
+    const inputTokens = asNumber(raw.input_tokens ?? raw.inputTokens)
+    const outputTokens = asNumber(raw.output_tokens ?? raw.outputTokens)
+    const contextTokens = asNumber(raw.context_tokens ?? raw.contextTokens)
+    const contextWindow = asNumber(raw.context_window ?? raw.contextWindow)
+    const cacheCreation = asNumber(raw.cache_creation_input_tokens ?? raw.cacheCreationInputTokens)
+    const cacheRead = asNumber(raw.cache_read_input_tokens ?? raw.cacheReadInputTokens)
+    const serviceTier = asString(raw.service_tier ?? raw.serviceTier)
+    if (inputTokens === undefined && outputTokens === undefined && contextTokens === undefined) {
+        return undefined
+    }
+    return {
+        input_tokens: inputTokens ?? 0,
+        output_tokens: outputTokens ?? 0,
+        ...(cacheCreation !== undefined ? { cache_creation_input_tokens: cacheCreation } : {}),
+        ...(cacheRead !== undefined ? { cache_read_input_tokens: cacheRead } : {}),
+        ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
+        ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
+        ...(serviceTier !== undefined ? { service_tier: serviceTier } : {})
+    }
+}
+
+export function buildSegmentStreamId(segmentId: string, kind: 'text' | 'thinking', index: number = 0): string {
+    return index === 0 ? `seg:${segmentId}:${kind}` : `seg:${segmentId}:${kind}:${index}`
+}
+
 export function adaptV1Message(raw: unknown): DecryptedMessage {
     if (!isRecord(raw) || !isV1StoredMessage(raw)) {
         return raw as DecryptedMessage
@@ -316,11 +378,23 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
     const id = asString(raw.id) ?? ''
     const seq = asNumber(raw.seq) ?? 0
     const createdAt = asNumber(raw.created_at) ?? Date.now()
-    const invokedAt = asNumber(raw.invoked_at) ?? createdAt
+    const rawDeliveryState = asString(raw.delivery_state)
+    const isUninvokedState = rawDeliveryState === 'queued'
+        || rawDeliveryState === 'dispatching'
+        || rawDeliveryState === 'indeterminate'
+    const rawInvokedAt = raw.invoked_at
+    const invokedAt: number | null = rawInvokedAt === null
+        ? null
+        : (asNumber(rawInvokedAt) ?? (isUninvokedState ? null : createdAt))
+    const rawScheduledAt = raw.scheduled_at ?? raw.scheduledAt
+    const scheduledAt: number | null | undefined = rawScheduledAt === null
+        ? null
+        : asNumber(rawScheduledAt)
     const localId = asString(raw.local_id) ?? null
     const role = asString(raw.role) ?? 'user'
     const blocks = Array.isArray(raw.blocks) ? raw.blocks : []
     const rawMeta = isRecord(raw.meta) ? { ...raw.meta } : {}
+    const hasMeta = Object.keys(rawMeta).length > 0
 
     let content: UnknownRecord
     if (role === 'user') {
@@ -345,9 +419,18 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
         if (attachments.length > 0) {
             inner.attachments = attachments
         }
-        content = { role: 'user', content: inner }
+        content = {
+            role: 'user',
+            content: inner,
+            ...(hasMeta ? { meta: rawMeta } : {})
+        }
     } else if (role === 'assistant') {
-        if (blocks.length === 1 && isRecord(blocks[0]) && blocks[0].type === 'generated_media') {
+        const adaptedUsage = adaptV1MessageUsage(rawMeta.usage)
+        const model = asString(rawMeta.model)
+        const rawSegmentId = asString(rawMeta.segmentId ?? rawMeta.segment_id)
+        const segmentId = rawSegmentId && rawSegmentId.trim().length > 0 ? rawSegmentId.trim() : undefined
+
+        if (!adaptedUsage && blocks.length === 1 && isRecord(blocks[0]) && blocks[0].type === 'generated_media') {
             const gm = blocks[0]
             content = {
                 role: 'agent',
@@ -360,16 +443,31 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
                         fileName: asString(gm.filename) ?? 'image',
                         mimeType: asString(gm.mime_type ?? gm.mimeType) ?? 'image/png'
                     }
-                }
+                },
+                ...(hasMeta ? { meta: rawMeta } : {})
             }
         } else {
             const contentBlocks: UnknownRecord[] = []
+            let textIndex = 0
+            let thinkingIndex = 0
             for (const blk of blocks) {
                 if (!isRecord(blk)) continue
                 if (blk.type === 'text' && typeof blk.text === 'string') {
-                    contentBlocks.push({ type: 'text', text: blk.text })
+                    const streamId = segmentId ? buildSegmentStreamId(segmentId, 'text', textIndex) : undefined
+                    textIndex += 1
+                    contentBlocks.push({
+                        type: 'text',
+                        text: blk.text,
+                        ...(streamId ? { streamId } : {})
+                    })
                 } else if (blk.type === 'thinking' && typeof blk.thinking === 'string') {
-                    contentBlocks.push({ type: 'thinking', thinking: blk.thinking })
+                    const streamId = segmentId ? buildSegmentStreamId(segmentId, 'thinking', thinkingIndex) : undefined
+                    thinkingIndex += 1
+                    contentBlocks.push({
+                        type: 'thinking',
+                        thinking: blk.thinking,
+                        ...(streamId ? { streamId } : {})
+                    })
                 } else if (blk.type === 'tool_use') {
                     contentBlocks.push({
                         type: 'tool_use',
@@ -395,10 +493,13 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
                         type: 'assistant',
                         message: {
                             role: 'assistant',
-                            content: contentBlocks
+                            content: contentBlocks,
+                            ...(adaptedUsage ? { usage: adaptedUsage } : {}),
+                            ...(model ? { model } : {})
                         }
                     }
-                }
+                },
+                ...(hasMeta ? { meta: rawMeta } : {})
             }
         }
     } else if (role === 'tool') {
@@ -455,7 +556,6 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
         }
     }
 
-    const rawDeliveryState = asString(raw.delivery_state)
     const adapted: UnknownRecord = {
         id,
         seq,
@@ -463,6 +563,7 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
         contentRevision: asNumber(raw.content_rev) ?? 0,
         createdAt,
         invokedAt,
+        ...(scheduledAt !== undefined ? { scheduledAt } : {}),
         ...(rawDeliveryState === 'indeterminate' ? { deliveryState: 'indeterminate' as const } : {}),
         ...(rawDeliveryState === 'dispatching' ? { deliveryPending: true as const } : {}),
         content
@@ -605,21 +706,156 @@ export function adaptV1SessionSearchResponse(raw: unknown): SessionContentMatche
     }
 }
 
+function adaptV1AgyModelSummary(raw: unknown): AgyModelSummary | null {
+    if (!isRecord(raw)) return null
+    const modelId = asString(raw.modelId ?? raw.model_id)
+    if (!modelId) return null
+    const name = asString(raw.name)
+    const description = asString(raw.description)
+    return {
+        ...raw,
+        modelId,
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {})
+    } as AgyModelSummary
+}
+
 export function adaptV1AgyModelsResponse(raw: unknown): AgyModelsResponse {
     if (!isRecord(raw)) {
         return raw as AgyModelsResponse
     }
+    const authRequired = asBoolean(raw.auth_required ?? raw.authRequired) === true
+    const rawError = asString(raw.error)?.trim()
+    const error = rawError && rawError.length > 0
+        ? rawError
+        : (authRequired ? DEFAULT_AGY_AUTH_REQUIRED_ERROR : undefined)
     if ('availableModels' in raw || 'currentModelId' in raw) {
-        return raw as unknown as AgyModelsResponse
+        const availableModels = Array.isArray(raw.availableModels)
+            ? raw.availableModels.map(adaptV1AgyModelSummary).filter((item): item is AgyModelSummary => item !== null)
+            : undefined
+        return {
+            ...(raw as unknown as AgyModelsResponse),
+            ...(availableModels !== undefined ? { availableModels } : {}),
+            ...(error !== undefined ? { error } : {})
+        }
     }
+    const availableModels = Array.isArray(raw.available_models)
+        ? raw.available_models.map(adaptV1AgyModelSummary).filter((item): item is AgyModelSummary => item !== null)
+        : undefined
     return {
         success: asBoolean(raw.success) ?? false,
-        availableModels: Array.isArray(raw.available_models)
-            ? raw.available_models as AgyModelsResponse['availableModels']
-            : undefined,
+        availableModels,
         currentModelId: asString(raw.current_model_id) ?? null,
-        error: asString(raw.error)
+        error
     }
+}
+
+function asStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return []
+    return value.filter((item): item is string => typeof item === 'string')
+}
+
+export function adaptV1QueuedStateResponse(raw: unknown): QueuedStateResponse {
+    if (!isRecord(raw)) {
+        return raw as QueuedStateResponse
+    }
+    const queuedLocalIds = asStringArray(raw.queuedLocalIds ?? raw.queued_local_ids)
+    const rawIndeterminate = raw.indeterminateLocalIds ?? raw.indeterminate_local_ids
+    const rawDispatching = raw.dispatchingLocalIds ?? raw.dispatching_local_ids
+    const rawInvoked = raw.invokedLocalMessages ?? raw.invoked_local_messages
+    const invokedLocalMessages = Array.isArray(rawInvoked)
+        ? rawInvoked
+            .map((entry) => {
+                if (!isRecord(entry)) return null
+                const localId = asString(entry.localId ?? entry.local_id)
+                const invokedAt = asNumber(entry.invokedAt ?? entry.invoked_at)
+                if (!localId || invokedAt === undefined) return null
+                return { localId, invokedAt }
+            })
+            .filter((entry): entry is { localId: string; invokedAt: number } => entry !== null)
+        : []
+    return {
+        queuedLocalIds,
+        ...(rawIndeterminate !== undefined ? { indeterminateLocalIds: asStringArray(rawIndeterminate) } : {}),
+        ...(rawDispatching !== undefined ? { dispatchingLocalIds: asStringArray(rawDispatching) } : {}),
+        invokedLocalMessages
+    }
+}
+
+export function adaptV1CancelMessageResponse(raw: unknown): CancelMessageResponse {
+    if (!isRecord(raw)) {
+        return raw as CancelMessageResponse
+    }
+    const status = asString(raw.status)
+    if (status === 'invoked') {
+        return {
+            status: 'invoked',
+            message: adaptV1Message(raw.message)
+        } as CancelMessageResponse
+    }
+    if (status === 'busy') {
+        return {
+            status: 'busy',
+            localId: asString(raw.localId ?? raw.local_id) ?? ''
+        }
+    }
+    if (status === 'cancelled') {
+        return {
+            status: 'cancelled',
+            localId: asString(raw.localId ?? raw.local_id) ?? null
+        }
+    }
+    return raw as CancelMessageResponse
+}
+
+export function adaptV1SteerQueuedMessageResponse(raw: unknown): SteerQueuedMessageResponse {
+    if (!isRecord(raw)) {
+        return raw as SteerQueuedMessageResponse
+    }
+    const status = asString(raw.status)
+    if (status === 'invoked') {
+        return {
+            status: 'invoked',
+            message: adaptV1Message(raw.message)
+        } as SteerQueuedMessageResponse
+    }
+    if (status === 'steered') {
+        return {
+            status: 'steered',
+            localId: asString(raw.localId ?? raw.local_id) ?? ''
+        }
+    }
+    if (status === 'failed') {
+        return {
+            status: 'failed',
+            error: asString(raw.error) ?? 'Steer failed',
+            localId: asString(raw.localId ?? raw.local_id) ?? null
+        }
+    }
+    return raw as SteerQueuedMessageResponse
+}
+
+export function adaptV1RetryIndeterminateMessageResponse(raw: unknown): RetryIndeterminateMessageResponse {
+    if (!isRecord(raw)) {
+        return raw as RetryIndeterminateMessageResponse
+    }
+    const status = asString(raw.status)
+    if (status === 'invoked') {
+        return {
+            status: 'invoked',
+            message: adaptV1Message(raw.message)
+        }
+    }
+    if (status === 'not-found') {
+        return { status: 'not-found' }
+    }
+    if (status === 'retried' || status === 'already-queued' || status === 'retry-unavailable') {
+        return {
+            status,
+            localId: asString(raw.localId ?? raw.local_id) ?? null
+        }
+    }
+    return raw as RetryIndeterminateMessageResponse
 }
 
 export function adaptV1SpawnResponse(raw: unknown): SpawnResponse {
@@ -718,6 +954,66 @@ export function adaptV1SyncEvent(raw: unknown): SyncEvent | null {
                 namespace: asString(raw.namespace),
                 sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
                 message: adaptV1Message(raw.message)
+            } as unknown as SyncEvent
+        }
+        case 'messages_consumed': {
+            const steered = asBoolean(raw.steered)
+            return {
+                type: 'messages-consumed',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                localIds: asStringArray(raw.local_ids ?? raw.localIds),
+                invokedAt: asNumber(raw.invoked_at ?? raw.invokedAt) ?? Date.now(),
+                ...(steered !== undefined ? { steered } : {})
+            } as unknown as SyncEvent
+        }
+        case 'messages_indeterminate': {
+            const dispatching = asBoolean(raw.dispatching)
+            return {
+                type: 'messages-indeterminate',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                localIds: asStringArray(raw.local_ids ?? raw.localIds),
+                ...(dispatching === true ? { dispatching: true } : {})
+            } as unknown as SyncEvent
+        }
+        case 'messages_requeued': {
+            return {
+                type: 'messages-requeued',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                localIds: asStringArray(raw.local_ids ?? raw.localIds)
+            } as unknown as SyncEvent
+        }
+        case 'message_cancelled': {
+            const localId = asString(raw.local_id ?? raw.localId)
+            return {
+                type: 'message-cancelled',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                messageId: asString(raw.message_id ?? raw.messageId) ?? '',
+                ...(localId !== undefined ? { localId } : {})
+            } as unknown as SyncEvent
+        }
+        case 'messages_invalidated': {
+            const reason = asString(raw.reason)
+            const truncateFromLocalId = asString(raw.truncate_from_local_id ?? raw.truncateFromLocalId)
+            return {
+                type: 'messages-invalidated',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                ...(reason !== undefined ? { reason } : {}),
+                ...(truncateFromLocalId !== undefined ? { truncateFromLocalId } : {})
+            } as unknown as SyncEvent
+        }
+        case 'scheduled_matured': {
+            return {
+                type: 'scheduled-matured',
+                namespace: asString(raw.namespace),
+                sessionId: asString(raw.session_id ?? raw.sessionId) ?? '',
+                ...(raw.local_ids !== undefined || raw.localIds !== undefined
+                    ? { localIds: asStringArray(raw.local_ids ?? raw.localIds) }
+                    : {})
             } as unknown as SyncEvent
         }
         case 'machine_updated': {

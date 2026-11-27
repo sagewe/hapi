@@ -99,6 +99,8 @@ import { TeamPanel } from '@/components/TeamPanel'
 import { SessionStatusPanel } from '@/components/SessionStatusPanel'
 import { buildSessionStatusData } from '@/chat/sessionStatus'
 import { usePlatform } from '@/hooks/usePlatform'
+import { useAppContextOptional } from '@/lib/app-context'
+import { mergeStreamOverlayMessages, useSessionStream } from '@/hooks/useSessionStream'
 import { getToolCardDisplayPresentation, useToolCardDisplayMode } from '@/hooks/useToolCardDisplayMode'
 import { useConciseChatMode } from '@/hooks/useConciseChatMode'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
@@ -1667,6 +1669,21 @@ function SessionChatInner(props: SessionChatProps) {
         setOutlineOpen(false)
     }, [props.session.id])
 
+    const appContext = useAppContextOptional()
+    const streamOverlay = useSessionStream({
+        enabled: Boolean(
+            appContext?.token
+            && props.session.active
+            && props.viewMode === 'tail'
+        ),
+        baseUrl: appContext?.baseUrl ?? '',
+        token: appContext?.token ?? '',
+        sessionId: props.session.id,
+        messages: props.messages,
+        isThinking: props.session.thinking,
+        onResync: props.onRefresh
+    })
+
     // Exclude user messages that haven't been invoked yet — those appear in the
     // QueuedMessagesBar above the composer, not in the thread timeline. The
     // `isQueuedForInvocation` predicate is shared with the window store and the
@@ -1674,6 +1691,11 @@ function SessionChatInner(props: SessionChatProps) {
     const visibleMessages = useMemo(
         () => props.messages.filter((m) => !isQueuedForInvocation(m)),
         [props.messages]
+    )
+
+    const liveVisibleMessages = useMemo(
+        () => mergeStreamOverlayMessages(visibleMessages, streamOverlay, { viewMode: props.viewMode }),
+        [visibleMessages, streamOverlay, props.viewMode]
     )
 
     const normalizedMessages: NormalizedMessage[] = useMemo(() => {
@@ -1689,7 +1711,7 @@ function SessionChatInner(props: SessionChatProps) {
         const cache = normalizedCacheRef.current
         const normalized: NormalizedMessage[] = []
         const seen = new Set<string>()
-        for (const message of visibleMessages) {
+        for (const message of liveVisibleMessages) {
             if (seen.has(message.id)) {
                 continue
             }
@@ -1709,7 +1731,7 @@ function SessionChatInner(props: SessionChatProps) {
             }
         }
         return normalized
-    }, [visibleMessages])
+    }, [liveVisibleMessages])
 
     const goalStateSourceMessages = useMemo(
         () => buildGoalStateMessages(props.messages),

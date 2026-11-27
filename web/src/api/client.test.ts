@@ -319,6 +319,45 @@ describe('ApiClient error mapping', () => {
         expect(init).toMatchObject({ method: 'POST' })
     })
 
+    it('adapts v1 StoredMessage payloads returned by cancel, steer, and retry when status is invoked', async () => {
+        const rawV1Message = {
+            id: 'srv-msg-1',
+            session_id: 'sess-1',
+            seq: 12,
+            local_id: 'loc-12',
+            role: 'user',
+            content_rev: 12,
+            invoked_at: 12_345,
+            delivery_state: 'invoked',
+            blocks: [{ type: 'text', text: 'already invoked' }],
+            meta: {},
+            created_at: 12_000
+        }
+        fetchMock
+            .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'invoked', message: rawV1Message }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'invoked', message: rawV1Message }), { status: 200 }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'invoked', message: rawV1Message }), { status: 200 }))
+
+        const api = new ApiClient('test-token')
+        const cancelResult = await api.cancelMessage('sess-1', 'srv-msg-1')
+        const steerResult = await api.steerMessage('sess-1', 'srv-msg-1')
+        const retryResult = await api.retryIndeterminateMessage('sess-1', 'srv-msg-1')
+
+        expect(fetchMock.mock.calls[0]?.[0]).toBe('/v1/sessions/sess-1/messages/srv-msg-1')
+        expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'DELETE' })
+        expect(fetchMock.mock.calls[1]?.[0]).toBe('/v1/sessions/sess-1/messages/srv-msg-1/steer')
+        expect(fetchMock.mock.calls[2]?.[0]).toBe('/v1/sessions/sess-1/messages/srv-msg-1/retry')
+
+        for (const result of [cancelResult, steerResult, retryResult]) {
+            expect(result.status).toBe('invoked')
+            if (result.status === 'invoked') {
+                expect(result.message.id).toBe('srv-msg-1')
+                expect(result.message.localId).toBe('loc-12')
+                expect(result.message.invokedAt).toBe(12_345)
+            }
+        }
+    })
+
     it('requests usage buckets in the viewer IANA time zone', async () => {
         fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
 

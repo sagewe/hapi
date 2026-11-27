@@ -720,11 +720,13 @@ class MessageWindowStore(
         if (candidateLocalIds.isEmpty()) return
         val queuedLocalIds = mutableListOf<String>()
         val indeterminateLocalIds = mutableListOf<String>()
+        val dispatchingLocalIds = mutableListOf<String>()
         val invokedLocalMessages = mutableListOf<Pair<String, Long>>()
         candidateLocalIds.chunked(QUEUED_STATE_BATCH_SIZE).forEach { batch ->
             val response = api.getQueuedState(sessionId, batch)
             queuedLocalIds += response.queuedLocalIds
             indeterminateLocalIds += response.indeterminateLocalIds
+            dispatchingLocalIds += response.dispatchingLocalIds
             invokedLocalMessages += response.invokedLocalMessages.map { it.localId to it.invokedAt }
         }
         val invokedByTimestamp = LinkedHashMap<Long, MutableList<String>>()
@@ -735,7 +737,7 @@ class MessageWindowStore(
             markConsumed(localIds, invokedAt)
         }
         markIndeterminate(indeterminateLocalIds)
-        reconcileQueuedLocalIds(candidateLocalIds, queuedLocalIds + indeterminateLocalIds)
+        reconcileQueuedLocalIds(candidateLocalIds, queuedLocalIds + indeterminateLocalIds + dispatchingLocalIds)
     }
 
     // ------------------------------------------------------------ lifecycle --

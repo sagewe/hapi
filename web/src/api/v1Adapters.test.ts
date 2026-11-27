@@ -1,20 +1,29 @@
 import { describe, expect, it } from 'vitest'
+import { hasActiveSteeringTurn } from '@hapi/protocol'
 import { MachineSchema, SessionSchema } from '@hapi/protocol/schemas'
+import { normalizeDecryptedMessage } from '@/chat/normalize'
+import { reduceChatBlocks } from '@/chat/reducer'
+import { isQueuedForInvocation } from '@/lib/messages'
 import {
     adaptV1AgyModelsResponse,
     adaptV1AuthResponse,
+    adaptV1CancelMessageResponse,
     adaptV1HubSettingsResponse,
     adaptV1Machine,
     adaptV1Message,
     adaptV1MessagesResponse,
+    adaptV1QueuedStateResponse,
     adaptV1ReadStateRequest,
     adaptV1ReadStateResponse,
+    adaptV1RetryIndeterminateMessageResponse,
     adaptV1ScratchlistEntry,
     adaptV1SearchResponse,
     adaptV1Session,
     adaptV1SessionSearchResponse,
     adaptV1SpawnResponse,
+    adaptV1SteerQueuedMessageResponse,
     adaptV1SyncEvent,
+    buildV1SessionStreamUrl,
     buildV1TerminalWsUrl
 } from './v1Adapters'
 
@@ -352,5 +361,293 @@ describe('v1Adapters', () => {
             sessionSummaryInChat: false,
             peerSpawnDefaults: { agent: 'claude', model: 'sonnet', permissionMode: 'yolo' }
         })
+    })
+
+    it('builds native v1 session stream URLs', () => {
+        expect(buildV1SessionStreamUrl('https://reins.example.test', 'sess/1', 'jwt tok')).toBe(
+            'https://reins.example.test/v1/sessions/sess%2F1/stream?token=jwt+tok'
+        )
+        expect(buildV1SessionStreamUrl('', 'sess-1', 'abc')).toBe(
+            '/v1/sessions/sess-1/stream?token=abc'
+        )
+    })
+
+    it('projects AGY steering gate fields (agySessionProtocol + steeringActive) cleanly', () => {
+        const session = adaptV1Session({
+            id: 'sess-agy',
+            namespace: 'default',
+            machine_id: 'mac-1',
+            agent: 'agy',
+            directory: '/tmp/repo',
+            title: 'AGY ACP',
+            title_locked: false,
+            prompt_title: null,
+            model: 'gemini-3.8-pro',
+            effort: 'high',
+            permission_mode: 'default',
+            status: 'thinking',
+            pinned: false,
+            pin_mode: 'none',
+            archived: false,
+            meta_rev: 2,
+            state_rev: 2,
+            message_epoch: 0,
+            content_rev: 2,
+            read_rev: 1,
+            read_state_ver: 1,
+            manual_unread: false,
+            pending_requests: { steeringActive: true },
+            metadata: { agySessionProtocol: 'acp' },
+            created_at: 1000,
+            updated_at: 2000,
+            seq: 2
+        })
+        expect(SessionSchema.safeParse(session).success).toBe(true)
+        expect(hasActiveSteeringTurn(session)).toBe(true)
+    })
+
+    it('preserves invokedAt: null for queued/dispatching/indeterminate user rows so QueuedMessagesBar recognizes them', () => {
+        const queued = adaptV1Message({
+            id: 'm-queued',
+            session_id: 's1',
+            seq: 5,
+            local_id: 'loc-q',
+            role: 'user',
+            content_rev: 5,
+            invoked_at: null,
+            delivery_state: 'queued',
+            blocks: [{ type: 'text', text: 'wait in queue' }],
+            meta: {},
+            created_at: 500
+        })
+        expect(queued.invokedAt).toBeNull()
+        expect(isQueuedForInvocation(queued)).toBe(true)
+
+        const dispatching = adaptV1Message({
+            id: 'm-disp-null',
+            session_id: 's1',
+            seq: 6,
+            local_id: 'loc-d',
+            role: 'user',
+            content_rev: 6,
+            invoked_at: null,
+            delivery_state: 'dispatching',
+            blocks: [{ type: 'text', text: 'steering now' }],
+            meta: {},
+            created_at: 600
+        })
+        expect(dispatching.invokedAt).toBeNull()
+        expect(isQueuedForInvocation(dispatching)).toBe(true)
+        expect((dispatching as { deliveryPending?: boolean }).deliveryPending).toBe(true)
+
+        const indet = adaptV1Message({
+            id: 'm-indet-null',
+            session_id: 's1',
+            seq: 7,
+            local_id: 'loc-i',
+            role: 'user',
+            content_rev: 7,
+            invoked_at: null,
+            delivery_state: 'indeterminate',
+            blocks: [{ type: 'text', text: 'outcome unknown' }],
+            meta: {},
+            created_at: 700
+        })
+        expect(indet.invokedAt).toBeNull()
+        expect(indet.deliveryState).toBe('indeterminate')
+        expect(isQueuedForInvocation(indet)).toBe(true)
+    })
+
+    it('projects StoredMessage.meta.usage and meta.model into reducer latestUsage for the context bar', () => {
+        const msg = adaptV1Message({
+            id: 'm-usage',
+            session_id: 's1',
+            seq: 10,
+            local_id: null,
+            role: 'assistant',
+            content_rev: 10,
+            invoked_at: 1000,
+            delivery_state: 'invoked',
+            blocks: [{ type: 'text', text: 'Done!' }],
+            meta: {
+                segmentId: 'seg-10',
+                model: 'gemini-3.8-pro',
+                usage: {
+                    input_tokens: 40_000,
+                    output_tokens: 1_250,
+                    cache_read_input_tokens: 30_000,
+                    context_tokens: 42_500,
+                    context_window: 1_000_000
+                }
+            },
+            created_at: 1000
+        })
+        const normalized = normalizeDecryptedMessage(msg)
+        expect(normalized).not.toBeNull()
+        expect(normalized?.model).toBe('gemini-3.8-pro')
+        const reduced = reduceChatBlocks([normalized!], null)
+        expect(reduced.latestUsage).toMatchObject({
+            inputTokens: 40_000,
+            outputTokens: 1_250,
+            cacheRead: 30_000,
+            contextSize: 42_500,
+            contextWindow: 1_000_000,
+            model: 'gemini-3.8-pro'
+        })
+
+        // Also handle context-only usage updates (e.g. ACP usage_update before final prompt counts).
+        const contextOnly = adaptV1Message({
+            id: 'm-ctx-only',
+            session_id: 's1',
+            seq: 11,
+            local_id: null,
+            role: 'assistant',
+            content_rev: 11,
+            invoked_at: 1100,
+            delivery_state: 'invoked',
+            blocks: [{ type: 'text', text: 'Thinking' }],
+            meta: {
+                usage: {
+                    context_tokens: 120_000,
+                    context_window: 200_000
+                }
+            },
+            created_at: 1100
+        })
+        const ctxNormalized = normalizeDecryptedMessage(contextOnly)
+        const ctxReduced = reduceChatBlocks([ctxNormalized!], null)
+        expect(ctxReduced.latestUsage).toMatchObject({
+            contextSize: 120_000,
+            contextWindow: 200_000
+        })
+    })
+
+    it('adapts Phase B queue/steer/cancel/retry REST responses and SSE events', () => {
+        const invokedRaw = {
+            id: 'm-inv',
+            session_id: 's1',
+            seq: 8,
+            local_id: 'loc-8',
+            role: 'user',
+            content_rev: 8,
+            invoked_at: 8888,
+            delivery_state: 'invoked',
+            blocks: [{ type: 'text', text: 'already sent' }],
+            meta: {},
+            created_at: 8000
+        }
+
+        const cancelResp = adaptV1CancelMessageResponse({ status: 'invoked', message: invokedRaw })
+        expect(cancelResp.status).toBe('invoked')
+        if (cancelResp.status === 'invoked') {
+            expect(cancelResp.message.localId).toBe('loc-8')
+            expect(cancelResp.message.invokedAt).toBe(8888)
+        }
+
+        const steerResp = adaptV1SteerQueuedMessageResponse({ status: 'invoked', message: invokedRaw })
+        expect(steerResp.status).toBe('invoked')
+        if (steerResp.status === 'invoked') {
+            expect(steerResp.message.id).toBe('m-inv')
+            expect(steerResp.message.invokedAt).toBe(8888)
+        }
+
+        const retryResp = adaptV1RetryIndeterminateMessageResponse({ status: 'invoked', message: invokedRaw })
+        expect(retryResp.status).toBe('invoked')
+        if (retryResp.status === 'invoked') {
+            expect(retryResp.message.localId).toBe('loc-8')
+        }
+
+        expect(adaptV1QueuedStateResponse({
+            queued_local_ids: ['loc-1'],
+            indeterminate_local_ids: ['loc-2'],
+            dispatching_local_ids: ['loc-2'],
+            invoked_local_messages: [{ local_id: 'loc-3', invoked_at: 3000 }]
+        })).toEqual({
+            queuedLocalIds: ['loc-1'],
+            indeterminateLocalIds: ['loc-2'],
+            dispatchingLocalIds: ['loc-2'],
+            invokedLocalMessages: [{ localId: 'loc-3', invokedAt: 3000 }]
+        })
+
+        expect(adaptV1SyncEvent({
+            type: 'messages_consumed',
+            namespace: 'default',
+            session_id: 's1',
+            local_ids: ['loc-1'],
+            invoked_at: 4000,
+            steered: true
+        })).toEqual({
+            type: 'messages-consumed',
+            namespace: 'default',
+            sessionId: 's1',
+            localIds: ['loc-1'],
+            invokedAt: 4000,
+            steered: true
+        })
+
+        expect(adaptV1SyncEvent({
+            type: 'messages_indeterminate',
+            namespace: 'default',
+            session_id: 's1',
+            local_ids: ['loc-2'],
+            dispatching: true
+        })).toEqual({
+            type: 'messages-indeterminate',
+            namespace: 'default',
+            sessionId: 's1',
+            localIds: ['loc-2'],
+            dispatching: true
+        })
+
+        expect(adaptV1SyncEvent({
+            type: 'messages_requeued',
+            namespace: 'default',
+            session_id: 's1',
+            local_ids: ['loc-2']
+        })).toEqual({
+            type: 'messages-requeued',
+            namespace: 'default',
+            sessionId: 's1',
+            localIds: ['loc-2']
+        })
+
+        expect(adaptV1SyncEvent({
+            type: 'message_cancelled',
+            namespace: 'default',
+            session_id: 's1',
+            message_id: 'm-9',
+            local_id: 'loc-9'
+        })).toEqual({
+            type: 'message-cancelled',
+            namespace: 'default',
+            sessionId: 's1',
+            messageId: 'm-9',
+            localId: 'loc-9'
+        })
+    })
+
+    it('surfaces auth_required errors cleanly in adaptV1AgyModelsResponse', () => {
+        const hardAuth = adaptV1AgyModelsResponse({
+            success: false,
+            available_models: [],
+            current_model_id: null,
+            auth_required: true
+        })
+        expect(hardAuth.success).toBe(false)
+        expect(hardAuth.error).toContain('Authentication required')
+
+        const staleAuth = adaptV1AgyModelsResponse({
+            success: true,
+            available_models: [{ model_id: 'gemini-3.8-pro-high', name: 'Gemini 3.8 Pro (High)' }],
+            current_model_id: 'gemini-3.8-pro-high',
+            auth_required: true
+        })
+        expect(staleAuth.success).toBe(true)
+        expect(staleAuth.availableModels).toEqual([{
+            model_id: 'gemini-3.8-pro-high',
+            modelId: 'gemini-3.8-pro-high',
+            name: 'Gemini 3.8 Pro (High)'
+        }])
+        expect(staleAuth.error).toContain('Authentication required')
     })
 })

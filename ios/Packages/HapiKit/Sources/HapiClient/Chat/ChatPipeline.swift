@@ -49,8 +49,10 @@ public actor ChatPipeline {
     private var completedRounds = Set<String>()
 
     private var roundTimings: [String: ExecutionProcessTiming] = [:]
+    private var lastLatestUsage: LatestUsage?
     public func executionTimingEvidence() -> [String: ExecutionProcessTiming] { roundTimings }
     public func executionCompletionEvidence() -> Set<String> { completedRounds }
+    public func latestUsage() -> LatestUsage? { lastLatestUsage }
 
     public init() {}
 
@@ -109,6 +111,7 @@ public actor ChatPipeline {
         completedRounds = completedExecutionRounds(normalized)
         roundTimings = executionRoundTimings(normalized)
         let reduced = reduceChatBlocks(normalized, agentState: agentState)
+        lastLatestUsage = reduced.latestUsage
         let visible = buildVisibleChatBlocks(
             Self.filterPresentationBlocks(reduced.blocks),
             options: ToolGroupingOptions(

@@ -254,6 +254,18 @@ public final class ChatInteractor {
         }
     }
 
+    /// True while `/v1/sessions/{id}/stream` has live unsealed text/thinking
+    /// deltas rendered in the overlay (signals 60fps pipeline cadence).
+    public var hasLiveStreamActivity: Bool {
+        liveStreamOverlay.isConnected && liveStreamOverlay.hasActiveContent
+    }
+
+    /// Combined presentation rows: voice preview + live `/stream` overlay
+    /// reconciled cleanly against Phase A `meta.streaming` / sealed rows.
+    public func messagesForPresentation(_ messages: [WindowMessage]) -> [WindowMessage] {
+        liveStreamOverlay.applying(to: messagesIncludingVoicePreview(messages))
+    }
+
     // MARK: Wiring
 
     private let api: APIClient
@@ -261,6 +273,7 @@ public final class ChatInteractor {
     private let machineStore: MachineStore?
     private let windows: MessageWindowControllers
     private let drafts: (any ChatDrafts)?
+    private let streamTransport: (any SSETransport)?
     private let draftSaveDebounce: Duration
     private let now: () -> Int
     /// Web `makeClientSideId('local')` twin; injectable for deterministic tests.
@@ -268,6 +281,9 @@ public final class ChatInteractor {
 
     @ObservationIgnored private var controller: MessageWindowController?
     @ObservationIgnored private var statesTask: Task<Void, Never>?
+    @ObservationIgnored private var streamClient: SessionStreamClient?
+    @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var liveStreamOverlay = LiveStreamOverlay()
     @ObservationIgnored private var draftTask: Task<Void, Never>?
     @ObservationIgnored private var isActive = false
 
@@ -279,6 +295,7 @@ public final class ChatInteractor {
         drafts: (any ChatDrafts)? = nil,
         machineStore: MachineStore? = nil,
         attachments: ComposerAttachments? = nil,
+        streamTransport: (any SSETransport)? = nil,
         draftSaveDebounce: Duration = .milliseconds(300),
         directSendGrace: Duration = .seconds(5),
         now: @escaping () -> Int = { Int(Date().timeIntervalSince1970 * 1000) },
@@ -288,6 +305,7 @@ public final class ChatInteractor {
         self.api = api
         self.sessionStore = sessionStore
         self.machineStore = machineStore
+        self.streamTransport = streamTransport
         self.mentionFiles = ComposerMentionFiles { query in
             try await api.searchSessionFiles(sessionId: sessionId, query: query, limit: 50)
         }
@@ -344,6 +362,7 @@ public final class ChatInteractor {
     public func activate() {
         guard !isActive else { return }
         isActive = true
+        startLiveStream()
         statesTask = Task { [weak self] in
             guard let self else { return }
             let controller = await self.windows.open(sessionId: self.sessionId)
@@ -357,6 +376,9 @@ public final class ChatInteractor {
             for await state in states {
                 guard !Task.isCancelled else { return }
                 self.windowState = state
+                if self.liveStreamOverlay.reconcile(with: state.messages) {
+                    self.onDirectSendsChanged?()
+                }
                 if !self.pendingSteerLocalIds.isEmpty {
                     for row in state.messages where !row.isQueuedForInvocation {
                         if let localId = row.localId { self.pendingSteerLocalIds.remove(localId) }
@@ -374,10 +396,53 @@ public final class ChatInteractor {
         cancelVoiceSend()
         guard isActive else { return }
         isActive = false
+        stopLiveStream()
         pendingSteerLocalIds.removeAll()
         statesTask?.cancel()
         statesTask = nil
         flushPendingDraft()
+    }
+
+    private func startLiveStream() {
+        guard let transport = streamTransport else { return }
+        stopLiveStream()
+        let auth = api.authManager
+        let client = SessionStreamClient(
+            baseURL: api.baseURL,
+            sessionId: sessionId,
+            tokenProvider: { forceRefresh in
+                if forceRefresh {
+                    return try? await auth.refreshAfterUnauthorized(failedToken: nil)
+                }
+                return try? await auth.validToken()
+            },
+            transport: transport
+        )
+        streamClient = client
+        streamTask = Task { [weak self] in
+            let stream = await client.start()
+            for await event in stream {
+                guard let self, self.isActive, !Task.isCancelled else { return }
+                if self.liveStreamOverlay.apply(event, now: self.now()) {
+                    if let messages = self.windowState?.messages {
+                        _ = self.liveStreamOverlay.reconcile(with: messages)
+                    }
+                    self.onDirectSendsChanged?()
+                }
+            }
+        }
+    }
+
+    private func stopLiveStream() {
+        streamTask?.cancel()
+        streamTask = nil
+        if let client = streamClient {
+            streamClient = nil
+            Task { await client.stop() }
+        }
+        if liveStreamOverlay.reset() {
+            onDirectSendsChanged?()
+        }
     }
 
     // MARK: - Composer

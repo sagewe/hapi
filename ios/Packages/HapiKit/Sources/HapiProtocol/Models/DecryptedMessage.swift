@@ -208,16 +208,25 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
                     break
                 }
             }
+            var assistantMessage: [String: JSONValue] = [
+                "role": .string("assistant"),
+                "content": .array(contentBlocks),
+            ]
+            if let metaObj = meta?.objectValue {
+                if let usage = metaObj["usage"], usage != .null {
+                    assistantMessage["usage"] = usage
+                }
+                if let model = metaObj["model"], model != .null {
+                    assistantMessage["model"] = model
+                }
+            }
             var envelope: [String: JSONValue] = [
                 "role": .string("agent"),
                 "content": .object([
                     "type": .string("output"),
                     "data": .object([
                         "type": .string("assistant"),
-                        "message": .object([
-                            "role": .string("assistant"),
-                            "content": .array(contentBlocks),
-                        ]),
+                        "message": .object(assistantMessage),
                     ]),
                 ]),
             ]

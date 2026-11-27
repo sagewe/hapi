@@ -1,6 +1,8 @@
 package app.hapi.protocol.wire
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 
 /**
  * Typed subset of the session `metadata` blob (`MetadataSchema`,
@@ -13,6 +15,7 @@ import kotlinx.serialization.Serializable
  * `path` and `host` are required, matching zod: the hub always writes them,
  * and the web client also fails the whole parse without them.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class SessionMetadata(
     val path: String,
@@ -41,6 +44,9 @@ data class SessionMetadata(
     val opencodeSessionId: String? = null,
     val grokSessionId: String? = null,
     val agySessionId: String? = null,
+    /** `'acp'` when the agy runner uses the ACP protocol with steer support. */
+    @JsonNames("agy_session_protocol")
+    val agySessionProtocol: String? = null,
     val cursorSessionId: String? = null,
     val kimiSessionId: String? = null,
     val copilotSessionId: String? = null,

@@ -11,6 +11,8 @@ import app.hapi.data.auth.JwtPeek
 import app.hapi.data.sse.GlobalSsePipe
 import app.hapi.data.sse.AndroidNetworkMonitor
 import app.hapi.data.sse.OkHttpSseTransport
+import app.hapi.data.sse.ReinsSessionStreamSource
+import app.hapi.data.sse.SessionStreamSource
 import app.hapi.data.sse.SseEngine
 import app.hapi.data.sse.SseSubscriptionKey
 import app.hapi.data.sse.SseTokenProvider
@@ -88,11 +90,20 @@ class HubGraph(
     } }
     init { refreshProfile() }
 
+    private val sseTransport: OkHttpSseTransport = OkHttpSseTransport()
+    private val sseTokenProvider: SseTokenProvider = SessionTokenProvider(session, credentialStore)
+
     val sseEngine: SseEngine = SseEngine(
         baseUrl = session.hubUrl,
-        transport = OkHttpSseTransport(),
-        tokenProvider = SessionTokenProvider(session, credentialStore),
+        transport = sseTransport,
+        tokenProvider = sseTokenProvider,
         scope = scope,
+    )
+
+    val sessionStreamSource: SessionStreamSource = ReinsSessionStreamSource(
+        baseUrl = session.hubUrl,
+        transport = sseTransport,
+        tokenProvider = sseTokenProvider,
     )
 
     private val networkMonitor = AndroidNetworkMonitor(context, sseEngine::networkChanged)

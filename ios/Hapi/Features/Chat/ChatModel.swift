@@ -165,6 +165,7 @@ final class ChatModel {
 
     private(set) var blocks: [VisibleChatBlock] = []
     private(set) var messageRows: [TranscriptRow] = []
+    private(set) var latestUsage: LatestUsage?
     @ObservationIgnored private var executionCompletedRounds = Set<String>()
     @ObservationIgnored private var executionTimings: [String: ExecutionProcessTiming] = [:]
     @ObservationIgnored private var executionIsRunning = false
@@ -1103,7 +1104,8 @@ final class ChatModel {
     private func pipelineLoop() async {
         while !Task.isCancelled {
             if let lastPipelineStart {
-                do { try await ContinuousClock().sleep(until: lastPipelineStart.advanced(by: .milliseconds(100))) }
+                let cadenceMs = interactor.hasLiveStreamActivity ? 16 : 100
+                do { try await ContinuousClock().sleep(until: lastPipelineStart.advanced(by: .milliseconds(cadenceMs))) }
                 catch { return }
             }
             guard !Task.isCancelled else { return }
@@ -1120,15 +1122,17 @@ final class ChatModel {
                 }
                 let machines = hub.machineStore.machines
                 let visible = await pipeline.run(
-                    messages: interactor.messagesIncludingVoicePreview(window.messages),
+                    messages: interactor.messagesForPresentation(window.messages),
                     agentState: detail?.agentState,
                     hasMoreMessages: window.hasMore,
                     directSendLocalIds: interactor.directSendLocalIds.union(interactor.voicePreview?.localId.map { [$0] } ?? [])
                 )
                 let completionEvidence = await pipeline.executionCompletionEvidence()
                 let timingEvidence = await pipeline.executionTimingEvidence()
+                let usage = await pipeline.latestUsage()
                 let prepared = await renderPreparation.prepare(visible, previous: blocks, markdownCache: markdownCache)
                 guard !Task.isCancelled else { return }
+                latestUsage = usage
                 apply(
                     visible,
                     prepared: prepared,

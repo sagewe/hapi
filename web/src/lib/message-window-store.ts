@@ -2099,7 +2099,7 @@ export function markMessagesRequeued(sessionId: string, localIds: string[]): voi
             if (
                 !message.localId
                 || !idSet.has(message.localId)
-                || (message.deliveryState === undefined && message.queueDismissed !== true)
+                || (message.deliveryState === undefined && message.deliveryPending !== true && message.queueDismissed !== true)
             ) {
                 return message
             }

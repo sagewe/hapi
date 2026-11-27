@@ -217,15 +217,20 @@ private fun parseCodexReviewMessage(message: String): CodexReview? {
 
 private fun normalizeAssistantUsage(message: JsonObject): UsageData? {
     val usage = asObject(message["usage"]) ?: return null
-    val inputTokens = asNumber(usage["input_tokens"]) ?: return null
-    val outputTokens = asNumber(usage["output_tokens"]) ?: return null
+    val inputTokens = asNumber(usage["input_tokens"].orNull() ?: usage["inputTokens"]) ?: return null
+    val outputTokens = asNumber(usage["output_tokens"].orNull() ?: usage["outputTokens"]) ?: return null
     return UsageData(
         inputTokens = inputTokens,
         outputTokens = outputTokens,
-        cacheCreationInputTokens = asNumber(usage["cache_creation_input_tokens"]),
-        cacheReadInputTokens = asNumber(usage["cache_read_input_tokens"]),
-        serviceTier = asString(usage["service_tier"]),
-        contextWindow = asNumber(usage["context_window"]),
+        cacheCreationInputTokens = asNumber(
+            usage["cache_creation_input_tokens"].orNull() ?: usage["cacheCreationInputTokens"],
+        ),
+        cacheReadInputTokens = asNumber(
+            usage["cache_read_input_tokens"].orNull() ?: usage["cacheReadInputTokens"],
+        ),
+        contextTokens = asNumber(usage["context_tokens"].orNull() ?: usage["contextTokens"]),
+        serviceTier = asString(usage["service_tier"].orNull() ?: usage["serviceTier"]),
+        contextWindow = asNumber(usage["context_window"].orNull() ?: usage["contextWindow"]),
     )
 }
 

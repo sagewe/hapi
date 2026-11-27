@@ -4,6 +4,7 @@ import { createElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SessionSummary } from '@/types/api'
 import type { Session } from '@/types/api'
+import { clearMessageWindow, getMessageWindowState } from '@/lib/message-window-store'
 import { queryKeys } from '@/lib/query-keys'
 import {
     applySessionDetailPatch,
@@ -492,6 +493,145 @@ describe('useSSE user-activity ordering', () => {
         }))
         const data = queryClient.getQueryData<{ sessions: SessionSummary[] }>(queryKeys.sessions)
         expect(data?.sessions[0]?.lastUserMessageAt).toBe(9_000)
+        unmount()
+    })
+
+    it('routes v1 snake_case queue/steer/cancel and streaming upsert SSE events into the message window store', () => {
+        const sid = 'sess-v1-queue-sse'
+        clearMessageWindow(sid)
+        const { unmount } = renderUseSSE()
+        const es = FakeEventSource.instances[0]!
+
+        // 1. Queued user message arrives via v1 message_received with invoked_at: null.
+        act(() => es.simulateMessage({
+            type: 'message_received',
+            namespace: 'default',
+            session_id: sid,
+            message: {
+                id: 'srv-q1',
+                session_id: sid,
+                seq: 1,
+                local_id: 'loc-q1',
+                role: 'user',
+                content_rev: 1,
+                invoked_at: null,
+                delivery_state: 'queued',
+                blocks: [{ type: 'text', text: 'soft steer me' }],
+                meta: {},
+                created_at: 1_000
+            }
+        }))
+        expect(getMessageWindowState(sid).messages).toHaveLength(1)
+        expect(getMessageWindowState(sid).messages[0]?.invokedAt).toBeNull()
+
+        // 2. Dispatching -> indeterminate -> requeued -> steered consumed transitions.
+        act(() => es.simulateMessage({
+            type: 'messages_indeterminate',
+            namespace: 'default',
+            session_id: sid,
+            local_ids: ['loc-q1'],
+            dispatching: true
+        }))
+        expect(getMessageWindowState(sid).messages[0]).toMatchObject({
+            deliveryState: 'indeterminate',
+            deliveryPending: true
+        })
+
+        act(() => es.simulateMessage({
+            type: 'messages_requeued',
+            namespace: 'default',
+            session_id: sid,
+            local_ids: ['loc-q1']
+        }))
+        expect(getMessageWindowState(sid).messages[0]?.deliveryState).toBeUndefined()
+        expect(getMessageWindowState(sid).messages[0]?.deliveryPending).toBeUndefined()
+
+        act(() => es.simulateMessage({
+            type: 'messages_consumed',
+            namespace: 'default',
+            session_id: sid,
+            local_ids: ['loc-q1'],
+            invoked_at: 2_500,
+            steered: true
+        }))
+        expect(getMessageWindowState(sid).messages[0]).toMatchObject({
+            invokedAt: 2_500,
+            status: 'sent',
+            steered: true
+        })
+
+        // 3. Second queued row cancelled via v1 message_cancelled (matches by local_id or message_id).
+        act(() => es.simulateMessage({
+            type: 'message_received',
+            namespace: 'default',
+            session_id: sid,
+            message: {
+                id: 'srv-q2',
+                session_id: sid,
+                seq: 2,
+                local_id: 'loc-q2',
+                role: 'user',
+                content_rev: 2,
+                invoked_at: null,
+                delivery_state: 'queued',
+                blocks: [{ type: 'text', text: 'cancel me' }],
+                meta: {},
+                created_at: 2_600
+            }
+        }))
+        expect(getMessageWindowState(sid).messages).toHaveLength(2)
+
+        act(() => es.simulateMessage({
+            type: 'message_cancelled',
+            namespace: 'default',
+            session_id: sid,
+            message_id: 'srv-q2',
+            local_id: 'loc-q2'
+        }))
+        expect(getMessageWindowState(sid).messages).toHaveLength(1)
+
+        // 4. Phase A in-place streaming upsert reuses StoredMessage.id cleanly without duplicates.
+        act(() => es.simulateMessage({
+            type: 'message_received',
+            namespace: 'default',
+            session_id: sid,
+            message: {
+                id: 'srv-stream-1',
+                session_id: sid,
+                seq: 3,
+                local_id: null,
+                role: 'assistant',
+                content_rev: 2,
+                invoked_at: 3_000,
+                delivery_state: 'invoked',
+                blocks: [{ type: 'text', text: 'Partial' }],
+                meta: { streaming: true, segmentId: 'seg-a' },
+                created_at: 3_000
+            }
+        }))
+        act(() => es.simulateMessage({
+            type: 'message_received',
+            namespace: 'default',
+            session_id: sid,
+            message: {
+                id: 'srv-stream-1',
+                session_id: sid,
+                seq: 3,
+                local_id: null,
+                role: 'assistant',
+                content_rev: 3,
+                invoked_at: 3_000,
+                delivery_state: 'invoked',
+                blocks: [{ type: 'text', text: 'Partial -> Final' }],
+                meta: { segmentId: 'seg-a' },
+                created_at: 3_000
+            }
+        }))
+        const finalMessages = getMessageWindowState(sid).messages
+        expect(finalMessages).toHaveLength(2)
+        expect(finalMessages[1]?.id).toBe('srv-stream-1')
+
+        clearMessageWindow(sid)
         unmount()
     })
 })

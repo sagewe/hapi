@@ -536,7 +536,7 @@ export function QueuedMessagesBar({
                                             {t('queuedMessages.steerRequesting')}
                                         </div>
                                     ) : null}
-                                    {msg.deliveryState === 'indeterminate' ? (
+                                    {msg.deliveryState === 'indeterminate' || deliveryPending ? (
                                         <div className={`mt-1 text-xs ${waitingForCompaction ? 'text-[var(--app-hint)]' : 'text-[var(--app-warning-text)]'}`}>
                                             {t(waitingForCompaction ? 'queuedMessages.compactionPending' : deliveryPending ? 'queuedMessages.deliveryPending' : 'queuedMessages.steerOutcomeUnknown')}
                                         </div>
