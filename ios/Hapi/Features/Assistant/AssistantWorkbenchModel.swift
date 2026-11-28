@@ -77,7 +77,17 @@ final class AssistantWorkbenchModel {
             for file in files where uploaded[file.id] == nil {
                 let result = try await session.api.uploadFile(sessionId: id, filename: file.filename, data: file.bytes, mimeType: file.mimeType)
                 guard result.success, let path = result.path else { throw AssistantSessionError.offline }
-                uploaded[file.id] = AttachmentMetadata(id: file.id, filename: file.filename, mimeType: file.mimeType, size: file.bytes.count, path: path)
+                let previewUrl = file.previewBytes.map {
+                    AttachmentPolicy.dataUrl(mimeType: "image/jpeg", bytes: $0)
+                }
+                uploaded[file.id] = AttachmentMetadata(
+                    id: file.id,
+                    filename: file.filename,
+                    mimeType: file.mimeType,
+                    size: file.bytes.count,
+                    path: path,
+                    previewUrl: previewUrl
+                )
             }
             let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = scene?.message(input.isEmpty ? "请审核所附资料。" : input) ?? (input.isEmpty ? "请核查所附资料。" : input)

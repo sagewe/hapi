@@ -37,22 +37,27 @@ import androidx.compose.ui.unit.dp
 import app.hapi.companion.di.LocalAppGraph
 import app.hapi.companion.di.LocalClientProfile
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
+enum class AssistantDrawerSide { None, Left, Right }
+
 /**
- * MyDots-style push-slide drawer container shared by the QiqiWork workbench and
- * conversation screen:
- * - Pre-mounted left drawer slides with subtle `-22%` parallax underneath.
- * - Center stage pushes 1:1 with the finger and settles with spring physics.
- * - Full-screen right-swipe gesture opens the drawer from anywhere (when enabled);
- *   swipe-left, scrim tap, or system Back dismisses cleanly.
+ * Bidirectional MyDots-style Three-Pane Push-Slide stage:
+ * - Swipe right (or tap top-left menu) -> Left History Drawer (-22% parallax)
+ * - Swipe left (or tap top-right folder) -> Right Dossier / Library Drawer (+22% parallax)
+ * - Center stage pushes 1:1 with finger and settles with spring physics.
  */
 @Composable
 internal fun AssistantPushDrawerStage(
-    open: Boolean,
-    onOpenChange: (Boolean) -> Unit,
+    activeDrawer: AssistantDrawerSide,
+    onActiveDrawerChange: (AssistantDrawerSide) -> Unit,
     gesturesEnabled: Boolean = true,
-    drawerContent: @Composable () -> Unit,
+    hasRightDrawer: Boolean = true,
+    isRightZipOpen: Boolean = false,
+    onPopRightZip: () -> Unit = {},
+    leftDrawerContent: @Composable () -> Unit,
+    rightDrawerContent: @Composable () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     val palette = assistantPalette()
@@ -60,13 +65,19 @@ internal fun AssistantPushDrawerStage(
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
-    val progress = remember { Animatable(if (open) 1f else 0f) }
+    // progress in [-1f, +1f]: +1f = Left drawer open, -1f = Right drawer open, 0f = closed
+    val target = when (activeDrawer) {
+        AssistantDrawerSide.Left -> 1f
+        AssistantDrawerSide.Right -> if (hasRightDrawer) -1f else 0f
+        AssistantDrawerSide.None -> 0f
+    }
+    val progress = remember { Animatable(target) }
     var dragging by remember { mutableStateOf(false) }
 
-    LaunchedEffect(open) {
+    LaunchedEffect(target) {
         if (!dragging) {
             progress.animateTo(
-                targetValue = if (open) 1f else 0f,
+                targetValue = target,
                 animationSpec = spring(
                     dampingRatio = 0.88f,
                     stiffness = Spring.StiffnessMediumLow,
@@ -75,8 +86,12 @@ internal fun AssistantPushDrawerStage(
         }
     }
 
-    BackHandler(enabled = open) {
-        onOpenChange(false)
+    BackHandler(enabled = activeDrawer != AssistantDrawerSide.None) {
+        if (activeDrawer == AssistantDrawerSide.Right && isRightZipOpen) {
+            onPopRightZip()
+        } else {
+            onActiveDrawerChange(AssistantDrawerSide.None)
+        }
     }
 
     BoxWithConstraints(
@@ -84,14 +99,20 @@ internal fun AssistantPushDrawerStage(
             .fillMaxSize()
             .background(palette.background),
     ) {
-        val drawerWidthDp = minOf(306.dp, maxWidth * 0.82f)
-        val drawerWidthPx = with(density) { drawerWidthDp.toPx().coerceAtLeast(1f) }
-        val reveal = progress.value.coerceIn(0f, 1f)
+        val leftWidthDp = minOf(306.dp, maxWidth * 0.82f)
+        val rightWidthDp = minOf(334.dp, maxWidth * 0.86f)
+        val leftWidthPx = with(density) { leftWidthDp.toPx().coerceAtLeast(1f) }
+        val rightWidthPx = with(density) { rightWidthDp.toPx().coerceAtLeast(1f) }
+        val value = progress.value.coerceIn(if (hasRightDrawer) -1f else 0f, 1f)
+        val leftReveal = value.coerceIn(0f, 1f)
+        val rightReveal = (-value).coerceIn(0f, 1f)
+        val anyReveal = maxOf(leftReveal, rightReveal)
+        val centerOffsetPx = if (value >= 0f) value * leftWidthPx else value * rightWidthPx
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(gesturesEnabled, open, drawerWidthPx) {
+                .pointerInput(gesturesEnabled, activeDrawer, hasRightDrawer, isRightZipOpen, leftWidthPx, rightWidthPx) {
                     if (!gesturesEnabled) return@pointerInput
                     var accumulated = 0f
                     detectHorizontalDragGestures(
@@ -102,9 +123,19 @@ internal fun AssistantPushDrawerStage(
                             focusManager.clearFocus(force = true)
                         },
                         onHorizontalDrag = { change, dragAmount ->
+                            if (activeDrawer == AssistantDrawerSide.Right && isRightZipOpen) {
+                                if (dragAmount > 0f) {
+                                    change.consume()
+                                    accumulated += dragAmount
+                                }
+                                return@detectHorizontalDragGestures
+                            }
                             val current = progress.value
-                            val next = (current + dragAmount / drawerWidthPx).coerceIn(0f, 1f)
-                            if (open || dragAmount > 0f || current > 0f) {
+                            val denom = if (current > 0f || (current == 0f && dragAmount > 0f)) leftWidthPx else rightWidthPx
+                            val minVal = if (hasRightDrawer && activeDrawer != AssistantDrawerSide.Left) -1f else 0f
+                            val maxVal = if (activeDrawer != AssistantDrawerSide.Right) 1f else 0f
+                            val next = (current + dragAmount / denom).coerceIn(minVal, maxVal)
+                            if (next != current || abs(accumulated) > 0f) {
                                 change.consume()
                                 accumulated += dragAmount
                                 scope.launch { progress.snapTo(next) }
@@ -112,15 +143,33 @@ internal fun AssistantPushDrawerStage(
                         },
                         onDragEnd = {
                             dragging = false
-                            val shouldOpen = if (open) {
-                                progress.value > 0.65f && accumulated > -drawerWidthPx * 0.16f
-                            } else {
-                                progress.value > 0.28f || accumulated > drawerWidthPx * 0.18f
+                            if (activeDrawer == AssistantDrawerSide.Right && isRightZipOpen) {
+                                if (accumulated > rightWidthPx * 0.18f) {
+                                    onPopRightZip()
+                                }
+                                return@detectHorizontalDragGestures
                             }
-                            onOpenChange(shouldOpen)
+                            val v = progress.value
+                            val nextDrawer = when (activeDrawer) {
+                                AssistantDrawerSide.Left ->
+                                    if (v < 0.65f || accumulated < -leftWidthPx * 0.16f) AssistantDrawerSide.None else AssistantDrawerSide.Left
+                                AssistantDrawerSide.Right ->
+                                    if (v > -0.65f || accumulated > rightWidthPx * 0.16f) AssistantDrawerSide.None else AssistantDrawerSide.Right
+                                AssistantDrawerSide.None -> when {
+                                    v > 0.26f || accumulated > leftWidthPx * 0.18f -> AssistantDrawerSide.Left
+                                    hasRightDrawer && (v < -0.26f || accumulated < -rightWidthPx * 0.18f) -> AssistantDrawerSide.Right
+                                    else -> AssistantDrawerSide.None
+                                }
+                            }
+                            onActiveDrawerChange(nextDrawer)
+                            val settle = when (nextDrawer) {
+                                AssistantDrawerSide.Left -> 1f
+                                AssistantDrawerSide.Right -> -1f
+                                AssistantDrawerSide.None -> 0f
+                            }
                             scope.launch {
                                 progress.animateTo(
-                                    targetValue = if (shouldOpen) 1f else 0f,
+                                    targetValue = settle,
                                     animationSpec = spring(
                                         dampingRatio = 0.88f,
                                         stiffness = Spring.StiffnessMediumLow,
@@ -132,7 +181,7 @@ internal fun AssistantPushDrawerStage(
                             dragging = false
                             scope.launch {
                                 progress.animateTo(
-                                    targetValue = if (open) 1f else 0f,
+                                    targetValue = target,
                                     animationSpec = spring(
                                         dampingRatio = 0.88f,
                                         stiffness = Spring.StiffnessMediumLow,
@@ -143,55 +192,91 @@ internal fun AssistantPushDrawerStage(
                     )
                 },
         ) {
-            // Left history drawer underneath with MyDots -22% parallax.
+            // Left History Drawer (-22% parallax)
             Box(
                 modifier = Modifier
-                    .width(drawerWidthDp)
+                    .align(Alignment.CenterStart)
+                    .width(leftWidthDp)
                     .fillMaxHeight()
                     .graphicsLayer {
-                        translationX = -drawerWidthPx * 0.22f * (1f - reveal)
-                        alpha = if (reveal > 0.001f) 1f else 0f
+                        translationX = -leftWidthPx * 0.22f * (1f - leftReveal)
+                        alpha = if (leftReveal > 0.001f) 1f else 0f
                     }
                     .background(palette.background),
             ) {
-                if (reveal > 0.001f || open) {
-                    drawerContent()
+                if (leftReveal > 0.001f || activeDrawer == AssistantDrawerSide.Left) {
+                    leftDrawerContent()
                 }
-                if (reveal < 0.999f && reveal > 0.001f) {
+                if (leftReveal < 0.999f && leftReveal > 0.001f) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.16f * (1f - reveal))),
+                            .background(Color.Black.copy(alpha = 0.16f * (1f - leftReveal))),
                     )
                 }
             }
 
-            // Center stage pushes 1:1 with finger.
+            // Right Dossier / Library Drawer (+22% parallax)
+            if (hasRightDrawer) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .width(rightWidthDp)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            translationX = rightWidthPx * 0.22f * (1f - rightReveal)
+                            alpha = if (rightReveal > 0.001f) 1f else 0f
+                        }
+                        .background(palette.background),
+                ) {
+                    if (rightReveal > 0.001f || activeDrawer == AssistantDrawerSide.Right) {
+                        rightDrawerContent()
+                    }
+                    if (rightReveal < 0.999f && rightReveal > 0.001f) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.16f * (1f - rightReveal))),
+                        )
+                    }
+                }
+            }
+
+            // Center Stage pushes 1:1 with finger
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .offset { IntOffset((reveal * drawerWidthPx).roundToInt(), 0) },
+                    .offset { IntOffset(centerOffsetPx.roundToInt(), 0) },
             ) {
                 content()
 
-                if (reveal > 0.001f) {
-                    // Hairline left edge separator between drawer and center stage.
+                if (leftReveal > 0.001f) {
                     Box(
                         Modifier
                             .align(Alignment.CenterStart)
                             .width(0.5.dp)
                             .fillMaxHeight()
-                            .background(palette.border.copy(alpha = reveal)),
+                            .background(palette.border.copy(alpha = leftReveal)),
                     )
-                    // Scrim over center stage; tapping closes drawer.
+                }
+                if (rightReveal > 0.001f) {
+                    Box(
+                        Modifier
+                            .align(Alignment.CenterEnd)
+                            .width(0.5.dp)
+                            .fillMaxHeight()
+                            .background(palette.border.copy(alpha = rightReveal)),
+                    )
+                }
+                if (anyReveal > 0.001f) {
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.14f * reveal))
+                            .background(Color.Black.copy(alpha = 0.14f * anyReveal))
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
-                                onClick = { onOpenChange(false) },
+                                onClick = { onActiveDrawerChange(AssistantDrawerSide.None) },
                             ),
                     )
                 }
@@ -204,6 +289,11 @@ internal fun AssistantPushDrawerStage(
 fun AssistantConversationShell(
     drawer: DrawerState,
     selectedSessionId: String? = null,
+    rightDrawerOpen: Boolean = false,
+    onRightDrawerChange: (Boolean) -> Unit = {},
+    isRightZipOpen: Boolean = false,
+    onPopRightZip: () -> Unit = {},
+    rightDrawerContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val profile = LocalClientProfile.current
@@ -214,16 +304,35 @@ fun AssistantConversationShell(
     val graph = LocalAppGraph.current.activeHubGraph.collectAsState().value ?: return
     val navigation = AssistantNavigation.current
     val scope = rememberCoroutineScope()
-    val drawerOpen = drawer.targetValue == DrawerValue.Open || drawer.currentValue == DrawerValue.Open
+    val leftOpen = drawer.targetValue == DrawerValue.Open || drawer.currentValue == DrawerValue.Open
+    val active = when {
+        rightDrawerOpen && rightDrawerContent != null -> AssistantDrawerSide.Right
+        leftOpen -> AssistantDrawerSide.Left
+        else -> AssistantDrawerSide.None
+    }
 
     AssistantPushDrawerStage(
-        open = drawerOpen,
-        onOpenChange = { shouldOpen ->
-            scope.launch {
-                if (shouldOpen) drawer.open() else drawer.close()
+        activeDrawer = active,
+        onActiveDrawerChange = { side ->
+            when (side) {
+                AssistantDrawerSide.Left -> {
+                    onRightDrawerChange(false)
+                    scope.launch { drawer.open() }
+                }
+                AssistantDrawerSide.Right -> {
+                    scope.launch { drawer.close() }
+                    onRightDrawerChange(true)
+                }
+                AssistantDrawerSide.None -> {
+                    onRightDrawerChange(false)
+                    scope.launch { drawer.close() }
+                }
             }
         },
-        drawerContent = {
+        hasRightDrawer = rightDrawerContent != null,
+        isRightZipOpen = isRightZipOpen,
+        onPopRightZip = onPopRightZip,
+        leftDrawerContent = {
             AssistantHistoryDrawer(
                 hub = graph,
                 brandTitle = profile.appTitle?.takeIf { it.isNotBlank() } ?: "琪琪工作",
@@ -242,6 +351,7 @@ fun AssistantConversationShell(
                 },
             )
         },
+        rightDrawerContent = { rightDrawerContent?.invoke() },
         content = content,
     )
 }

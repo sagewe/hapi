@@ -54,6 +54,7 @@ struct ChatActionsMenu: View {
     @Binding var renameOpen: Bool
     @Binding var deleteOpen: Bool
     var onCrossCheck: (() -> Void)? = nil
+    var onPromoteToScenario: (() -> Void)? = nil
 
     var body: some View {
         if state.assistant { assistantMenu } else {
@@ -76,6 +77,9 @@ struct ChatActionsMenu: View {
             }
             Button("删除", systemImage: "trash", role: .destructive) { deleteOpen = true }
             Divider()
+            if let onPromoteToScenario {
+                Button("将本案查证方法存为场景", systemImage: "sparkle") { onPromoteToScenario() }
+            }
             Button("用 Codex 交叉核验", systemImage: "sparkle.magnifyingglass") { onCrossCheck?() }
         } label: { Image(systemName: "ellipsis").frame(minWidth: 32, minHeight: 44) }
         .accessibilityLabel("更多操作")

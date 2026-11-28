@@ -12,8 +12,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -36,11 +38,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -59,8 +66,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -72,6 +83,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import app.hapi.companion.di.HubGraph
 import app.hapi.companion.di.LocalAppGraph
+import app.hapi.companion.feature.chat.attachments.AttachmentPolicy
 import app.hapi.companion.feature.chat.attachments.AttachmentPreparer
 import app.hapi.companion.feature.chat.attachments.PrepareResult
 import app.hapi.companion.feature.chat.composer.DictationController
@@ -81,6 +93,7 @@ import app.hapi.companion.feature.chat.composer.HapiDictationApi
 import app.hapi.companion.feature.chat.composer.MediaRecorderDictation
 import app.hapi.protocol.wire.AttachmentMetadata
 import app.hapi.protocol.wire.ClientProfile
+import app.hapi.protocol.wire.ClientQuickAction
 import app.hapi.protocol.wire.HapiJson
 import app.hapi.protocol.wire.SendMessageRequest
 import app.hapi.protocol.wire.SpawnSessionRequest
@@ -113,6 +126,7 @@ private data class DraftFile(
     val path: String? = null,
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AssistantRootScreen(
     hub: HubGraph,
@@ -148,10 +162,12 @@ fun AssistantRootScreen(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var picker by remember { mutableStateOf(false) }
-    var drawerOpen by remember { mutableStateOf(false) }
+    var activeDrawer by remember { mutableStateOf(AssistantDrawerSide.None) }
     var composerFocused by remember { mutableStateOf(false) }
     var voiceOverlayActive by remember { mutableStateOf(false) }
     var focusRequestKey by remember { mutableIntStateOf(0) }
+    var menuSceneId by remember { mutableStateOf<String?>(null) }
+    var editingAction by remember { mutableStateOf<ClientQuickAction?>(null) }
 
     val imeOpen = WindowInsets.ime.getBottom(density) > 0
     val editing = composerFocused || imeOpen
@@ -187,7 +203,10 @@ fun AssistantRootScreen(
         when (prepared) {
             is PrepareResult.Ready -> {
                 val a = prepared.attachment
-                withContext(Dispatchers.IO) { File(root, a.id).writeBytes(a.bytes) }
+                withContext(Dispatchers.IO) {
+                    File(root, a.id).writeBytes(a.bytes)
+                    a.previewBytes?.let { File(root, "${a.id}.thumb").writeBytes(it) }
+                }
                 save(draft.copy(files = draft.files + DraftFile(a.id, a.filename, a.mimeType, a.sizeBytes)))
             }
             else -> error = "无法读取附件，或文件超过 50 MB"
@@ -262,7 +281,10 @@ fun AssistantRootScreen(
 
     fun clearDraft(useCodex: Boolean = false) {
         if (busy) return
-        draft.files.forEach { File(root, it.id).delete() }
+        draft.files.forEach {
+            File(root, it.id).delete()
+            File(root, "${it.id}.thumb").delete()
+        }
         save(Draft(preset = preset?.id, useCodex = useCodex))
         error = null
     }
@@ -274,10 +296,89 @@ fun AssistantRootScreen(
             return
         }
         save(draft.copy(scene = scene.id))
-        if (scene.kind == 2) {
+        if (scene.opensAttachment) {
             picker = true
         } else {
             focusRequestKey++
+        }
+    }
+
+    fun startSceneStudio(studioPrompt: String) {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                val machine = hub.session.api.getMachines().machines.firstOrNull { it.active }
+                    ?: error("调查服务暂未连接，请稍后重试")
+                val result = hub.session.api.spawnSession(
+                    machine.id,
+                    SpawnSessionRequest(
+                        directory = requireNotNull(profile.defaultDirectory),
+                        agent = profile.defaultAgent,
+                        model = preset?.model ?: profile.defaultModel,
+                        effort = preset?.effort,
+                        permissionMode = profile.defaultPermissionMode,
+                    ),
+                )
+                val sessionId = result.sessionId?.takeIf { result.type == "success" }
+                    ?: error(result.message ?: "无法进入场景工坊")
+                hub.session.api.sendMessage(
+                    sessionId,
+                    SendMessageRequest(studioPrompt, UUID.randomUUID().toString(), null),
+                )
+                onOpenSession(sessionId)
+            } catch (e: Exception) {
+                error = "无法进入场景工坊：${e.message}"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    suspend fun persistScenarios(actions: List<ClientQuickAction>) {
+        hub.session.api.saveLibraryScenarios(actions)
+        hub.refreshProfile()
+    }
+
+    fun hideOrDeleteScene(scene: AssistantSceneSpec) {
+        scope.launch {
+            try {
+                val current = profile.quickActions.ifEmpty {
+                    defaultAssistantScenes.map {
+                        ClientQuickAction(
+                            id = it.id,
+                            title = it.title,
+                            prompt = it.prompt.orEmpty(),
+                            subtitle = it.placeholder,
+                            icon = it.iconKey,
+                            opensAttachment = it.opensAttachment,
+                            isCustom = false,
+                            hidden = false,
+                        )
+                    }
+                }
+                val updated = if (scene.isCustom) {
+                    current.filterNot { it.id == scene.id }
+                } else {
+                    current.map { if (it.id == scene.id) it.copy(hidden = true) else it }
+                }
+                if (selectedScene?.id == scene.id) save(draft.copy(scene = null))
+                persistScenarios(updated)
+            } catch (_: Exception) {
+                error = "更新场景失败，请重试"
+            }
+        }
+    }
+
+    fun resetScenarios() {
+        scope.launch {
+            try {
+                hub.session.api.resetLibraryScenarios()
+                hub.refreshProfile()
+            } catch (_: Exception) {
+                error = "恢复默认场景失败，请重试"
+            }
         }
     }
 
@@ -322,14 +423,20 @@ fun AssistantRootScreen(
                         save(draft.copy(files = draft.files.map { if (it.id == f.id) it.copy(path = uploaded.path) else it }))
                     }
                 }
-                val attachments = draft.files.map {
-                    AttachmentMetadata(
-                        id = it.id,
-                        filename = it.filename,
-                        mimeType = it.mime,
-                        size = it.size,
-                        path = requireNotNull(it.path),
-                    )
+                val attachments = withContext(Dispatchers.IO) {
+                    draft.files.map {
+                        val previewUrl = File(root, "${it.id}.thumb")
+                            .takeIf { f -> f.isFile && f.length() > 0 }
+                            ?.let { f -> runCatching { AttachmentPolicy.dataUrl("image/jpeg", f.readBytes()) }.getOrNull() }
+                        AttachmentMetadata(
+                            id = it.id,
+                            filename = it.filename,
+                            mimeType = it.mime,
+                            size = it.size,
+                            path = requireNotNull(it.path),
+                            previewUrl = previewUrl,
+                        )
+                    }
                 }
                 val messageText = selectedScene?.buildMessage(draft.text)
                     ?: draft.text.trim().ifEmpty { "请审核所附资料" }
@@ -337,7 +444,10 @@ fun AssistantRootScreen(
                     sessionId,
                     SendMessageRequest(messageText, draft.localId, attachments.ifEmpty { null }),
                 )
-                draft.files.forEach { File(root, it.id).delete() }
+                draft.files.forEach {
+                    File(root, it.id).delete()
+                    File(root, "${it.id}.thumb").delete()
+                }
                 save(Draft(preset = preset?.id))
                 onOpenSession(sessionId)
             } catch (e: Exception) {
@@ -349,27 +459,45 @@ fun AssistantRootScreen(
     }
 
     val hasResettableDraft = draft.text.isNotEmpty() || draft.files.isNotEmpty() || selectedScene != null || draft.useCodex
+    val hasCustomizedScenarios = remember(profile.quickActions) {
+        profile.quickActions.any { it.isCustom == true || it.hidden == true }
+    }
 
     AssistantPushDrawerStage(
-        open = drawerOpen,
-        onOpenChange = { drawerOpen = it },
+        activeDrawer = activeDrawer,
+        onActiveDrawerChange = { activeDrawer = it },
         gesturesEnabled = !voiceOverlayActive,
-        drawerContent = {
+        hasRightDrawer = true,
+        leftDrawerContent = {
             AssistantHistoryDrawer(
                 hub = hub,
                 brandTitle = brandTitle,
                 selectedSessionId = null,
                 onOpen = { id ->
-                    drawerOpen = false
+                    activeDrawer = AssistantDrawerSide.None
                     onOpenSession(id)
                 },
                 onSettings = {
-                    drawerOpen = false
+                    activeDrawer = AssistantDrawerSide.None
                     onSettings()
                 },
                 onNew = {
-                    drawerOpen = false
+                    activeDrawer = AssistantDrawerSide.None
                     clearDraft(false)
+                },
+            )
+        },
+        rightDrawerContent = {
+            AssistantLibraryDrawer(
+                hub = hub,
+                scenarios = scenes,
+                onOpenSession = { id ->
+                    activeDrawer = AssistantDrawerSide.None
+                    onOpenSession(id)
+                },
+                onUseReferenceInStudio = { doc ->
+                    activeDrawer = AssistantDrawerSide.None
+                    startSceneStudio(SceneStudioPrompts.createNew(doc))
                 },
             )
         },
@@ -380,19 +508,20 @@ fun AssistantRootScreen(
                 .background(palette.background)
                 .statusBarsPadding(),
         ) {
-            // Floating MyDots-style workbench header: asymmetric menu circle + minimal reset circle.
+            // Floating MyDots-style workbench header: asymmetric menu circle + optional reset + library folder circle.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box {
                     Surface(
                         onClick = {
                             focusManager.clearFocus(force = true)
                             keyboard?.hide()
-                            drawerOpen = true
+                            activeDrawer = AssistantDrawerSide.Left
                         },
                         shape = CircleShape,
                         color = palette.surface,
@@ -446,6 +575,28 @@ fun AssistantRootScreen(
                                 modifier = Modifier.size(18.dp),
                             )
                         }
+                    }
+                }
+
+                Surface(
+                    onClick = {
+                        focusManager.clearFocus(force = true)
+                        keyboard?.hide()
+                        activeDrawer = AssistantDrawerSide.Right
+                    },
+                    shape = CircleShape,
+                    color = palette.surface,
+                    border = BorderStroke(0.5.dp, palette.border),
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Folder,
+                            contentDescription = "我的资料库",
+                            tint = palette.ink,
+                            modifier = Modifier.size(19.dp),
+                        )
                     }
                 }
             }
@@ -507,7 +658,8 @@ fun AssistantRootScreen(
                             }
                         }
 
-                        // Restrained single-accent 2x2 Scenario Grid in thumb zone.
+                        // Dynamic Scenario Grid in thumb zone + trailing dashed "定制场景" card.
+                        val gridEntries: List<AssistantSceneSpec?> = scenes + null
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -515,64 +667,183 @@ fun AssistantRootScreen(
                                 .padding(bottom = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            scenes.chunked(2).forEach { row ->
+                            gridEntries.chunked(2).forEach { row ->
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     row.forEach { scene ->
-                                        val isSelected = selectedScene?.id == scene.id
-                                        Surface(
-                                            onClick = { selectScene(scene) },
-                                            enabled = !busy && draft.session == null,
-                                            shape = RoundedCornerShape(16.dp),
-                                            color = if (isSelected) palette.accent.copy(alpha = 0.09f) else palette.surface,
-                                            border = BorderStroke(
-                                                width = if (isSelected) 1.1.dp else 0.5.dp,
-                                                color = if (isSelected) palette.accent.copy(alpha = 0.45f) else palette.border,
-                                            ),
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.padding(14.dp),
-                                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                            ) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    verticalAlignment = Alignment.CenterVertically,
+                                        if (scene != null) {
+                                            val isSelected = selectedScene?.id == scene.id
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(16.dp),
+                                                    color = if (isSelected) palette.accent.copy(alpha = 0.09f) else palette.surface,
+                                                    border = BorderStroke(
+                                                        width = if (isSelected) 1.1.dp else 0.5.dp,
+                                                        color = if (isSelected) palette.accent.copy(alpha = 0.45f) else palette.border,
+                                                    ),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(16.dp))
+                                                        .combinedClickable(
+                                                            enabled = !busy && draft.session == null,
+                                                            onClick = { selectScene(scene) },
+                                                            onLongClick = { menuSceneId = scene.id },
+                                                        ),
                                                 ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(30.dp)
-                                                            .clip(RoundedCornerShape(9.dp))
-                                                            .background(
-                                                                if (isSelected) palette.accent.copy(alpha = 0.16f) else palette.surfaceMuted,
-                                                            ),
-                                                        contentAlignment = Alignment.Center,
+                                                    Column(
+                                                        modifier = Modifier.padding(14.dp),
+                                                        verticalArrangement = Arrangement.spacedBy(12.dp),
                                                     ) {
-                                                        Icon(
-                                                            imageVector = scene.icon,
-                                                            contentDescription = null,
-                                                            tint = if (isSelected) palette.accent else palette.inkSecondary,
-                                                            modifier = Modifier.size(16.dp),
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                        ) {
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(30.dp)
+                                                                    .clip(RoundedCornerShape(9.dp))
+                                                                    .background(
+                                                                        if (isSelected) palette.accent.copy(alpha = 0.16f) else palette.surfaceMuted,
+                                                                    ),
+                                                                contentAlignment = Alignment.Center,
+                                                            ) {
+                                                                Icon(
+                                                                    imageVector = scene.icon,
+                                                                    contentDescription = null,
+                                                                    tint = if (isSelected) palette.accent else palette.inkSecondary,
+                                                                    modifier = Modifier.size(16.dp),
+                                                                )
+                                                            }
+                                                            Spacer(Modifier.weight(1f))
+                                                            Icon(
+                                                                imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.ChevronRight,
+                                                                contentDescription = null,
+                                                                tint = if (isSelected) palette.accent else palette.inkMuted,
+                                                                modifier = Modifier.size(if (isSelected) 17.dp else 15.dp),
+                                                            )
+                                                        }
+                                                        Text(
+                                                            text = scene.title,
+                                                            fontSize = 15.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = palette.ink,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
                                                         )
                                                     }
-                                                    Spacer(Modifier.weight(1f))
-                                                    Icon(
-                                                        imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.ChevronRight,
-                                                        contentDescription = null,
-                                                        tint = if (isSelected) palette.accent else palette.inkMuted,
-                                                        modifier = Modifier.size(if (isSelected) 17.dp else 15.dp),
+                                                }
+                                                DropdownMenu(
+                                                    expanded = menuSceneId == scene.id,
+                                                    onDismissRequest = { menuSceneId = null },
+                                                ) {
+                                                    DropdownMenuItem(
+                                                        text = { Text("让助手继续优化") },
+                                                        onClick = {
+                                                            menuSceneId = null
+                                                            startSceneStudio(SceneStudioPrompts.optimize(scene))
+                                                        },
+                                                    )
+                                                    DropdownMenuItem(
+                                                        text = { Text("改名与更换图标") },
+                                                        onClick = {
+                                                            menuSceneId = null
+                                                            editingAction = scene.action ?: ClientQuickAction(
+                                                                id = scene.id,
+                                                                title = scene.title,
+                                                                prompt = scene.prompt.orEmpty(),
+                                                                subtitle = scene.placeholder,
+                                                                icon = scene.iconKey,
+                                                                opensAttachment = scene.opensAttachment,
+                                                                isCustom = scene.isCustom,
+                                                                hidden = false,
+                                                                skillSlug = scene.skillSlug,
+                                                            )
+                                                        },
+                                                    )
+                                                    HorizontalDivider()
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                if (scene.isCustom) "删除自定义场景" else "隐藏此场景",
+                                                                color = palette.report,
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            menuSceneId = null
+                                                            hideOrDeleteScene(scene)
+                                                        },
+                                                    )
+                                                    if (hasCustomizedScenarios) {
+                                                        DropdownMenuItem(
+                                                            text = { Text("恢复默认场景") },
+                                                            onClick = {
+                                                                menuSceneId = null
+                                                                resetScenarios()
+                                                            },
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            val strokeColor = palette.accent.copy(alpha = 0.45f)
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .background(palette.surface.copy(alpha = 0.65f))
+                                                    .drawBehind {
+                                                        val strokePx = 1.1.dp.toPx()
+                                                        drawRoundRect(
+                                                            color = strokeColor,
+                                                            cornerRadius = CornerRadius(16.dp.toPx(), 16.dp.toPx()),
+                                                            style = Stroke(
+                                                                width = strokePx,
+                                                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 10f), 0f),
+                                                            ),
+                                                        )
+                                                    }
+                                                    .clickable(enabled = !busy && draft.session == null) {
+                                                        startSceneStudio(SceneStudioPrompts.createNew())
+                                                    }
+                                                    .padding(14.dp),
+                                            ) {
+                                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(30.dp)
+                                                                .clip(RoundedCornerShape(9.dp))
+                                                                .background(palette.accentSoft),
+                                                            contentAlignment = Alignment.Center,
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Default.Add,
+                                                                contentDescription = null,
+                                                                tint = palette.accent,
+                                                                modifier = Modifier.size(16.dp),
+                                                            )
+                                                        }
+                                                        Spacer(Modifier.weight(1f))
+                                                        Icon(
+                                                            imageVector = Icons.Default.ChevronRight,
+                                                            contentDescription = null,
+                                                            tint = palette.accent.copy(alpha = 0.7f),
+                                                            modifier = Modifier.size(15.dp),
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = "定制场景",
+                                                        fontSize = 15.sp,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = palette.accent,
+                                                        maxLines = 1,
                                                     )
                                                 }
-                                                Text(
-                                                    text = scene.title,
-                                                    fontSize = 15.sp,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = palette.ink,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
                                             }
                                         }
                                     }
@@ -610,7 +881,7 @@ fun AssistantRootScreen(
                                     Surface(
                                         onClick = {
                                             save(draft.copy(scene = if (active) null else scene.id))
-                                            if (!active && scene.kind == 2) picker = true
+                                            if (!active && scene.opensAttachment) picker = true
                                         },
                                         shape = CircleShape,
                                         color = if (active) palette.accent else palette.surface,
@@ -694,6 +965,7 @@ fun AssistantRootScreen(
                         draft.files.find { it.id == id }?.let { file ->
                             save(draft.copy(files = draft.files - file))
                             File(root, file.id).delete()
+                            File(root, "${file.id}.thumb").delete()
                         }
                     },
                     busy = busy,
@@ -804,6 +1076,32 @@ fun AssistantRootScreen(
             onPdf = { documents.launch(arrayOf("*/*")) },
             useCodex = draft.useCodex,
             onToggleCodex = { clearDraft(useCodex = !draft.useCodex) },
+        )
+    }
+
+    editingAction?.let { editing ->
+        ScenarioEditorDialog(
+            initial = editing,
+            onDismiss = { editingAction = null },
+            onSave = { updated ->
+                val current = profile.quickActions.ifEmpty {
+                    defaultAssistantScenes.map {
+                        ClientQuickAction(
+                            id = it.id,
+                            title = it.title,
+                            prompt = it.prompt.orEmpty(),
+                            subtitle = it.placeholder,
+                            icon = it.iconKey,
+                            opensAttachment = it.opensAttachment,
+                            isCustom = false,
+                            hidden = false,
+                        )
+                    }
+                }
+                val exists = current.any { it.id == updated.id }
+                val merged = if (exists) current.map { if (it.id == updated.id) updated else it } else current + updated
+                persistScenarios(merged)
+            },
         )
     }
 }

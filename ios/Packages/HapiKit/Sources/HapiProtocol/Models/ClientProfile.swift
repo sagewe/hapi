@@ -14,6 +14,38 @@ public struct ClientQuickAction: Codable, Equatable, Sendable, Identifiable {
     public var subtitle: String?
     public var icon: String?
     public var prompt: String
+    public var opensAttachment: Bool?
+    public var isCustom: Bool?
+    public var hidden: Bool?
+    public var skillSlug: String?
+    public var referenceDocIds: [String]?
+    public var summaryPoints: [String]?
+
+    public init(
+        id: String,
+        title: String,
+        subtitle: String? = nil,
+        icon: String? = nil,
+        prompt: String,
+        opensAttachment: Bool? = nil,
+        isCustom: Bool? = nil,
+        hidden: Bool? = nil,
+        skillSlug: String? = nil,
+        referenceDocIds: [String]? = nil,
+        summaryPoints: [String]? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.prompt = prompt
+        self.opensAttachment = opensAttachment
+        self.isCustom = isCustom
+        self.hidden = hidden
+        self.skillSlug = skillSlug
+        self.referenceDocIds = referenceDocIds
+        self.summaryPoints = summaryPoints
+    }
 }
 
 public struct ClientModelPreset: Codable, Equatable, Sendable, Identifiable {

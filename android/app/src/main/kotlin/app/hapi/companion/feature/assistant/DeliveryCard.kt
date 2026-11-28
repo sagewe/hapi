@@ -172,7 +172,10 @@ fun DeliveryCard(block: GeneratedImageBlock, modifier: Modifier = Modifier) {
                         .height(42.dp)
                         .clip(RoundedCornerShape(13.dp))
                         .background(palette.accentGradient)
-                        .clickable(enabled = !busy) { open(share = false) },
+                        .clickable(enabled = !busy) {
+                            if (zip) caseAccess.openZip(block.imageId)
+                            else open(share = false)
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(
@@ -180,14 +183,14 @@ fun DeliveryCard(block: GeneratedImageBlock, modifier: Modifier = Modifier) {
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Visibility,
+                            imageVector = if (zip) Icons.Default.FolderZip else Icons.Default.Visibility,
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier.size(16.dp),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            text = if (pdf) "预览报告" else "预览",
+                            text = if (pdf) "预览报告" else if (zip) "卷内浏览" else "预览",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White,

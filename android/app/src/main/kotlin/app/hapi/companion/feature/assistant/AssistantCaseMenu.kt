@@ -16,7 +16,13 @@ import kotlinx.serialization.encodeToString
 import app.hapi.protocol.wire.HapiJson
 import java.io.File
 
-@Composable fun AssistantCaseMenu(sessionId: String, title: String, onDelete: () -> Unit, onReopen: () -> Unit) {
+@Composable fun AssistantCaseMenu(
+    sessionId: String,
+    title: String,
+    onDelete: () -> Unit,
+    onReopen: () -> Unit,
+    onPromoteToScenario: (() -> Unit)? = null,
+) {
     val hub = LocalAppGraph.current.activeHubGraph.value ?: return
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -66,6 +72,9 @@ import java.io.File
         else DropdownMenuItem({ Text("归档") }, { action { hub.session.api.archiveSession(sessionId); navigation.home() } })
         DropdownMenuItem({ Text("删除") }, { open = false; onDelete() })
         HorizontalDivider()
+        if (onPromoteToScenario != null) {
+            DropdownMenuItem({ Text("将本案查证方法存为场景", style = MaterialTheme.typography.bodySmall) }, { open = false; onPromoteToScenario() })
+        }
         DropdownMenuItem({ Text("使用 Codex 交叉核验", style = MaterialTheme.typography.bodySmall) }, { action {
             val profile = requireNotNull(hub.clientProfile.value)
             val machine = hub.session.api.getMachines().machines.first { it.active }

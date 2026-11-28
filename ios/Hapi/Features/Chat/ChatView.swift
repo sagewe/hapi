@@ -48,6 +48,9 @@ struct ChatView: View {
     private let onOpenParentSession: ((String) -> Void)?
     private let onAssistantHistory: (() -> Void)?
     private let onAssistantNew: ((Bool) -> Void)?
+    private let onOpenCaseFiles: (() -> Void)?
+    private let onOpenCaseZip: ((String) -> Void)?
+    private let onPromoteToScenario: (() -> Void)?
 
     /// Kept for the files/viewer pushes (the model owns its own reference).
     private let session: HubSession
@@ -78,36 +81,52 @@ struct ChatView: View {
     init(
         session: HubSession,
         sessionId: String,
+        sharedCaseFiles: CaseFilesModel? = nil,
         onNavigateToSession: ((String) -> Void)? = nil,
         onOpenParentSession: ((String) -> Void)? = nil,
         onAssistantHistory: (() -> Void)? = nil,
-        onAssistantNew: ((Bool) -> Void)? = nil
+        onAssistantNew: ((Bool) -> Void)? = nil,
+        onOpenCaseFiles: (() -> Void)? = nil,
+        onOpenCaseZip: ((String) -> Void)? = nil,
+        onPromoteToScenario: (() -> Void)? = nil
     ) {
         self.init(
             session: session,
             model: ChatModel(session: session, sessionId: sessionId),
+            sharedCaseFiles: sharedCaseFiles,
             onNavigateToSession: onNavigateToSession,
             onOpenParentSession: onOpenParentSession,
-            onAssistantHistory: onAssistantHistory, onAssistantNew: onAssistantNew
+            onAssistantHistory: onAssistantHistory,
+            onAssistantNew: onAssistantNew,
+            onOpenCaseFiles: onOpenCaseFiles,
+            onOpenCaseZip: onOpenCaseZip,
+            onPromoteToScenario: onPromoteToScenario
         )
     }
 
     init(
         session: HubSession,
         model: ChatModel,
+        sharedCaseFiles: CaseFilesModel? = nil,
         onNavigateToSession: ((String) -> Void)? = nil,
         onOpenParentSession: ((String) -> Void)? = nil,
         onAssistantHistory: (() -> Void)? = nil,
-        onAssistantNew: ((Bool) -> Void)? = nil
+        onAssistantNew: ((Bool) -> Void)? = nil,
+        onOpenCaseFiles: (() -> Void)? = nil,
+        onOpenCaseZip: ((String) -> Void)? = nil,
+        onPromoteToScenario: (() -> Void)? = nil
     ) {
         _model = State(initialValue: model)
-        _caseFiles = State(initialValue: CaseFilesModel(api: session.api, sessionId: model.sessionId))
+        _caseFiles = State(initialValue: sharedCaseFiles ?? CaseFilesModel(api: session.api, sessionId: model.sessionId))
         self.session = session
         self.sessionId = model.sessionId
         self.onNavigateToSession = onNavigateToSession
         self.onOpenParentSession = onOpenParentSession
         self.onAssistantHistory = onAssistantHistory
         self.onAssistantNew = onAssistantNew
+        self.onOpenCaseFiles = onOpenCaseFiles
+        self.onOpenCaseZip = onOpenCaseZip
+        self.onPromoteToScenario = onPromoteToScenario
     }
 
     var body: some View {
@@ -151,7 +170,7 @@ struct ChatView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                if session.isAssistantMode && !keyboardVisible && model.interactor.attachments.items.isEmpty && (!caseFiles.files.isEmpty || model.showsJumpToLatest) {
+                if session.isAssistantMode && !keyboardVisible && model.interactor.attachments.items.isEmpty && model.showsJumpToLatest {
                     assistantCaseBar.padding(.top, 8).padding(.bottom, 8).transition(.opacity)
                 }
                 if let usage = model.latestUsage, usage.contextSize > 0 {
@@ -223,7 +242,21 @@ struct ChatView: View {
         }
         .animation(session.isAssistantMode ? .easeInOut(duration: 0.16) : nil, value: keyboardVisible)
         .animation(session.isAssistantMode ? .easeInOut(duration: 0.16) : nil, value: model.interactor.attachments.items.count)
-        .environment(\.caseFileAccess, session.isAssistantMode ? CaseFileAccess(count: caseFiles.files.count, mainReportID: caseFiles.report?.id, open: { caseFilesOpen = true }) : nil)
+        .environment(\.caseFileAccess, session.isAssistantMode ? CaseFileAccess(
+            count: caseFiles.files.count,
+            mainReportID: caseFiles.report?.id,
+            open: {
+                if let onOpenCaseFiles { onOpenCaseFiles() }
+                else { caseFilesOpen = true }
+            },
+            openZip: { mediaId in
+                if let onOpenCaseZip { onOpenCaseZip(mediaId) }
+                else {
+                    caseFilesOpen = true
+                    Task { await caseFiles.openZip(mediaId: mediaId) }
+                }
+            }
+        ) : nil)
         .sheet(isPresented: $caseFilesOpen) { CaseFilesView(model: caseFiles, title: model.header.title) }
         .task(id: model.blocks.count) {
             guard session.isAssistantMode else { return }
@@ -236,6 +269,15 @@ struct ChatView: View {
         .onReceive(NotificationCenter.default.publisher(for: .assistantImportFiles)) { notification in
             guard session.isAssistantMode, let files = notification.object as? [PreparedAttachment] else { return }
             for file in files { model.interactor.attachments.add(file) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .assistantQuoteFile)) { notification in
+            guard session.isAssistantMode, let fileName = notification.object as? String else { return }
+            let prefix = "关于「\(fileName)」："
+            let cur = model.interactor.composerText
+            if !cur.contains(prefix) {
+                model.interactor.setComposerText(cur.isEmpty ? prefix : "\(cur)\n\(prefix)")
+            }
+            model.interactor.focusComposer()
         }
         .sheet(isPresented: $configOpen) {
             SessionConfigView(
@@ -477,52 +519,19 @@ struct ChatView: View {
     #endif
 
     private var assistantCaseBar: some View {
-        ZStack {
-            if !caseFiles.files.isEmpty {
-                let hasReport = caseFiles.files.contains { !$0.isUpload && $0.isPDF }
-                Button { caseFilesOpen = true } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(AssistantDesign.inkSecondary)
-                        Text("本案资料 · \(caseFiles.files.count)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AssistantDesign.ink)
-                        if hasReport {
-                            Text("含报告")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(AssistantDesign.accent)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(AssistantDesign.accentSoft, in: Capsule())
-                        }
-                        Image(systemName: "chevron.up")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(AssistantDesign.inkMuted)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 42)
-                    .assistantGlass(Capsule())
-                }
-                .buttonStyle(AssistantPressStyle(scale: 0.96))
-                .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < -12 { caseFilesOpen = true } })
-                .accessibilityIdentifier("assistant.case-capsule")
-                .accessibilityHint("轻点或向上轻挑查看本案资料")
-            }
+        HStack {
+            Spacer()
             if model.showsJumpToLatest {
-                HStack {
-                    Spacer()
-                    Button(action: model.jumpToLatest) {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(AssistantDesign.ink)
-                            .frame(width: 42, height: 42)
-                            .assistantGlass(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("回到最新")
-                    .padding(.trailing, 14)
+                Button(action: model.jumpToLatest) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(AssistantDesign.ink)
+                        .frame(width: 42, height: 42)
+                        .assistantGlass(Circle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("回到最新")
+                .padding(.trailing, 14)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 42)
@@ -531,6 +540,9 @@ struct ChatView: View {
     private var assistantHeader: some View {
         let summary = session.sessionStore.sessions.first { $0.id == sessionId }
         let status = summary.flatMap { AssistantHistoryPresentation.status($0) }
+        let isStudio = model.header.title.contains("场景工坊") || (summary?.metadata?.tags?.contains("场景工坊") == true)
+        let fileCount = caseFiles.files.count
+        let hasFiles = fileCount > 0
         return ZStack {
             HStack(spacing: 8) {
                 Button { onAssistantHistory?() } label: {
@@ -544,15 +556,31 @@ struct ChatView: View {
                 Spacer(minLength: 8)
 
                 HStack(spacing: 6) {
-                    Button { onAssistantNew?(false) } label: {
-                        Image(systemName: "square.and.pencil")
+                    Button {
+                        if let onOpenCaseFiles { onOpenCaseFiles() }
+                        else { caseFilesOpen = true }
+                    } label: {
+                        Image(systemName: "folder")
                             .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(AssistantDesign.ink)
+                            .foregroundStyle(hasFiles ? AssistantDesign.accent : AssistantDesign.ink)
                             .frame(width: 44, height: 44)
                             .assistantGlass(Circle())
+                            .overlay(alignment: .topTrailing) {
+                                if hasFiles {
+                                    Text("\(min(fileCount, 99))")
+                                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 5)
+                                        .frame(minWidth: 18, minHeight: 18)
+                                        .background(AssistantDesign.accent, in: Capsule())
+                                        .overlay(Capsule().stroke(AssistantDesign.background, lineWidth: 1.5))
+                                        .offset(x: 2, y: -2)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("新建调查")
+                    .accessibilityLabel("本案卷宗")
+                    .accessibilityIdentifier("assistant.case-capsule")
 
                     moreActionsMenu
                         .foregroundStyle(AssistantDesign.ink)
@@ -586,6 +614,15 @@ struct ChatView: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 1.5)
                     .background(AssistantDesign.accentSoft, in: Capsule())
+                } else if isStudio {
+                    HStack(spacing: 3.5) {
+                        Image(systemName: "sparkle").font(.system(size: 9, weight: .semibold))
+                        Text("创造模式").font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(AssistantDesign.accent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1.5)
+                    .background(AssistantDesign.accentSoft, in: Capsule())
                 }
             }
             .padding(.leading, 56)
@@ -613,7 +650,8 @@ struct ChatView: View {
             terminalOpen: $terminalOpen, filesOpen: $filesOpen,
             forkConfirmOpen: $forkConfirmOpen, historyOpen: $historyOpen,
             exportFormatOpen: $exportFormatOpen, renameOpen: $renameOpen, deleteOpen: $deleteOpen,
-            onCrossCheck: onAssistantNew.map { callback in { callback(true) } }
+            onCrossCheck: onAssistantNew.map { callback in { callback(true) } },
+            onPromoteToScenario: onPromoteToScenario
         )
     }
 

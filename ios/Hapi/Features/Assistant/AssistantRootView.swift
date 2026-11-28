@@ -2,19 +2,29 @@ import HapiClient
 import HapiProtocol
 import SwiftUI
 
+enum AssistantActiveDrawer: Equatable {
+    case none
+    case left
+    case right
+}
+
 struct AssistantRootView: View {
     let session: HubSession
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft: AssistantWorkbenchModel
     @State private var history: SessionListModel
+    @State private var library: AssistantLibraryModel
+    @State private var activeCaseFiles: CaseFilesModel?
     @State private var selectedID: String?
-    @State private var drawerOpen = false
+    @State private var activeDrawer: AssistantActiveDrawer = .none
     @State private var drag: CGFloat = 0
     @State private var settingsOpen = false
     @State private var attachmentRequest = false
     @State private var focusRequest = false
     @State private var editing = false
+    @State private var editingScenario: ClientQuickAction?
+    @State private var studioBusy = false
     #if !targetEnvironment(macCatalyst)
     @State private var workbenchVoice: HoldToDictateController
     #endif
@@ -29,8 +39,9 @@ struct AssistantRootView: View {
         let initial = initialDraft ?? AssistantWorkbenchModel(session: session)
         initial.scene = initialScene
         _draft = State(initialValue: initial)
-        _drawerOpen = State(initialValue: historyOpen)
+        _activeDrawer = State(initialValue: historyOpen ? .left : .none)
         _history = State(initialValue: SessionListModel(session: session))
+        _library = State(initialValue: AssistantLibraryModel(api: session.api))
         #if !targetEnvironment(macCatalyst)
         _workbenchVoice = State(initialValue: HoldToDictateController(
             api: session.api,
@@ -44,8 +55,12 @@ struct AssistantRootView: View {
         history.rows.contains { $0.unread || $0.summary.thinking }
     }
 
+    private var allQuickActions: [ClientQuickAction] {
+        session.clientProfile?.quickActions ?? []
+    }
+
     private var scenes: [AssistantScene] {
-        (session.clientProfile?.quickActions ?? []).map { AssistantScene(action: $0) }
+        allQuickActions.map { AssistantScene(action: $0) }.filter { !$0.isHidden }
     }
 
     private var brandTitle: String {
@@ -54,57 +69,106 @@ struct AssistantRootView: View {
         return (configured?.isEmpty == false ? configured : nil) ?? "琪琪工作"
     }
 
+    private var currentCaseTitle: String {
+        guard let selectedID else { return "本案" }
+        return history.rows.first(where: { $0.id == selectedID })?.title ?? "本案"
+    }
+
     var body: some View {
         @Bindable var app = app
         GeometryReader { geometry in
-            let width = min(306, geometry.size.width * 0.82)
-            let reveal = min(1, max(0, (drawerOpen ? width + min(0, drag) : max(0, drag)) / width))
+            let leftWidth = min(306, geometry.size.width * 0.82)
+            let rightWidth = min(334, geometry.size.width * 0.86)
+            let centerOffset: CGFloat = {
+                switch activeDrawer {
+                case .left:
+                    return min(leftWidth, max(0, leftWidth + drag))
+                case .right:
+                    return max(-rightWidth, min(0, -rightWidth + drag))
+                case .none:
+                    return min(leftWidth, max(-rightWidth, drag))
+                }
+            }()
+            let leftReveal = min(1, max(0, centerOffset / max(1, leftWidth)))
+            let rightReveal = min(1, max(0, -centerOffset / max(1, rightWidth)))
+            let anyReveal = max(leftReveal, rightReveal)
+
             ZStack(alignment: .leading) {
                 AssistantDesign.background.ignoresSafeArea()
 
-                // Pre-mounted left drawer underneath center (exact MyDots `DotsDrawerStage` parallax — zero hitch on pan begin).
+                // Pre-mounted Left History Drawer (-22% parallax)
                 AssistantHistoryDrawer(
                     brandTitle: brandTitle,
                     model: history,
                     selectedID: selectedID,
                     onNew: { newInvestigation(false) },
                     select: { id in
-                        selectedID = id
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                            drawerOpen = false
-                            drag = 0
-                        }
+                        selectSession(id)
+                        closeDrawer()
                     },
                     settings: {
-                        drawerOpen = false
+                        activeDrawer = .none
                         settingsOpen = true
                     }
                 )
-                .frame(width: width)
+                .frame(width: leftWidth)
                 .background(AssistantDesign.background)
                 .overlay {
                     Color.black
-                        .opacity(0.16 * (1 - reveal))
+                        .opacity(0.16 * (1 - leftReveal))
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
-                .offset(x: -width * 0.22 * (1 - reveal))
-                .opacity(reveal > 0.001 ? 1 : 0)
-                .allowsHitTesting(drawerOpen && drag == 0)
-                .accessibilityHidden(!drawerOpen)
+                .offset(x: -leftWidth * 0.22 * (1 - leftReveal))
+                .opacity(leftReveal > 0.001 ? 1 : 0)
+                .allowsHitTesting(activeDrawer == .left && drag == 0)
+                .accessibilityHidden(activeDrawer != .left)
                 .accessibilityIdentifier("assistant.history-drawer")
 
-                // Center stage pushes 1:1 with finger (MyDots push-slide drawer physics).
+                // Pre-mounted Right Dossier / Library Drawer (+22% parallax, aligned trailing)
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    rightDrawerContent
+                        .frame(width: rightWidth)
+                        .background(AssistantDesign.background)
+                        .overlay {
+                            Color.black
+                                .opacity(0.16 * (1 - rightReveal))
+                                .ignoresSafeArea()
+                                .allowsHitTesting(false)
+                        }
+                        .offset(x: rightWidth * 0.22 * (1 - rightReveal))
+                        .opacity(rightReveal > 0.001 ? 1 : 0)
+                        .allowsHitTesting(activeDrawer == .right && drag == 0)
+                        .accessibilityHidden(activeDrawer != .right)
+                        .accessibilityIdentifier("assistant.right-drawer")
+                }
+
+                // Center stage pushes 1:1 with finger in BOTH directions
                 NavigationStack {
                     Group {
                         if let id = selectedID {
                             ChatView(
                                 session: session,
                                 sessionId: id,
-                                onNavigateToSession: { selectedID = $0 },
-                                onOpenParentSession: { selectedID = $0 },
-                                onAssistantHistory: { withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { drawerOpen = true } },
-                                onAssistantNew: newInvestigation
+                                sharedCaseFiles: activeCaseFiles?.sessionId == id ? activeCaseFiles : nil,
+                                onNavigateToSession: { selectSession($0) },
+                                onOpenParentSession: { selectSession($0) },
+                                onAssistantHistory: { openDrawer(.left) },
+                                onAssistantNew: newInvestigation,
+                                onOpenCaseFiles: { openDrawer(.right) },
+                                onOpenCaseZip: { mediaId in
+                                    openDrawer(.right)
+                                    Task { await activeCaseFiles?.openZip(mediaId: mediaId) }
+                                },
+                                onPromoteToScenario: {
+                                    launchSceneStudio(
+                                        prompt: SceneStudioPrompts.promoteFromCase(
+                                            caseTitle: currentCaseTitle,
+                                            caseFiles: activeCaseFiles?.files ?? []
+                                        )
+                                    )
+                                }
                             )
                             .id(id)
                         } else {
@@ -117,42 +181,59 @@ struct AssistantRootView: View {
                     Rectangle()
                         .fill(AssistantDesign.border)
                         .frame(width: 0.5)
-                        .opacity(reveal)
+                        .opacity(leftReveal)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(AssistantDesign.border)
+                        .frame(width: 0.5)
+                        .opacity(rightReveal)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
                 .overlay {
-                    if reveal > 0.001 {
-                        Color.black.opacity(0.14 * reveal)
+                    if anyReveal > 0.001 {
+                        Color.black.opacity(0.14 * anyReveal)
                             .ignoresSafeArea()
                             .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                                    drawerOpen = false
-                                    drag = 0
-                                }
-                            }
-                            .allowsHitTesting(drawerOpen)
-                            .accessibilityLabel("关闭历史调查")
+                            .onTapGesture { closeDrawer() }
+                            .allowsHitTesting(activeDrawer != .none)
+                            .accessibilityLabel(activeDrawer == .left ? "关闭历史调查" : "关闭资料抽屉")
                     }
                 }
-                .offset(x: reveal * width)
+                .offset(x: centerOffset)
             }
             .background {
                 AssistantDrawerPanInstaller(
-                    drawerOpen: drawerOpen,
-                    drawerWidth: width,
+                    activeDrawer: activeDrawer,
+                    leftWidth: leftWidth,
+                    rightWidth: rightWidth,
                     isVoiceActive: isWorkbenchVoiceActive,
+                    isRightZipOpen: selectedID != nil && activeCaseFiles?.activeZip != nil,
                     onBegan: {
                         dismissKeyboard()
                     },
                     onChanged: { translationX in
                         drag = translationX
                     },
-                    onEnded: { shouldOpen in
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
-                            drawerOpen = shouldOpen
+                    onPopRightZip: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                            activeCaseFiles?.activeZip = nil
                             drag = 0
+                        }
+                    },
+                    onEnded: { nextDrawer in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            activeDrawer = nextDrawer
+                            drag = 0
+                        }
+                        if nextDrawer == .right {
+                            Task {
+                                if let cf = activeCaseFiles { await cf.refresh() }
+                                else { await library.refresh() }
+                            }
                         }
                     }
                 )
@@ -171,8 +252,28 @@ struct AssistantRootView: View {
             }
         }
         .environment(\.isAssistantMode, true)
+        .environment(\.sceneDraftSaveHandler, SceneDraftSaveHandler(
+            save: { sceneDraft in
+                try await upsertScenario(sceneDraft.toQuickAction())
+            },
+            edit: { sceneDraft in
+                editingScenario = sceneDraft.toQuickAction()
+            }
+        ))
         .tint(AssistantDesign.accent)
-        .task { await history.refresh() }
+        .task {
+            await history.refresh()
+            await library.refresh()
+        }
+        .onChange(of: selectedID, initial: true) { _, newId in
+            if let newId {
+                if activeCaseFiles?.sessionId != newId {
+                    activeCaseFiles = CaseFilesModel(api: session.api, sessionId: newId)
+                }
+            } else {
+                activeCaseFiles = nil
+            }
+        }
         .onChange(of: session.sessionStore.sessions, initial: true) { _, sessions in
             PushCoordinator.shared.observeSessionsForLocalNotifications(
                 sessions,
@@ -182,8 +283,8 @@ struct AssistantRootView: View {
         }
         .onChange(of: app.pendingOpenSessionId, initial: true) { _, id in
             if let id {
-                selectedID = id
-                drawerOpen = false
+                selectSession(id)
+                activeDrawer = .none
                 app.pendingOpenSessionId = nil
             }
         }
@@ -192,9 +293,58 @@ struct AssistantRootView: View {
         }
         .sheet(isPresented: $settingsOpen) { SettingsView(session: session).macSheetSizing() }
         .sheet(isPresented: $app.showAddHub) { PairingFlowView(context: .addHub).macSheetSizing() }
+        .sheet(item: $editingScenario) { item in
+            ScenarioEditorSheet(initial: item) { updated in
+                try await upsertScenario(updated)
+            }
+        }
     }
 
-    // MARK: - Workbench (MyDots `HomeStatusPanel` calm rhythm + thumb-zone grid)
+    @ViewBuilder
+    private var rightDrawerContent: some View {
+        if let cf = activeCaseFiles, selectedID != nil {
+            CaseFilesView(
+                model: cf,
+                title: currentCaseTitle,
+                isDrawer: true,
+                onQuoteFile: { fileName in
+                    closeDrawer()
+                    NotificationCenter.default.post(name: .assistantQuoteFile, object: fileName)
+                },
+                onAddFiles: {
+                    closeDrawer()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        NotificationCenter.default.post(name: .assistantRequestAddFiles, object: nil)
+                    }
+                },
+                onPromoteToScenario: {
+                    closeDrawer()
+                    launchSceneStudio(
+                        prompt: SceneStudioPrompts.promoteFromCase(
+                            caseTitle: currentCaseTitle,
+                            caseFiles: cf.files
+                        )
+                    )
+                }
+            )
+            .id(cf.sessionId)
+        } else {
+            AssistantLibraryDrawer(
+                model: library,
+                scenarios: scenes,
+                onOpenSession: { sid in
+                    selectSession(sid)
+                    closeDrawer()
+                },
+                onUseReferenceInStudio: { doc in
+                    closeDrawer()
+                    launchSceneStudio(prompt: SceneStudioPrompts.createNew(referenceDoc: doc), attachReferenceDoc: doc)
+                }
+            )
+        }
+    }
+
+    // MARK: - Workbench (MyDots calm rhythm + dynamic custom scenario grid)
 
     private var workbench: some View {
         VStack(spacing: 0) {
@@ -214,21 +364,40 @@ struct AssistantRootView: View {
                 .padding(.top, 20)
                 .transition(.opacity.combined(with: .move(edge: .top)))
 
-                Spacer(minLength: 28)
+                Spacer(minLength: 20)
 
-                if !scenes.isEmpty {
+                ScrollView(showsIndicators: false) {
                     AssistantScenarioGrid(
                         scenes: scenes,
                         selectedScene: draft.scene,
-                        select: handleSceneSelection
+                        select: handleSceneSelection,
+                        onCreateCustom: {
+                            launchSceneStudio(prompt: SceneStudioPrompts.createNew())
+                        },
+                        onOptimizeScene: { scene in
+                            launchSceneStudio(prompt: SceneStudioPrompts.optimize(scene: scene))
+                        },
+                        onEditScene: { scene in
+                            editingScenario = scene.action
+                        },
+                        onHideScene: { scene in
+                            Task { try? await hideScenario(scene.id) }
+                        },
+                        onDeleteScene: { scene in
+                            Task { try? await deleteScenario(scene.id) }
+                        },
+                        onResetDefaults: {
+                            Task { try? await resetScenarios() }
+                        }
                     )
                     .padding(.horizontal, 18)
                     .padding(.bottom, 14)
-                    .disabled(draft.sending || draft.allocatedSessionID != nil)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .disabled(draft.sending || draft.allocatedSessionID != nil || studioBusy)
                 }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: 330)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else {
-                // Keyboard open: dismissable canvas + compact scenario pill bar so typing never faces a blank void.
                 VStack(spacing: 0) {
                     Color.clear
                         .contentShape(Rectangle())
@@ -243,7 +412,7 @@ struct AssistantRootView: View {
                                         withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                                             draft.scene = active ? nil : scene
                                         }
-                                        if !active, scene.kind == 2 {
+                                        if !active, scene.opensAttachment {
                                             attachmentRequest.toggle()
                                         }
                                     } label: {
@@ -326,12 +495,40 @@ struct AssistantRootView: View {
         #endif
     }
 
+    private func openDrawer(_ drawer: AssistantActiveDrawer) {
+        dismissKeyboard()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+            activeDrawer = drawer
+            drag = 0
+        }
+        if drawer == .right {
+            Task {
+                if let cf = activeCaseFiles { await cf.refresh() }
+                else { await library.refresh() }
+            }
+        }
+    }
+
+    private func closeDrawer() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+            activeDrawer = .none
+            drag = 0
+        }
+    }
+
+    private func selectSession(_ id: String) {
+        if activeCaseFiles?.sessionId != id {
+            activeCaseFiles = CaseFilesModel(api: session.api, sessionId: id)
+        }
+        selectedID = id
+    }
+
     private func submitWorkbenchDraft() {
         Task {
             let pending = draft
             if let id = await pending.send() {
                 if selectedID == nil {
-                    withAnimation(.easeInOut(duration: 0.22)) { selectedID = id }
+                    withAnimation(.easeInOut(duration: 0.22)) { selectSession(id) }
                 }
                 if draft === pending { draft = AssistantWorkbenchModel(session: session) }
                 await history.refresh()
@@ -339,11 +536,85 @@ struct AssistantRootView: View {
         }
     }
 
+    private func launchSceneStudio(prompt: String, attachReferenceDoc: ReferenceDoc? = nil) {
+        guard !studioBusy else { return }
+        studioBusy = true
+        draft.error = nil
+        Task {
+            defer { studioBusy = false }
+            do {
+                let id = try await session.spawnAssistantSession(agent: nil, preset: draft.preset)
+                var attachments: [AttachmentMetadata] = []
+                if let doc = attachReferenceDoc,
+                   let bytes = try? await session.api.referenceDocBytes(id: doc.id)
+                {
+                    let up = try await session.api.uploadFile(
+                        sessionId: id,
+                        filename: doc.fileName,
+                        data: bytes,
+                        mimeType: doc.mimeType
+                    )
+                    if up.success, let path = up.path {
+                        attachments.append(AttachmentMetadata(
+                            id: doc.id,
+                            filename: doc.fileName,
+                            mimeType: doc.mimeType,
+                            size: bytes.count,
+                            path: path
+                        ))
+                    }
+                }
+                try await session.api.sendMessage(
+                    sessionId: id,
+                    text: prompt,
+                    localId: UUID().uuidString,
+                    attachments: attachments.isEmpty ? nil : attachments
+                )
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    selectSession(id)
+                }
+                await history.refresh()
+            } catch {
+                draft.error = "场景工坊暂时无法启动，请稍后重试"
+            }
+        }
+    }
+
+    private func upsertScenario(_ action: ClientQuickAction) async throws {
+        var list = allQuickActions
+        if let idx = list.firstIndex(where: { $0.id == action.id }) {
+            list[idx] = action
+        } else {
+            list.append(action)
+        }
+        _ = try await session.api.saveLibraryScenarios(list)
+        await session.refreshClientProfile()
+    }
+
+    private func hideScenario(_ id: String) async throws {
+        var list = allQuickActions
+        if let idx = list.firstIndex(where: { $0.id == id }) {
+            list[idx].hidden = true
+            _ = try await session.api.saveLibraryScenarios(list)
+            await session.refreshClientProfile()
+        }
+    }
+
+    private func deleteScenario(_ id: String) async throws {
+        let list = allQuickActions.filter { $0.id != id }
+        _ = try await session.api.saveLibraryScenarios(list)
+        await session.refreshClientProfile()
+    }
+
+    private func resetScenarios() async throws {
+        _ = try await session.api.resetLibraryScenarios()
+        await session.refreshClientProfile()
+    }
+
     private var workbenchHeader: some View {
         HStack(spacing: 8) {
             Button {
-                dismissKeyboard()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { drawerOpen = true }
+                openDrawer(.left)
             } label: {
                 AssistantMenuIcon()
                     .frame(width: 44, height: 44)
@@ -363,21 +634,35 @@ struct AssistantRootView: View {
 
             Spacer(minLength: 8)
 
-            // Keep top-right clean like MyDots; only surface a minimal reset button when draft has content.
-            if !draft.text.isEmpty || !draft.files.isEmpty || draft.scene != nil || draft.useCodex {
+            HStack(spacing: 7) {
+                if !draft.text.isEmpty || !draft.files.isEmpty || draft.scene != nil || draft.useCodex {
+                    Button {
+                        dismissKeyboard()
+                        newInvestigation(false)
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AssistantDesign.inkSecondary)
+                            .frame(width: 44, height: 44)
+                            .assistantGlass(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("清空当前草稿")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+
+                // Right Glass Library Button mirrors Swipe-Left gesture
                 Button {
-                    dismissKeyboard()
-                    newInvestigation(false)
+                    openDrawer(.right)
                 } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(AssistantDesign.inkSecondary)
+                    Image(systemName: "folder")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(AssistantDesign.ink)
                         .frame(width: 44, height: 44)
                         .assistantGlass(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("清空当前草稿")
-                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                .accessibilityLabel("我的资料库")
             }
         }
         .padding(.horizontal, 14)
@@ -452,7 +737,7 @@ struct AssistantRootView: View {
             }
             draft.scene = scene
         }
-        if scene.kind == 2 {
+        if scene.opensAttachment {
             attachmentRequest.toggle()
         } else {
             focusRequest.toggle()
@@ -466,7 +751,7 @@ struct AssistantRootView: View {
     private func newInvestigation(_ codex: Bool) {
         guard !draft.sending else { return }
         selectedID = nil
-        drawerOpen = false
+        activeDrawer = .none
         editing = false
         draft = AssistantWorkbenchModel(session: session, useCodex: codex)
     }
@@ -489,8 +774,6 @@ struct AssistantHistoryDrawer: View {
         model.rows.filter { tag == nil || $0.tags.contains(tag!) }
     }
 
-    /// Bottom-weighted chronological order (oldest top -> newest bottom) so newest cases sit closest
-    /// to the thumb; flips to top-down while searching so keyboard never covers results (MyDots pattern).
     private var displayedRows: [SessionRowUI] {
         isSearching ? filteredRows : Array(filteredRows.reversed())
     }
@@ -625,7 +908,6 @@ struct AssistantHistoryDrawer: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
 
-            // MyDots signature bottom thumb bar: bold solid-ink primary action pill + Liquid Glass Settings circle.
             HStack(spacing: 12) {
                 Button(action: onNew) {
                     HStack(spacing: 8) {
@@ -743,18 +1025,18 @@ struct AssistantHistoryRow: View {
     }
 }
 
-// MARK: - Full-Screen UIKit Drawer Pan Gesture (MyDots `DotsDrawerStage` arbitration)
+// MARK: - Bidirectional Full-Screen UIKit Drawer Pan Gesture (Left History <-> Center <-> Right Dossier/Library)
 
-/// Installs a full-screen `UIPanGestureRecognizer` on the enclosing container so users can swipe
-/// right from anywhere on the screen (not just a narrow left edge) to open the history drawer,
-/// while yielding cleanly to vertical scrolls, horizontal scroll strips, text editors, and modals.
 private struct AssistantDrawerPanInstaller: UIViewRepresentable {
-    let drawerOpen: Bool
-    let drawerWidth: CGFloat
+    let activeDrawer: AssistantActiveDrawer
+    let leftWidth: CGFloat
+    let rightWidth: CGFloat
     let isVoiceActive: Bool
+    let isRightZipOpen: Bool
     let onBegan: () -> Void
     let onChanged: (CGFloat) -> Void
-    let onEnded: (Bool) -> Void
+    let onPopRightZip: () -> Void
+    let onEnded: (AssistantActiveDrawer) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -830,22 +1112,42 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
             switch gr.state {
             case .began:
                 parent.onBegan()
-                parent.onChanged(tx)
+                if !(parent.activeDrawer == .right && parent.isRightZipOpen) {
+                    parent.onChanged(tx)
+                }
             case .changed:
-                parent.onChanged(tx)
+                if !(parent.activeDrawer == .right && parent.isRightZipOpen) {
+                    parent.onChanged(tx)
+                }
             case .ended:
                 let vx = gr.velocity(in: view).x
                 let projected = tx + vx * 0.18
-                let threshold = parent.drawerWidth * 0.34
-                let shouldOpen: Bool
-                if parent.drawerOpen {
-                    shouldOpen = !(tx < -56 || (projected < -threshold && tx < -8) || (vx < -420 && tx < -4))
-                } else {
-                    shouldOpen = tx > 56 || (projected > threshold && tx > 8) || (vx > 420 && tx > 4)
+                switch parent.activeDrawer {
+                case .left:
+                    let threshold = parent.leftWidth * 0.34
+                    let close = tx < -56 || (projected < -threshold && tx < -8) || (vx < -420 && tx < -4)
+                    parent.onEnded(close ? .none : .left)
+                case .right:
+                    let threshold = parent.rightWidth * 0.34
+                    let swipeRight = tx > 56 || (projected > threshold && tx > 8) || (vx > 420 && tx > 4)
+                    if swipeRight && parent.isRightZipOpen {
+                        parent.onPopRightZip()
+                    } else {
+                        parent.onEnded(swipeRight ? .none : .right)
+                    }
+                case .none:
+                    let leftThreshold = parent.leftWidth * 0.32
+                    let rightThreshold = parent.rightWidth * 0.32
+                    if tx > 56 || (projected > leftThreshold && tx > 8) || (vx > 420 && tx > 4) {
+                        parent.onEnded(.left)
+                    } else if tx < -56 || (projected < -rightThreshold && tx < -8) || (vx < -420 && tx < -4) {
+                        parent.onEnded(.right)
+                    } else {
+                        parent.onEnded(.none)
+                    }
                 }
-                parent.onEnded(shouldOpen)
             case .cancelled, .failed:
-                parent.onEnded(parent.drawerOpen)
+                parent.onEnded(parent.activeDrawer)
             default:
                 break
             }
@@ -912,8 +1214,14 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
             let ax = abs(t.x)
             let ay = abs(t.y)
             let dx = (ax + ay > 2) ? t.x : v.x
-            if !parent.drawerOpen && dx <= 0 { return false }
-            if parent.drawerOpen && dx >= 0 { return false }
+            switch parent.activeDrawer {
+            case .left:
+                if dx >= 0 { return false }
+            case .right:
+                if dx <= 0 { return false }
+            case .none:
+                if dx == 0 { return false }
+            }
             let isHorizontal = (ax + ay > 2) ? (ax > ay * 1.15) : (abs(v.x) > abs(v.y) * 1.15)
             guard isHorizontal else { return false }
 

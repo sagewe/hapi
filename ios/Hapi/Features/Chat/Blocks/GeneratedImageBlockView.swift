@@ -150,8 +150,14 @@ private struct GeneratedMediaCard: View {
             }
 
             HStack(spacing: 10) {
-                Button { openFile(share: false) } label: {
-                    Label(pdf ? "预览报告" : "预览", systemImage: "doc.text.magnifyingglass")
+                Button {
+                    if zip, let openZip = caseFileAccess?.openZip {
+                        openZip(content.block.imageId)
+                    } else {
+                        openFile(share: false)
+                    }
+                } label: {
+                    Label(pdf ? "预览报告" : (zip ? "卷内浏览" : "预览"), systemImage: zip ? "archivebox" : "doc.text.magnifyingglass")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 42)

@@ -351,24 +351,94 @@ struct AssistantIcon: View {
 struct AssistantScene: Equatable, Identifiable {
     let action: ClientQuickAction
     var id: String { action.id }
-    var kind: Int {
-        let value = action.id.lowercased() + action.title
+    var isCustom: Bool { action.isCustom == true || action.id.hasPrefix("custom") }
+    var isHidden: Bool { action.hidden == true }
+
+    var legacyKind: Int? {
+        let value = (action.id + " " + action.title).lowercased()
         if value.contains("document") || value.contains("单据") { return 2 }
         if value.contains("individual") || value.contains("自然人") { return 1 }
         if value.contains("sanction") || value.contains("制裁") { return 3 }
-        return 0
+        if value.contains("company") || value.contains("企业") || value.contains("股权") { return 0 }
+        return nil
     }
-    var title: String { ["企业股权穿透", "自然人核查", "单据审核", "制裁与风险"][kind] }
-    var icon: String { ["building.2.fill", "person.text.rectangle.fill", "doc.text.magnifyingglass", "shield.lefthalf.filled"][kind] }
-    /// Unified single brand accent so all four investigation entry points feel like one calm toolset.
+
+    var kind: Int { legacyKind ?? 0 }
+
+    var opensAttachment: Bool {
+        action.opensAttachment ?? (legacyKind == 2)
+    }
+
+    var title: String {
+        let trimmed = action.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return ["企业股权穿透", "自然人核查", "单据审核", "制裁与风险"][kind]
+    }
+
+    var icon: String {
+        if let raw = action.icon?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            return Self.sfSymbol(for: raw)
+        }
+        if let legacy = legacyKind {
+            return ["building.2.fill", "person.text.rectangle.fill", "doc.text.magnifyingglass", "shield.lefthalf.filled"][legacy]
+        }
+        return "checklist"
+    }
+
+    /// Unified single brand accent so all investigation entry points feel like one calm toolset.
     var color: Color { AssistantDesign.accent }
-    var placeholder: String { ["输入公司名称、税号或注册号…", "输入姓名、国籍或关联企业…", "添加单据，或补充需要核对的内容…", "输入主体、国家或交易线索…"][kind] }
+
+    var placeholder: String {
+        if let sub = action.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines), !sub.isEmpty {
+            return sub
+        }
+        if let legacy = legacyKind {
+            return ["输入公司名称、税号或注册号…", "输入姓名、国籍或关联企业…", "添加单据，或补充需要核对的内容…", "输入主体、国家或交易线索…"][legacy]
+        }
+        return opensAttachment ? "添加资料，或补充核查要求…" : "输入调查线索，或添加单据…"
+    }
+
+    static let curatedIcons: [(key: String, label: String, symbol: String)] = [
+        ("checklist", "核对清单", "checklist"),
+        ("building", "企业主体", "building.2.fill"),
+        ("person", "自然人", "person.text.rectangle.fill"),
+        ("doc", "单据合同", "doc.text.magnifyingglass"),
+        ("shield", "风控制裁", "shield.lefthalf.filled"),
+        ("globe", "跨境航运", "globe.asia.australia.fill"),
+        ("banknote", "结算金融", "banknote.fill"),
+        ("scale", "合规条款", "scale.3d"),
+        ("sparkle", "综合定制", "sparkle"),
+    ]
+
+    static func sfSymbol(for key: String) -> String {
+        switch key.lowercased() {
+        case "checklist", "list": return "checklist"
+        case "building", "company": return "building.2.fill"
+        case "person", "individual": return "person.text.rectangle.fill"
+        case "doc", "document": return "doc.text.magnifyingglass"
+        case "shield", "sanction", "sanctions": return "shield.lefthalf.filled"
+        case "globe", "trade": return "globe.asia.australia.fill"
+        case "banknote", "finance", "lc": return "banknote.fill"
+        case "scale", "legal": return "scale.3d"
+        case "sparkle", "custom": return "sparkle"
+        default: return key.contains(".") ? key : "checklist"
+        }
+    }
+
     static func visibleText(_ text: String) -> String {
+        if let marker = text.range(of: "\n\n<scene-studio-instructions>") {
+            return String(text[..<marker.lowerBound])
+        }
         guard text.hasPrefix("【调查场景："), let marker = text.range(of: "\n\n<investigation-instructions>") else { return text }
         return String(text[..<marker.lowerBound])
     }
+
     func message(_ text: String) -> String {
-        "【调查场景：\(title)】\n\n\(text)\n\n<investigation-instructions>\n\(action.prompt)\n</investigation-instructions>"
+        var extra = ""
+        if let skill = action.skillSlug, !skill.isEmpty {
+            extra += "\n如工作区存在 `.gemini/skills/\(skill)/SKILL.md`，请优先读取并按其步骤执行。"
+        }
+        return "【调查场景：\(title)】\n\n\(text)\n\n<investigation-instructions>\n\(action.prompt)\(extra)\n</investigation-instructions>"
     }
 }
 
@@ -376,6 +446,12 @@ struct AssistantScenarioGrid: View {
     let scenes: [AssistantScene]
     var selectedScene: AssistantScene? = nil
     let select: (AssistantScene) -> Void
+    var onCreateCustom: (() -> Void)? = nil
+    var onOptimizeScene: ((AssistantScene) -> Void)? = nil
+    var onEditScene: ((AssistantScene) -> Void)? = nil
+    var onHideScene: ((AssistantScene) -> Void)? = nil
+    var onDeleteScene: ((AssistantScene) -> Void)? = nil
+    var onResetDefaults: (() -> Void)? = nil
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
@@ -386,10 +462,10 @@ struct AssistantScenarioGrid: View {
                         HStack(alignment: .center) {
                             Image(systemName: scene.icon)
                                 .font(.system(size: 13.5, weight: .semibold))
-                                .foregroundStyle(isSelected ? AssistantDesign.accent : AssistantDesign.inkSecondary)
+                                .foregroundStyle((isSelected || scene.isCustom) ? AssistantDesign.accent : AssistantDesign.inkSecondary)
                                 .frame(width: 30, height: 30)
                                 .background(
-                                    isSelected ? AssistantDesign.accent.opacity(0.16) : AssistantDesign.surfaceMuted,
+                                    (isSelected || scene.isCustom) ? AssistantDesign.accentSoft : AssistantDesign.surfaceMuted,
                                     in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                                 )
                             Spacer(minLength: 4)
@@ -397,6 +473,13 @@ struct AssistantScenarioGrid: View {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundStyle(AssistantDesign.accent)
+                            } else if scene.isCustom {
+                                Text("自定义")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(AssistantDesign.accent)
+                                    .padding(.horizontal, 6.5)
+                                    .padding(.vertical, 2)
+                                    .background(AssistantDesign.accentSoft, in: Capsule())
                             } else {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 11.5, weight: .semibold))
@@ -412,17 +495,80 @@ struct AssistantScenarioGrid: View {
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        isSelected ? scene.color.opacity(0.09) : AssistantDesign.surface,
+                        isSelected ? scene.color.opacity(0.09) : (scene.isCustom ? AssistantDesign.accentSoft.opacity(0.45) : AssistantDesign.surface),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(isSelected ? scene.color.opacity(0.45) : AssistantDesign.border, lineWidth: isSelected ? 1.1 : 0.5)
+                            .strokeBorder(
+                                isSelected ? scene.color.opacity(0.45) : (scene.isCustom ? AssistantDesign.accentBorder : AssistantDesign.border),
+                                lineWidth: isSelected ? 1.1 : (scene.isCustom ? 0.8 : 0.5)
+                            )
                     )
                 }
                 .buttonStyle(AssistantPressStyle())
                 .sensoryFeedback(.selection, trigger: isSelected)
+                .contextMenu {
+                    if let onOptimizeScene {
+                        Button { onOptimizeScene(scene) } label: {
+                            Label("让助手继续优化", systemImage: "sparkle")
+                        }
+                    }
+                    if let onEditScene {
+                        Button { onEditScene(scene) } label: {
+                            Label("改名与更换图标", systemImage: "pencil")
+                        }
+                    }
+                    if let onHideScene {
+                        Button { onHideScene(scene) } label: {
+                            Label("隐藏此场景", systemImage: "eye.slash")
+                        }
+                    }
+                    if scene.isCustom, let onDeleteScene {
+                        Divider()
+                        Button(role: .destructive) { onDeleteScene(scene) } label: {
+                            Label("删除自定义场景", systemImage: "trash")
+                        }
+                    }
+                    if let onResetDefaults {
+                        Divider()
+                        Button { onResetDefaults() } label: {
+                            Label("恢复默认场景", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                }
                 .accessibilityIdentifier("assistant.scene.\(scene.id)")
+            }
+
+            if let onCreateCustom {
+                Button(action: onCreateCustom) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .center) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(AssistantDesign.ink)
+                                .frame(width: 30, height: 30)
+                                .background(AssistantDesign.surfaceMuted, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            Spacer(minLength: 4)
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(AssistantDesign.accent)
+                        }
+                        Text("定制场景")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AssistantDesign.inkSecondary)
+                            .lineLimit(1)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AssistantDesign.surface.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(AssistantDesign.border, style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                    )
+                }
+                .buttonStyle(AssistantPressStyle())
+                .accessibilityIdentifier("assistant.scene.create")
             }
         }
     }

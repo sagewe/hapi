@@ -170,9 +170,17 @@ struct AgentTextBlockView: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            CachedMarkdownView(markdown: block.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let extracted = assistant ? SceneDraftParser.extract(from: block.text) : SceneDraftParser.Extraction(markdown: block.text, drafts: [])
+        VStack(alignment: .leading, spacing: 8) {
+            if !extracted.markdown.isEmpty || extracted.drafts.isEmpty {
+                CachedMarkdownView(markdown: extracted.markdown)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if assistant && !extracted.drafts.isEmpty {
+                ForEach(extracted.drafts) { draft in
+                    SceneDraftCardView(draft: draft)
+                }
+            }
             #if !targetEnvironment(macCatalyst)
             if assistant {
                 HStack {

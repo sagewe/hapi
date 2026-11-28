@@ -729,7 +729,57 @@ class HapiApi internal constructor(
 
     suspend fun getCaseFile(sessionId: String, file: app.hapi.protocol.wire.CaseFile): GeneratedImage {
         require(file.category == "uploads" || file.category == "deliverables")
-        val target = url("v1", "sessions", sessionId, "blobs", file.id).build()
+        return downloadBlobBytes(url("v1", "sessions", sessionId, "blobs", file.id).build())
+    }
+
+    suspend fun getRecentDeliverables(limit: Int = 50): app.hapi.protocol.wire.RecentDeliverablesResponse =
+        request(
+            "GET",
+            url("v1", "library", "deliverables")
+                .addQueryParameter("limit", limit.coerceIn(1, 100).toString())
+                .build(),
+        )
+
+    suspend fun getDeliverableBytes(sessionId: String, mediaId: String): GeneratedImage =
+        downloadBlobBytes(url("v1", "sessions", sessionId, "blobs", mediaId).build())
+
+    suspend fun getReferenceDocs(): app.hapi.protocol.wire.ReferenceDocsResponse =
+        request("GET", url("v1", "library", "reference-docs").build())
+
+    suspend fun uploadReferenceDoc(
+        req: app.hapi.protocol.wire.UploadReferenceDocRequest,
+    ): app.hapi.protocol.wire.ReferenceDocResponse =
+        request("POST", url("v1", "library", "reference-docs").build(), req.toJsonBody())
+
+    suspend fun updateReferenceDoc(
+        docId: String,
+        req: app.hapi.protocol.wire.UpdateReferenceDocRequest,
+    ): app.hapi.protocol.wire.ReferenceDocResponse =
+        request("PATCH", url("v1", "library", "reference-docs", docId).build(), req.toJsonBody())
+
+    suspend fun getReferenceDocBytes(docId: String): GeneratedImage =
+        downloadBlobBytes(url("v1", "library", "reference-docs", docId, "blob").build())
+
+    suspend fun deleteReferenceDoc(docId: String) {
+        request<Unit>("DELETE", url("v1", "library", "reference-docs", docId).build())
+    }
+
+    suspend fun getLibraryScenarios(): app.hapi.protocol.wire.ScenariosPayload =
+        request("GET", url("v1", "library", "scenarios").build())
+
+    suspend fun saveLibraryScenarios(
+        scenarios: List<app.hapi.protocol.wire.ClientQuickAction>,
+    ): app.hapi.protocol.wire.ScenariosPayload =
+        request(
+            "PUT",
+            url("v1", "library", "scenarios").build(),
+            app.hapi.protocol.wire.PutScenariosRequest(scenarios).toJsonBody(),
+        )
+
+    suspend fun resetLibraryScenarios(): app.hapi.protocol.wire.ScenariosPayload =
+        request("POST", url("v1", "library", "scenarios", "reset").build(), "{}".toRequestBody("application/json".toMediaType()))
+
+    private suspend fun downloadBlobBytes(target: HttpUrl): GeneratedImage {
         return imageClient.newCall(Request.Builder().url(target).build()).await().use { response ->
             if (!response.isSuccessful) throw ApiError.from(response.code, response.body?.string().orEmpty())
             val body = requireNotNull(response.body)
@@ -737,9 +787,11 @@ class HapiApi internal constructor(
             val bytes = body.byteStream().use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
-                while(true) { val count=input.read(buffer); if(count < 0) break
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
                     require(output.size().toLong() + count <= 50L * 1024 * 1024) { "文件超过 50 MB" }
-                    output.write(buffer,0,count)
+                    output.write(buffer, 0, count)
                 }
                 output.toByteArray()
             }

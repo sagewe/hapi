@@ -410,6 +410,12 @@ struct ChatComposerView: View {
                 dismissedSuggestionKey = nil
             }
         }
+        #if !targetEnvironment(macCatalyst)
+        .onReceive(NotificationCenter.default.publisher(for: .assistantRequestAddFiles)) { _ in
+            guard isAssistantMode else { return }
+            activePopup = .attachment
+        }
+        #endif
         .onChange(of: activeSuggestionCount) { _, count in
             if selectedSuggestionIndex >= count {
                 selectedSuggestionIndex = max(0, count - 1)
@@ -3272,6 +3278,7 @@ private struct ComposerPopupIconRow<Trailing: View>: View {
 }
 
 struct ComposerAttachmentPopupCard: View {
+    @Environment(\.isAssistantMode) private var assistant
     let colorScheme: ColorScheme
     let onCamera: () -> Void
     let onPhotos: () -> Void
@@ -3281,21 +3288,21 @@ struct ComposerAttachmentPopupCard: View {
         VStack(alignment: .leading, spacing: 4) {
             ComposerPopupIconRow(
                 colorScheme: colorScheme,
-                title: String(localized: "Camera"),
+                title: assistant ? "拍照" : String(localized: "Camera"),
                 systemImage: "camera",
                 identifier: "chat.attachment-popup.camera",
                 action: onCamera
             ) { EmptyView() }
             ComposerPopupIconRow(
                 colorScheme: colorScheme,
-                title: String(localized: "Photos"),
+                title: assistant ? "相册图片" : String(localized: "Photos"),
                 systemImage: "photo",
                 identifier: "chat.attachment-popup.photos",
                 action: onPhotos
             ) { EmptyView() }
             ComposerPopupIconRow(
                 colorScheme: colorScheme,
-                title: String(localized: "Files"),
+                title: assistant ? "选择文件（PDF / ZIP / Office）" : String(localized: "Files"),
                 systemImage: "paperclip",
                 identifier: "chat.attachment-popup.files",
                 action: onFiles

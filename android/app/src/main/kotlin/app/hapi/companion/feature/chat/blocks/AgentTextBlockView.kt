@@ -45,10 +45,19 @@ fun AgentTextBlockView(block: AgentTextBlock, modifier: Modifier = Modifier) {
     if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
         val clipboard = LocalClipboardManager.current
         val palette = app.hapi.companion.feature.assistant.assistantPalette()
+        val extracted = remember(block.text) { app.hapi.protocol.wire.SceneDraftParser.extract(block.text) }
         var copied by remember(block.id, block.text) { mutableStateOf(false) }
         Column(modifier.fillMaxWidth()) {
-            SelectionContainer { Markdown(text = block.text, modifier = Modifier.fillMaxWidth()) }
-            TextButton({ clipboard.setText(AnnotatedString(block.text)); copied = true }, Modifier.align(Alignment.End)) {
+            if (extracted.markdown.isNotEmpty() || extracted.drafts.isEmpty()) {
+                SelectionContainer { Markdown(text = extracted.markdown, modifier = Modifier.fillMaxWidth()) }
+            }
+            extracted.drafts.forEach { draft ->
+                app.hapi.companion.feature.assistant.SceneDraftCard(
+                    draft = draft,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            TextButton({ clipboard.setText(AnnotatedString(extracted.markdown.ifEmpty { block.text })); copied = true }, Modifier.align(Alignment.End)) {
                 Icon(
                     if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
                     null,

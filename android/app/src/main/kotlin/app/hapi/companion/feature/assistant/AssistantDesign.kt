@@ -16,9 +16,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.Balance
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -111,17 +116,60 @@ internal val DarkAssistantPalette = AssistantPalette(
 internal fun assistantPalette(): AssistantPalette =
     if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) DarkAssistantPalette else LightAssistantPalette
 
+internal data class AssistantSceneIconChoice(
+    val key: String,
+    val label: String,
+    val icon: ImageVector,
+)
+
+internal val assistantCuratedIcons = listOf(
+    AssistantSceneIconChoice("checklist", "核对清单", Icons.Default.Checklist),
+    AssistantSceneIconChoice("building", "企业主体", Icons.Default.AccountBalance),
+    AssistantSceneIconChoice("person", "自然人", Icons.Default.Badge),
+    AssistantSceneIconChoice("doc", "单据合同", Icons.Default.Description),
+    AssistantSceneIconChoice("shield", "风控制裁", Icons.Default.GppMaybe),
+    AssistantSceneIconChoice("globe", "跨境航运", Icons.Default.Public),
+    AssistantSceneIconChoice("banknote", "结算金融", Icons.Default.Payments),
+    AssistantSceneIconChoice("scale", "合规条款", Icons.Default.Balance),
+    AssistantSceneIconChoice("sparkle", "综合定制", Icons.Default.AutoAwesome),
+)
+
+internal fun assistantSceneIcon(key: String?): ImageVector = when (key?.lowercase()?.trim()) {
+    "checklist", "list" -> Icons.Default.Checklist
+    "building", "company" -> Icons.Default.AccountBalance
+    "person", "individual" -> Icons.Default.Badge
+    "doc", "document" -> Icons.Default.Description
+    "shield", "sanction", "sanctions" -> Icons.Default.GppMaybe
+    "globe", "trade" -> Icons.Default.Public
+    "banknote", "finance", "lc" -> Icons.Default.Payments
+    "scale", "legal" -> Icons.Default.Balance
+    "sparkle", "custom" -> Icons.Default.AutoAwesome
+    else -> Icons.Default.Checklist
+}
+
 internal data class AssistantSceneSpec(
     val id: String,
     val kind: Int,
     val title: String,
     val placeholder: String,
     val icon: ImageVector,
+    val iconKey: String = "checklist",
     val prompt: String?,
+    val opensAttachment: Boolean = false,
+    val isCustom: Boolean = false,
+    val hidden: Boolean = false,
+    val skillSlug: String? = null,
+    val action: ClientQuickAction? = null,
 ) {
     fun buildMessage(userText: String): String {
         val body = userText.trim().ifEmpty { "请审核所附资料" }
-        val instructions = prompt?.trim().orEmpty()
+        val instructions = buildString {
+            prompt?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it) }
+            skillSlug?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                if (isNotEmpty()) append("\n")
+                append("如工作区存在 `.gemini/skills/$it/SKILL.md`，请优先读取并按其步骤执行。")
+            }
+        }
         return if (instructions.isEmpty()) {
             "【调查场景：$title】\n\n$body"
         } else {
@@ -134,16 +182,37 @@ internal fun resolveAssistantScenes(quickActions: List<ClientQuickAction>): List
     if (quickActions.isEmpty()) {
         return defaultAssistantScenes
     }
-    return quickActions.map { action ->
+    return quickActions.filter { it.hidden != true }.map { action ->
         val probe = (action.id + " " + action.title).lowercase()
-        val kind = when {
+        val legacyKind: Int? = when {
             probe.contains("document") || probe.contains("单据") -> 2
             probe.contains("individual") || probe.contains("自然人") -> 1
             probe.contains("sanction") || probe.contains("制裁") -> 3
-            else -> 0
+            probe.contains("company") || probe.contains("企业") || probe.contains("股权") -> 0
+            else -> null
         }
-        val base = defaultAssistantScenes[kind]
-        base.copy(id = action.id, prompt = action.prompt)
+        val base = legacyKind?.let { defaultAssistantScenes[it] }
+        val resolvedTitle = action.title.trim().ifEmpty { base?.title ?: "自定义调查" }
+        val opens = action.opensAttachment ?: (legacyKind == 2)
+        val resolvedPlaceholder = action.subtitle?.trim()?.takeIf { it.isNotEmpty() }
+            ?: base?.placeholder
+            ?: if (opens) "添加资料，或补充核查要求…" else "输入调查线索，或添加单据…"
+        val resolvedIconKey = action.icon?.trim()?.takeIf { it.isNotEmpty() } ?: base?.iconKey ?: "checklist"
+        val resolvedIcon = if (!action.icon.isNullOrBlank()) assistantSceneIcon(action.icon) else (base?.icon ?: Icons.Default.Checklist)
+        AssistantSceneSpec(
+            id = action.id,
+            kind = legacyKind ?: 0,
+            title = resolvedTitle,
+            placeholder = resolvedPlaceholder,
+            icon = resolvedIcon,
+            iconKey = resolvedIconKey,
+            prompt = action.prompt,
+            opensAttachment = opens,
+            isCustom = action.isCustom == true || action.id.startsWith("custom"),
+            hidden = action.hidden == true,
+            skillSlug = action.skillSlug,
+            action = action,
+        )
     }
 }
 
@@ -154,6 +223,7 @@ internal val defaultAssistantScenes = listOf(
         title = "企业股权穿透",
         placeholder = "输入公司名称、税号或注册号…",
         icon = Icons.Default.AccountBalance,
+        iconKey = "building",
         prompt = null,
     ),
     AssistantSceneSpec(
@@ -162,6 +232,7 @@ internal val defaultAssistantScenes = listOf(
         title = "自然人核查",
         placeholder = "输入姓名、国籍或关联企业…",
         icon = Icons.Default.Badge,
+        iconKey = "person",
         prompt = null,
     ),
     AssistantSceneSpec(
@@ -170,7 +241,9 @@ internal val defaultAssistantScenes = listOf(
         title = "单据审核",
         placeholder = "添加单据，或补充需要核对的内容…",
         icon = Icons.Default.Description,
+        iconKey = "doc",
         prompt = null,
+        opensAttachment = true,
     ),
     AssistantSceneSpec(
         id = "sanctions",
@@ -178,15 +251,19 @@ internal val defaultAssistantScenes = listOf(
         title = "制裁与风险",
         placeholder = "输入主体、国家或交易线索…",
         icon = Icons.Default.GppMaybe,
+        iconKey = "shield",
         prompt = null,
     ),
 )
 
 /**
- * Strips `<investigation-instructions>...</investigation-instructions>` suffix
+ * Strips `<investigation-instructions>` and `<scene-studio-instructions>` suffixes
  * from assistant user prompts so iOS and Android render each other's messages cleanly.
  */
 internal fun assistantVisibleUserText(text: String): String {
+    val studioMarker = "\n\n<scene-studio-instructions>"
+    val studioIdx = text.indexOf(studioMarker)
+    if (studioIdx >= 0) return text.substring(0, studioIdx)
     if (!text.startsWith("【调查场景：")) return text
     val marker = "\n\n<investigation-instructions>"
     val idx = text.indexOf(marker)

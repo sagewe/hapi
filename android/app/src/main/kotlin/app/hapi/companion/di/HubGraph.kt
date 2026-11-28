@@ -80,7 +80,7 @@ class HubGraph(
     private val profileCache = ClientProfileCache(context, session.hubUrl)
     val clientProfile = kotlinx.coroutines.flow.MutableStateFlow(profileCache.read())
     val profileReady = kotlinx.coroutines.flow.MutableStateFlow(clientProfile.value != null)
-    private fun refreshProfile() { scope.launch {
+    fun refreshProfile() { scope.launch {
         try {
             val profile = session.api.getHubSettings().clientProfile
             profileCache.write(profile)

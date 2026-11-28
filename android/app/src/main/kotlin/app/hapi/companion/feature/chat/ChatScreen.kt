@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -26,6 +27,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Add
@@ -53,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -296,20 +300,135 @@ internal fun ChatScreen(
     val assistantProfile = app.hapi.companion.di.LocalClientProfile.current?.takeIf { it.mode == "assistant" }
     val caseHub = if (assistantProfile != null) app.hapi.companion.di.LocalAppGraph.current.activeHubGraph.collectAsState().value else null
     var caseFiles by remember(viewModel.sessionId) { mutableStateOf(emptyList<app.hapi.protocol.wire.CaseFile>()) }
-    var casePanel by remember(viewModel.sessionId) { mutableStateOf(false) }
-    LaunchedEffect(caseHub, assistantProfile, foreground, state.blocks.size, casePanel, attachmentItems.isEmpty()) {
-        if(assistantProfile != null && foreground && caseHub != null) {
-            runCatching { caseHub.session.api.getCaseFiles(viewModel.sessionId).files }.onSuccess { caseFiles=it }
+    var rightDrawerOpen by remember(viewModel.sessionId) { mutableStateOf(false) }
+    var pendingOpenZipMediaId by remember(viewModel.sessionId) { mutableStateOf<String?>(null) }
+    var isRightZipOpen by remember(viewModel.sessionId) { mutableStateOf(false) }
+    var popZipSignal by remember(viewModel.sessionId) { mutableIntStateOf(0) }
+    var editingSceneDraft by remember(viewModel.sessionId) { mutableStateOf<app.hapi.protocol.wire.SceneDraft?>(null) }
+    LaunchedEffect(caseHub, assistantProfile, foreground, state.blocks.size, rightDrawerOpen, attachmentItems.isEmpty()) {
+        if (assistantProfile != null && foreground && caseHub != null) {
+            runCatching { caseHub.session.api.getCaseFiles(viewModel.sessionId).files }.onSuccess { caseFiles = it }
         }
     }
-    val keyboardOpen = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    if(casePanel && caseHub != null) app.hapi.companion.feature.assistant.CaseFilesPanel(caseHub.session.api,viewModel.sessionId,state.header.title,caseFiles,{casePanel=false})
     val assistantNavigation = app.hapi.companion.feature.assistant.AssistantNavigation.current
     val assistantDrawer = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     val assistantScope = rememberCoroutineScope()
     val assistantColors = if (assistantProfile != null) app.hapi.companion.feature.assistant.assistantPalette() else null
-    app.hapi.companion.feature.assistant.AssistantConversationShell(assistantDrawer, selectedSessionId = viewModel.sessionId) {
-    CompositionLocalProvider(app.hapi.companion.feature.assistant.LocalCaseFiles provides app.hapi.companion.feature.assistant.CaseFilesAccess(caseFiles,{casePanel=true})) {
+    val sessionSummaries = caseHub?.sessionStore?.sessions?.collectAsState()?.value.orEmpty()
+    val currentSummary = remember(sessionSummaries, viewModel.sessionId) { sessionSummaries.find { it.id == viewModel.sessionId } }
+    val isSceneStudio = state.header.title.contains("场景工坊") ||
+        (currentSummary?.metadata?.tags?.contains("场景工坊") == true)
+
+    suspend fun saveQuickAction(action: app.hapi.protocol.wire.ClientQuickAction) {
+        val hub = caseHub ?: return
+        val profile = assistantProfile ?: return
+        val current = profile.quickActions.ifEmpty {
+            app.hapi.companion.feature.assistant.defaultAssistantScenes.map {
+                app.hapi.protocol.wire.ClientQuickAction(
+                    id = it.id,
+                    title = it.title,
+                    prompt = it.prompt.orEmpty(),
+                    subtitle = it.placeholder,
+                    icon = it.iconKey,
+                    opensAttachment = it.opensAttachment,
+                    isCustom = false,
+                    hidden = false,
+                )
+            }
+        }
+        val exists = current.any { it.id == action.id }
+        val merged = if (exists) current.map { if (it.id == action.id) action else it } else current + action
+        hub.session.api.saveLibraryScenarios(merged)
+        hub.refreshProfile()
+    }
+
+    val promoteCaseToScenario: () -> Unit = promote@{
+        val hub = caseHub ?: return@promote
+        val profile = assistantProfile ?: return@promote
+        rightDrawerOpen = false
+        assistantScope.launch {
+            runCatching {
+                val machine = hub.session.api.getMachines().machines.firstOrNull { it.active }
+                    ?: error("调查服务暂未连接")
+                val defaultPreset = profile.modelPresets.find { it.isDefault } ?: profile.modelPresets.firstOrNull()
+                val created = hub.session.api.spawnSession(
+                    machine.id,
+                    app.hapi.protocol.wire.SpawnSessionRequest(
+                        directory = requireNotNull(profile.defaultDirectory),
+                        agent = profile.defaultAgent,
+                        model = defaultPreset?.model ?: profile.defaultModel,
+                        effort = defaultPreset?.effort,
+                        permissionMode = profile.defaultPermissionMode,
+                    ),
+                )
+                val id = created.sessionId?.takeIf { created.type == "success" } ?: error("无法创建场景工坊")
+                hub.session.api.sendMessage(
+                    id,
+                    app.hapi.protocol.wire.SendMessageRequest(
+                        app.hapi.companion.feature.assistant.SceneStudioPrompts.promoteFromCase(state.header.title, caseFiles),
+                        java.util.UUID.randomUUID().toString(),
+                    ),
+                )
+                assistantNavigation.chat(id)
+            }.onFailure {
+                snackbarHostState.showSnackbar("无法进入场景工坊：${it.message ?: "请重试"}")
+            }
+        }
+    }
+
+    val sceneDraftHandler = remember(caseHub, assistantProfile) {
+        if (caseHub != null && assistantProfile != null) {
+            app.hapi.companion.feature.assistant.SceneDraftHandler(
+                onSave = { draft -> saveQuickAction(draft.toQuickAction()) },
+                onEdit = { draft -> editingSceneDraft = draft },
+            )
+        } else null
+    }
+
+    app.hapi.companion.feature.assistant.AssistantConversationShell(
+        drawer = assistantDrawer,
+        selectedSessionId = viewModel.sessionId,
+        rightDrawerOpen = rightDrawerOpen,
+        onRightDrawerChange = { rightDrawerOpen = it },
+        isRightZipOpen = isRightZipOpen,
+        onPopRightZip = { popZipSignal++ },
+        rightDrawerContent = if (caseHub != null) {
+            {
+                app.hapi.companion.feature.assistant.CaseDossierDrawer(
+                    api = caseHub.session.api,
+                    sessionId = viewModel.sessionId,
+                    title = state.header.title,
+                    files = caseFiles,
+                    pendingOpenZipMediaId = pendingOpenZipMediaId,
+                    onConsumePendingZip = { pendingOpenZipMediaId = null },
+                    onZipOpenChanged = { isRightZipOpen = it },
+                    popZipSignal = popZipSignal,
+                    onQuoteFile = { name ->
+                        rightDrawerOpen = false
+                        val prefix = "关于「$name」："
+                        val next = if (composerState.text.isBlank()) prefix else "${composerState.text.trimEnd()}\n$prefix"
+                        viewModel.onComposerChange(next, next.length, next.length)
+                    },
+                    onAddFiles = {
+                        rightDrawerOpen = false
+                        attachmentSheetOpen = true
+                    },
+                    onPromoteToScenario = promoteCaseToScenario,
+                )
+            }
+        } else null,
+    ) {
+    CompositionLocalProvider(
+        app.hapi.companion.feature.assistant.LocalCaseFiles provides app.hapi.companion.feature.assistant.CaseFilesAccess(
+            files = caseFiles,
+            open = { rightDrawerOpen = true },
+            openZip = { id ->
+                pendingOpenZipMediaId = id
+                rightDrawerOpen = true
+            },
+        ),
+        app.hapi.companion.feature.assistant.LocalSceneDraftHandler provides sceneDraftHandler,
+    ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = assistantColors?.background ?: MaterialTheme.colorScheme.background,
@@ -380,21 +499,73 @@ internal fun ChatScreen(
                                         color = assistantColors.accent,
                                     )
                                 }
+                            } else if (isSceneStudio) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(assistantColors.accentSoft)
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = assistantColors.accent,
+                                        modifier = Modifier.size(11.dp),
+                                    )
+                                    Text(
+                                        text = "创造模式",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = assistantColors.accent,
+                                    )
+                                }
                             }
                         }
-                        Surface(
-                            onClick = { assistantNavigation.home() },
-                            shape = androidx.compose.foundation.shape.CircleShape,
-                            color = assistantColors.surface,
-                            border = androidx.compose.foundation.BorderStroke(0.5.dp, assistantColors.border),
-                            shadowElevation = 2.dp,
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Filled.Add, contentDescription = "新建调查", tint = assistantColors.ink, modifier = Modifier.size(20.dp))
+                        Box {
+                            Surface(
+                                onClick = { rightDrawerOpen = true },
+                                shape = androidx.compose.foundation.shape.CircleShape,
+                                color = assistantColors.surface,
+                                border = androidx.compose.foundation.BorderStroke(0.5.dp, assistantColors.border),
+                                shadowElevation = 2.dp,
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Folder,
+                                        contentDescription = "本案卷宗",
+                                        tint = if (caseFiles.isNotEmpty()) assistantColors.accent else assistantColors.ink,
+                                        modifier = Modifier.size(19.dp),
+                                    )
+                                }
+                            }
+                            if (caseFiles.isNotEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 3.dp, y = (-3).dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(assistantColors.accent)
+                                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "${minOf(caseFiles.size, 99)}",
+                                        fontSize = 10.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        color = androidx.compose.ui.graphics.Color.White,
+                                    )
+                                }
                             }
                         }
-                        app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true }, viewModel::reopenSession)
+                        app.hapi.companion.feature.assistant.AssistantCaseMenu(
+                            sessionId = viewModel.sessionId,
+                            title = state.header.title,
+                            onDelete = { deleteDialogOpen = true },
+                            onReopen = viewModel::reopenSession,
+                            onPromoteToScenario = if (!isSceneStudio) promoteCaseToScenario else null,
+                        )
                     }
                     HorizontalDivider(thickness = 0.5.dp, color = assistantColors.border)
                 }
@@ -468,11 +639,6 @@ internal fun ChatScreen(
                         config = configState,
                         onClick = { configSheetOpen = true },
                     )
-                    androidx.compose.animation.AnimatedVisibility(assistantProfile != null && caseFiles.isNotEmpty() && !keyboardOpen && attachmentItems.isEmpty()) {
-                        Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center) {
-                            app.hapi.companion.feature.assistant.CaseFilesCapsule(caseFiles,{casePanel=true})
-                        }
-                    }
                     ChatComposer(
                         presetControls = {
                             if (assistantProfile != null && state.header.flavor != "codex") {
@@ -600,6 +766,13 @@ internal fun ChatScreen(
                 onDismiss = { messageInfoBlock = null },
             )
         }
+    }
+    editingSceneDraft?.let { draft ->
+        app.hapi.companion.feature.assistant.ScenarioEditorDialog(
+            initial = draft.toQuickAction(),
+            onDismiss = { editingSceneDraft = null },
+            onSave = { updated -> saveQuickAction(updated) },
+        )
     }
     }
 }
