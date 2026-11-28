@@ -69,6 +69,7 @@ struct AssistantRootView: View {
                     }
                     .toolbar(.hidden, for: .navigationBar)
                 }
+                .offset(x: reveal * 32)
                 if reveal > 0 {
                     Color.black.opacity(0.28 * reveal)
                         .ignoresSafeArea()
@@ -107,27 +108,24 @@ struct AssistantRootView: View {
                     .accessibilityIdentifier("assistant.history-drawer")
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 12, coordinateSpace: .global)
-                    .onChanged { value in
-                        guard drawerOpen || value.startLocation.x < 24,
-                              abs(value.translation.width) > abs(value.translation.height) * 1.2 else { return }
-                        drag = value.translation.width
-                    }
-                    .onEnded { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) * 1.2 else {
-                            drag = 0
-                            return
-                        }
-                        guard drawerOpen || value.startLocation.x < 24 else { return }
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                            drawerOpen = drawerOpen
-                                ? value.predictedEndTranslation.width > -width * 0.3
-                                : value.predictedEndTranslation.width > width * 0.3
+            .background {
+                AssistantDrawerPanInstaller(
+                    drawerOpen: drawerOpen,
+                    drawerWidth: width,
+                    onBegan: {
+                        dismissKeyboard()
+                    },
+                    onChanged: { translationX in
+                        drag = translationX
+                    },
+                    onEnded: { shouldOpen in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) {
+                            drawerOpen = shouldOpen
                             drag = 0
                         }
                     }
-            )
+                )
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !app.pendingIncomingFiles.isEmpty {
@@ -240,6 +238,7 @@ struct AssistantRootView: View {
                 draft: draft,
                 attachmentRequest: attachmentRequest,
                 focusRequest: focusRequest,
+                onToggleCodex: { newInvestigation(!draft.useCodex) },
                 focusChanged: { isFocused in
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                         editing = isFocused
@@ -295,61 +294,27 @@ struct AssistantRootView: View {
 
             Spacer(minLength: 8)
 
-            // MyDots top-right Liquid Glass glance pill: shows active depth/mode and opens quick switch menu.
-            Menu {
-                if !draft.useCodex, !draft.presets.isEmpty {
-                    Section("调查档位") {
-                        ForEach(draft.presets) { preset in
-                            Button {
-                                draft.selectPreset(preset)
-                            } label: {
-                                Label(
-                                    preset.label,
-                                    systemImage: draft.preset?.id == preset.id ? "checkmark" : (preset.label == "快速" ? "bolt.fill" : "sparkle")
-                                )
-                            }
-                        }
-                    }
+            // Keep top-right clean like MyDots; only surface a minimal reset button when draft has content.
+            if !draft.text.isEmpty || !draft.files.isEmpty || draft.scene != nil || draft.useCodex {
+                Button {
+                    dismissKeyboard()
+                    newInvestigation(false)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AssistantDesign.inkSecondary)
+                        .frame(width: 44, height: 44)
+                        .assistantGlass(Circle())
                 }
-                Section {
-                    Button {
-                        newInvestigation(!draft.useCodex)
-                    } label: {
-                        Label(
-                            draft.useCodex ? "切回标准调查" : "用 Codex 交叉核验",
-                            systemImage: draft.useCodex ? "checkmark.shield" : "arrow.triangle.branch"
-                        )
-                    }
-                    if !draft.text.isEmpty || !draft.files.isEmpty || draft.scene != nil {
-                        Button(role: .destructive) {
-                            newInvestigation(draft.useCodex)
-                        } label: {
-                            Label("清空当前草稿", systemImage: "trash")
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(draft.useCodex ? AssistantDesign.risk : AssistantDesign.accent)
-                        .frame(width: 6.5, height: 6.5)
-                    Text(draft.useCodex ? "交叉核验" : "\(draft.preset?.label ?? "深度")模式")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(AssistantDesign.ink)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(AssistantDesign.inkMuted)
-                }
-                .padding(.horizontal, 13)
-                .frame(height: 44)
-                .assistantGlass(Capsule())
+                .buttonStyle(.plain)
+                .accessibilityLabel("清空当前草稿")
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
-            .accessibilityLabel("更多调查选项")
         }
         .padding(.horizontal, 14)
         .padding(.top, 4)
         .padding(.bottom, 6)
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: draft.text.isEmpty && draft.files.isEmpty && draft.scene == nil && !draft.useCodex)
     }
 
     private func incomingFilesCard(files: [PreparedAttachment]) -> some View {
@@ -631,10 +596,10 @@ struct AssistantHistoryDrawer: View {
         } label: {
             Text(title)
                 .font(.caption.weight(active ? .semibold : .medium))
-                .foregroundStyle(active ? .white : AssistantDesign.inkSecondary)
+                .foregroundStyle(active ? AssistantDesign.inkOnSolid : AssistantDesign.inkSecondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(active ? AssistantDesign.accentSolidFill : AssistantDesign.surfaceMuted, in: Capsule())
+                .background(active ? AssistantDesign.ink : AssistantDesign.surfaceMuted, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -665,8 +630,9 @@ struct AssistantHistoryRow: View {
                 }
                 HStack(spacing: 6) {
                     if let firstTag = row.tags.first {
+                        let firstIsRisk = firstTag.contains("风险") || firstTag.contains("制裁")
                         Text(firstTag)
-                            .foregroundStyle(risk ? AssistantDesign.risk : AssistantDesign.inkMuted)
+                            .foregroundStyle(firstIsRisk ? AssistantDesign.risk : AssistantDesign.inkMuted)
                     }
                     if row.tags.count > 1, risk {
                         Text("· 高风险").foregroundStyle(AssistantDesign.risk)
@@ -705,5 +671,187 @@ struct AssistantHistoryRow: View {
         .padding(.vertical, 10)
         .background(isCurrent ? AssistantDesign.surfaceMuted : .clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Full-Screen UIKit Drawer Pan Gesture (MyDots `DotsDrawerStage` arbitration)
+
+/// Installs a full-screen `UIPanGestureRecognizer` on the enclosing container so users can swipe
+/// right from anywhere on the screen (not just a narrow left edge) to open the history drawer,
+/// while yielding cleanly to vertical scrolls, horizontal scroll strips, text editors, and modals.
+private struct AssistantDrawerPanInstaller: UIViewRepresentable {
+    let drawerOpen: Bool
+    let drawerWidth: CGFloat
+    let onBegan: () -> Void
+    let onChanged: (CGFloat) -> Void
+    let onEnded: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+    func makeUIView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.onWindowChange = { [weak coordinator = context.coordinator] anchor in
+            coordinator?.attach(from: anchor)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: AnchorView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.attach(from: uiView)
+    }
+
+    static func dismantleUIView(_ uiView: AnchorView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class AnchorView: UIView {
+        var onWindowChange: ((AnchorView) -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindowChange?(self)
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: AssistantDrawerPanInstaller
+        private weak var hostView: UIView?
+        private weak var lastHorizontalScrollView: UIScrollView?
+        private lazy var pan: UIPanGestureRecognizer = {
+            let gr = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            gr.delegate = self
+            gr.cancelsTouchesInView = true
+            gr.maximumNumberOfTouches = 1
+            return gr
+        }()
+
+        init(parent: AssistantDrawerPanInstaller) {
+            self.parent = parent
+        }
+
+        func attach(from anchor: UIView) {
+            // Attach to the nearest hosting root view so the gesture covers the full stage.
+            var target: UIView? = anchor.superview
+            while let next = target?.superview, !(next is UIWindow) {
+                target = next
+            }
+            guard let target, target !== hostView else { return }
+            detach()
+            target.addGestureRecognizer(pan)
+            hostView = target
+        }
+
+        func detach() {
+            if let hostView {
+                hostView.removeGestureRecognizer(pan)
+            }
+            hostView = nil
+        }
+
+        @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
+            guard let view = hostView else { return }
+            let tx = gr.translation(in: view).x
+            switch gr.state {
+            case .began:
+                parent.onBegan()
+                parent.onChanged(tx)
+            case .changed:
+                parent.onChanged(tx)
+            case .ended:
+                let vx = gr.velocity(in: view).x
+                let projected = tx + vx * 0.18
+                let threshold = parent.drawerWidth * 0.34
+                let shouldOpen: Bool
+                if parent.drawerOpen {
+                    shouldOpen = !(tx < -56 || (projected < -threshold && tx < -8) || (vx < -420 && tx < -4))
+                } else {
+                    shouldOpen = tx > 56 || (projected > threshold && tx > 8) || (vx > 420 && tx > 4)
+                }
+                parent.onEnded(shouldOpen)
+            case .cancelled, .failed:
+                parent.onEnded(parent.drawerOpen)
+            default:
+                break
+            }
+        }
+
+        private func hasPresentedModal(in window: UIWindow?) -> Bool {
+            var vc = window?.rootViewController
+            while let cur = vc {
+                if cur.presentedViewController != nil { return true }
+                vc = cur.children.first
+            }
+            return false
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let hostView, !hasPresentedModal(in: hostView.window) else { return false }
+            lastHorizontalScrollView = nil
+            var cur: UIView? = touch.view
+            while let v = cur {
+                if lastHorizontalScrollView == nil,
+                   let sv = v as? UIScrollView,
+                   sv.isScrollEnabled,
+                   sv.contentSize.width > sv.bounds.width + 1
+                {
+                    lastHorizontalScrollView = sv
+                }
+                if (v is UITextField || v is UITextView) && v.isFirstResponder {
+                    return false
+                }
+                if v is UISlider || v is UISwitch {
+                    return false
+                }
+                if v === hostView { break }
+                cur = v.superview
+            }
+            return true
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === pan, let hostView, !hasPresentedModal(in: hostView.window) else {
+                return false
+            }
+            let t = pan.translation(in: hostView)
+            let v = pan.velocity(in: hostView)
+            let ax = abs(t.x)
+            let ay = abs(t.y)
+            let dx = (ax + ay > 2) ? t.x : v.x
+            // Closed: only allow right swipe. Open: only allow left swipe.
+            if !parent.drawerOpen && dx <= 0 { return false }
+            if parent.drawerOpen && dx >= 0 { return false }
+            let isHorizontal = (ax + ay > 2) ? (ax > ay * 1.15) : (abs(v.x) > abs(v.y) * 1.15)
+            guard isHorizontal else { return false }
+
+            // Yield to horizontal ScrollViews while they still have room in the swipe direction.
+            if let hsv = lastHorizontalScrollView {
+                let minX = -hsv.adjustedContentInset.left
+                let maxX = max(minX, hsv.contentSize.width - hsv.bounds.width + hsv.adjustedContentInset.right)
+                if dx > 0 && hsv.contentOffset.x > minX + 2 { return false }
+                if dx < 0 && hsv.contentOffset.x < maxX - 2 { return false }
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard gestureRecognizer === pan else { return false }
+            return otherGestureRecognizer is UIPanGestureRecognizer && otherGestureRecognizer.view is UIScrollView
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            if otherGestureRecognizer is UIPanGestureRecognizer && otherGestureRecognizer.view is UIScrollView {
+                return false
+            }
+            return false
+        }
     }
 }

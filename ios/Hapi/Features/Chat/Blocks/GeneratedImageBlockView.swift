@@ -122,10 +122,16 @@ private struct GeneratedMediaCard: View {
     private var assistantFileCard: some View {
         let pdf = content.block.fileName.lowercased().hasSuffix(".pdf")
         let zip = content.block.fileName.lowercased().hasSuffix(".zip")
-        let color: Color = pdf ? AssistantDesign.report : zip ? AssistantDesign.risk : AssistantDesign.accent
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                AssistantIcon(symbol: pdf ? "doc.richtext.fill" : zip ? "archivebox.fill" : "doc.fill", color: color, size: 42)
+                Image(systemName: pdf ? "doc.richtext.fill" : zip ? "archivebox.fill" : "doc.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(pdf ? AssistantDesign.accent : AssistantDesign.inkSecondary)
+                    .frame(width: 42, height: 42)
+                    .background(
+                        pdf ? AssistantDesign.accentSoft : AssistantDesign.surfaceMuted,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
                 VStack(alignment: .leading, spacing: 4) {
                     Text(content.block.fileName)
                         .font(.subheadline.weight(.semibold))
@@ -133,8 +139,8 @@ private struct GeneratedMediaCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 6) {
                         Text(pdf ? "尽调 PDF 报告" : zip ? "证据资料包" : "交付文件")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(color)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AssistantDesign.inkMuted)
                         if content.isLoading {
                             ProgressView().controlSize(.mini).tint(AssistantDesign.accent)
                         }
@@ -173,14 +179,14 @@ private struct GeneratedMediaCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: "folder.fill")
                             .font(.caption)
-                            .foregroundStyle(AssistantDesign.accent)
+                            .foregroundStyle(AssistantDesign.inkMuted)
                         Text("附 \(access.count - 1) 项核验图与资料")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(AssistantDesign.inkSecondary)
                         Spacer()
                         Text("查看 ›")
                             .font(.caption.weight(.semibold))
-                            .foregroundStyle(AssistantDesign.accent)
+                            .foregroundStyle(AssistantDesign.inkSecondary)
                     }
                     .frame(minHeight: 30)
                     .contentShape(Rectangle())

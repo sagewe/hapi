@@ -130,14 +130,14 @@ struct ChatComposerView: View {
     }
 
     private var primaryCircleFill: Color {
-        if isAssistantMode { return AssistantDesign.accentSolidFill }
+        if isAssistantMode { return AssistantDesign.ink }
         return colorScheme == .dark
             ? Color.white
             : Color(red: 0.08, green: 0.09, blue: 0.11)
     }
 
     private var primaryCircleForeground: Color {
-        if isAssistantMode { return .white }
+        if isAssistantMode { return AssistantDesign.inkOnSolid }
         return colorScheme == .dark
             ? Color(red: 0.08, green: 0.09, blue: 0.11)
             : Color.white
@@ -1129,6 +1129,7 @@ struct ChatComposerView: View {
         #if targetEnvironment(macCatalyst)
         return false
         #else
+        if isAssistantMode { return false }
         let isLegacyDictationActive: Bool = {
             guard let dictation else { return false }
             return dictation.state != .idle
@@ -2318,9 +2319,15 @@ struct ComposerAttachmentChipView: View {
         }
         .padding(6)
         .background(
-            failed ? AnyShapeStyle(.red.opacity(0.12)) : AnyShapeStyle(.fill.tertiary),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            failed ? AnyShapeStyle(.red.opacity(0.12)) : (assistant ? AnyShapeStyle(AssistantDesign.surface) : AnyShapeStyle(.fill.tertiary)),
+            in: RoundedRectangle(cornerRadius: assistant ? 12 : 10, style: .continuous)
         )
+        .overlay {
+            if assistant && !failed {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(AssistantDesign.border, lineWidth: 0.5)
+            }
+        }
         .alert("Error", isPresented: $showsUploadError) {
             Button("Retry", action: onRetry)
             Button("Cancel", role: .cancel) {}

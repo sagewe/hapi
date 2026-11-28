@@ -88,6 +88,13 @@ enum AssistantDesign {
             : UIColor(red: 0.110, green: 0.110, blue: 0.102, alpha: 1) // #1C1C1A
     })
 
+    /// Contrasting foreground for solid `ink` fills (white in light mode, charcoal in dark mode).
+    static let inkOnSolid = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.067, green: 0.071, blue: 0.078, alpha: 1) // #111214
+            : .white
+    })
+
     static let inkSecondary = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? UIColor(red: 0.690, green: 0.686, blue: 0.659, alpha: 1)
@@ -353,7 +360,8 @@ struct AssistantScene: Equatable, Identifiable {
     }
     var title: String { ["企业股权穿透", "自然人核查", "单据审核", "制裁与风险"][kind] }
     var icon: String { ["building.2.fill", "person.text.rectangle.fill", "doc.text.magnifyingglass", "shield.lefthalf.filled"][kind] }
-    var color: Color { [AssistantDesign.accent, AssistantDesign.slateBlue, AssistantDesign.teal, AssistantDesign.risk][kind] }
+    /// Unified single brand accent so all four investigation entry points feel like one calm toolset.
+    var color: Color { AssistantDesign.accent }
     var placeholder: String { ["输入公司名称、税号或注册号…", "输入姓名、国籍或关联企业…", "添加单据，或补充需要核对的内容…", "输入主体、国家或交易线索…"][kind] }
     static func visibleText(_ text: String) -> String {
         guard text.hasPrefix("【调查场景："), let marker = text.range(of: "\n\n<investigation-instructions>") else { return text }
@@ -376,12 +384,19 @@ struct AssistantScenarioGrid: View {
                 Button { select(scene) } label: {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .center) {
-                            AssistantIcon(symbol: scene.icon, color: scene.color, size: 30)
+                            Image(systemName: scene.icon)
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(isSelected ? AssistantDesign.accent : AssistantDesign.inkSecondary)
+                                .frame(width: 30, height: 30)
+                                .background(
+                                    isSelected ? AssistantDesign.accent.opacity(0.16) : AssistantDesign.surfaceMuted,
+                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                )
                             Spacer(minLength: 4)
                             if isSelected {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(scene.color)
+                                    .foregroundStyle(AssistantDesign.accent)
                             } else {
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 11.5, weight: .semibold))
@@ -433,71 +448,44 @@ struct AssistantSceneChip: View {
     }
 }
 
-/// Compact inline segmented toggle for 快速 / 深度 (falls back to single capsule when custom).
+/// Single compact capsule toggle for 深度 ↔ 快速 inside the composer tool row.
 struct AssistantPresetCapsule: View {
     let label: String
     var presets: [ClientModelPreset] = []
     var selectedID: String? = nil
     var onSelect: ((ClientModelPreset) -> Void)? = nil
     let action: () -> Void
-    @Namespace private var thumb
 
-    private var showsSegmented: Bool {
-        presets.count == 2 && onSelect != nil
-    }
+    private var isDeep: Bool { label != "快速" }
 
     var body: some View {
-        if showsSegmented {
-            HStack(spacing: 2) {
-                ForEach(presets) { preset in
-                    let active = preset.id == selectedID || (selectedID == nil && preset.label == label)
-                    Button {
-                        guard !active else { return }
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                            onSelect?(preset)
-                        }
-                    } label: {
-                        HStack(spacing: 3.5) {
-                            Image(systemName: preset.label == "快速" ? "bolt.fill" : "sparkle")
-                                .font(.system(size: 10, weight: .semibold))
-                            Text(preset.label)
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        .foregroundStyle(active ? AssistantDesign.accent : AssistantDesign.inkMuted)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background {
-                            if active {
-                                Capsule()
-                                    .fill(AssistantDesign.surface)
-                                    .overlay(Capsule().strokeBorder(AssistantDesign.border, lineWidth: 0.5))
-                                    .matchedGeometryEffect(id: "preset-thumb", in: thumb)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
+        Button {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                action()
             }
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(3)
-            .background(AssistantDesign.surfaceMuted, in: Capsule())
-            .sensoryFeedback(.selection, trigger: selectedID ?? label)
-            .accessibilityIdentifier("assistant.mode-capsule")
-        } else {
-            Button(action: action) {
-                Label(label, systemImage: label == "快速" ? "bolt.fill" : "sparkle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AssistantDesign.accent)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 6.5)
-                    .background(AssistantDesign.accentSoft, in: Capsule())
+        } label: {
+            HStack(spacing: 4.5) {
+                Image(systemName: isDeep ? "sparkle" : "bolt.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .buttonStyle(AssistantPressStyle(scale: 0.96))
-            .sensoryFeedback(.selection, trigger: label)
-            .accessibilityIdentifier("assistant.mode-capsule")
+            .foregroundStyle(isDeep ? AssistantDesign.accent : AssistantDesign.inkSecondary)
+            .padding(.horizontal, 11)
+            .frame(height: 32)
+            .background(isDeep ? AssistantDesign.accentSoft : AssistantDesign.surfaceMuted, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(isDeep ? AssistantDesign.accentBorder : AssistantDesign.border, lineWidth: 0.5)
+            )
+            .contentTransition(.interpolate)
         }
+        .buttonStyle(AssistantPressStyle(scale: 0.95))
+        .sensoryFeedback(.selection, trigger: label)
+        .accessibilityLabel("切换调查档位，当前为\(label)")
+        .accessibilityIdentifier("assistant.mode-capsule")
     }
 }
 

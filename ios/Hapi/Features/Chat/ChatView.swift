@@ -484,7 +484,7 @@ struct ChatView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "folder.fill")
                             .font(.subheadline)
-                            .foregroundStyle(AssistantDesign.accent)
+                            .foregroundStyle(AssistantDesign.inkSecondary)
                         Text("本案资料 · \(caseFiles.files.count)")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AssistantDesign.ink)

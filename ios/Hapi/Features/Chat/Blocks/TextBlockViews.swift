@@ -187,10 +187,10 @@ struct AgentTextBlockView: View {
                     } label: {
                         Label(copied ? "已复制" : "复制结论", systemImage: copied ? "checkmark" : "doc.on.doc")
                             .font(.caption.weight(.medium))
-                            .foregroundStyle(AssistantDesign.accent)
+                            .foregroundStyle(copied ? AssistantDesign.accent : AssistantDesign.inkSecondary)
                             .padding(.horizontal, 11)
                             .padding(.vertical, 6)
-                            .background(AssistantDesign.accentSoft, in: Capsule())
+                            .background(copied ? AssistantDesign.accentSoft : AssistantDesign.surfaceMuted, in: Capsule())
                     }
                     .buttonStyle(AssistantPressStyle(scale: 0.95))
                     .sensoryFeedback(.selection, trigger: copied)

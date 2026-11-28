@@ -62,10 +62,10 @@ struct CaseFilesView: View {
                         .font(.title3.weight(.bold))
                     Text("\(model.files.count)")
                         .font(.caption.weight(.semibold).monospacedDigit())
-                        .foregroundStyle(AssistantDesign.accent)
+                        .foregroundStyle(AssistantDesign.inkSecondary)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(AssistantDesign.accentSoft, in: Capsule())
+                        .background(AssistantDesign.surfaceMuted, in: Capsule())
                 }
                 Spacer(minLength: 8)
                 if !shown.isEmpty {
@@ -80,10 +80,10 @@ struct CaseFilesView: View {
                     } label: {
                         Text(allShownSelected ? "取消全选" : "全选")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(AssistantDesign.accent)
+                            .foregroundStyle(AssistantDesign.ink)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(AssistantDesign.accentSoft, in: Capsule())
+                            .background(AssistantDesign.surfaceMuted, in: Capsule())
                     }
                     .buttonStyle(AssistantPressStyle(scale: 0.95))
                 }
@@ -122,21 +122,37 @@ struct CaseFilesView: View {
                                 ($0.selectionID == model.report?.selectionID ? 0 : 1)
                                     < ($1.selectionID == model.report?.selectionID ? 0 : 1)
                             }
-                            ForEach(docs, id: \.selectionID) { file in
-                                CaseFileRow(
-                                    name: file.fileName,
-                                    detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file),
-                                    isPrimaryReport: file.selectionID == model.report?.selectionID,
-                                    selected: selected.contains(file.selectionID),
-                                    label: file.isZIP ? "展开 ›" : "预览",
-                                    select: { toggle(file.selectionID) },
-                                    open: { open(file) }
+                            if !docs.isEmpty {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(docs.enumerated()), id: \.element.selectionID) { index, file in
+                                        if index > 0 {
+                                            Rectangle()
+                                                .fill(AssistantDesign.border)
+                                                .frame(height: 0.5)
+                                                .padding(.leading, 56)
+                                        }
+                                        CaseFileRow(
+                                            name: file.fileName,
+                                            detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file),
+                                            isPrimaryReport: file.selectionID == model.report?.selectionID,
+                                            selected: selected.contains(file.selectionID),
+                                            isContainer: file.isZIP,
+                                            select: { toggle(file.selectionID) },
+                                            open: { open(file) }
+                                        )
+                                    }
+                                }
+                                .background(AssistantDesign.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .strokeBorder(AssistantDesign.border, lineWidth: 0.5)
                                 )
                             }
 
                             let images = group.filter(\.isImage)
                             if !images.isEmpty {
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                                LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
                                     ForEach(images, id: \.selectionID) { file in
                                         CaseImageTile(
                                             model: model,
@@ -214,10 +230,10 @@ struct CaseFilesView: View {
                 }
             }
             .font(.caption.weight(active ? .semibold : .medium))
-            .foregroundStyle(active ? .white : .secondary)
+            .foregroundStyle(active ? AssistantDesign.inkOnSolid : AssistantDesign.inkSecondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(active ? AssistantDesign.accentSolidFill : AssistantDesign.subtleFill, in: Capsule())
+            .background(active ? AssistantDesign.ink : AssistantDesign.subtleFill, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -294,8 +310,14 @@ struct ZIPContentsView: View {
             .padding(.bottom, 4)
 
             ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(route.archive.entries) { entry in
+                VStack(spacing: 0) {
+                    ForEach(Array(route.archive.entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 {
+                            Rectangle()
+                                .fill(AssistantDesign.border)
+                                .frame(height: 0.5)
+                                .padding(.leading, 56)
+                        }
                         CaseFileRow(
                             name: entry.fileName,
                             detail: entry.path == entry.fileName
@@ -303,7 +325,7 @@ struct ZIPContentsView: View {
                                 : entry.path,
                             isPrimaryReport: false,
                             selected: selected.contains(entry.id),
-                            label: entry.isImage ? "看图" : "预览",
+                            isContainer: false,
                             select: {
                                 withAnimation(.snappy(duration: 0.18)) {
                                     if !selected.insert(entry.id).inserted { selected.remove(entry.id) }
@@ -313,6 +335,12 @@ struct ZIPContentsView: View {
                         )
                     }
                 }
+                .background(AssistantDesign.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(AssistantDesign.border, lineWidth: 0.5)
+                )
                 .padding(.bottom, 12)
             }
 
@@ -375,24 +403,28 @@ struct ZIPContentsView: View {
 struct FileTypeBadge: View {
     let name: String
     var compact: Bool = false
+    var highlighted: Bool = false
 
     private var ext: String { (name as NSString).pathExtension.lowercased() }
-    private var color: Color {
+    private var symbol: String {
         switch ext {
-        case "pdf": AssistantDesign.report
-        case "zip": AssistantDesign.risk
-        case "doc", "docx": AssistantDesign.slateBlue
-        case "xls", "xlsx", "csv": AssistantDesign.accent
-        default: AssistantDesign.teal
+        case "zip", "rar", "7z", "tar", "gz": "archivebox"
+        case "xls", "xlsx", "csv": "tablecells"
+        case "jpg", "jpeg", "png", "heic", "webp": "photo"
+        case "pdf": "doc.richtext"
+        default: "doc.text"
         }
     }
 
     var body: some View {
-        Text(ext == "docx" ? "DOC" : ext == "xlsx" ? "XLS" : String(ext.uppercased().prefix(4)))
-            .font(.system(size: compact ? 9.5 : 11, weight: .bold))
-            .foregroundStyle(color)
-            .frame(width: compact ? 30 : 38, height: compact ? 30 : 40)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: compact ? 8 : 11, style: .continuous))
+        Image(systemName: symbol)
+            .font(.system(size: compact ? 13.5 : 16, weight: .medium))
+            .foregroundStyle(highlighted ? AssistantDesign.accent : AssistantDesign.inkSecondary)
+            .frame(width: compact ? 32 : 36, height: compact ? 32 : 36)
+            .background(
+                highlighted ? AssistantDesign.accentSoft : AssistantDesign.surfaceMuted,
+                in: RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
+            )
     }
 }
 
@@ -401,52 +433,62 @@ private struct CaseFileRow: View {
     let detail: String
     let isPrimaryReport: Bool
     let selected: Bool
-    let label: String
+    let isContainer: Bool
     let select: () -> Void
     let open: () -> Void
+
+    private var extTag: String {
+        let ext = (name as NSString).pathExtension.uppercased()
+        if ext.isEmpty { return "" }
+        return ext == "DOCX" ? "DOC" : ext == "XLSX" ? "XLS" : String(ext.prefix(4))
+    }
 
     var body: some View {
         HStack(spacing: 8) {
             selectionCircle(selected, action: select)
             Button(action: open) {
                 HStack(spacing: 11) {
-                    FileTypeBadge(name: name)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(name)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                        }
+                    FileTypeBadge(name: name, highlighted: isPrimaryReport)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(name)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AssistantDesign.ink)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                         HStack(spacing: 6) {
                             if isPrimaryReport {
                                 Text("主报告")
                                     .font(.system(size: 10, weight: .semibold))
                                     .foregroundStyle(AssistantDesign.accent)
                                     .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
+                                    .padding(.vertical, 1.5)
                                     .background(AssistantDesign.accentSoft, in: Capsule())
+                            } else if !extTag.isEmpty {
+                                Text(extTag)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(AssistantDesign.inkMuted)
                             }
                             Text(detail)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(AssistantDesign.inkMuted)
                                 .lineLimit(1)
                         }
                     }
                     Spacer(minLength: 4)
-                    Text(label)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(name.lowercased().hasSuffix(".zip") ? AssistantDesign.risk : AssistantDesign.accent)
+                    if isContainer {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AssistantDesign.inkMuted)
+                    }
                 }
-                .frame(minHeight: 52)
+                .frame(minHeight: 48)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .assistantSurface(radius: 16, selected: selected)
+        .padding(.vertical, 9)
+        .background(selected ? AssistantDesign.accent.opacity(0.05) : .clear)
     }
 }
 
@@ -459,39 +501,43 @@ private struct CaseImageTile: View {
     @State private var image: UIImage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                Button(action: open) {
-                    Rectangle()
-                        .fill(AssistantDesign.subtleFill)
-                        .frame(height: 92)
-                        .overlay {
-                            if let image {
-                                Image(uiImage: image).resizable().scaledToFill()
-                            } else {
-                                Image(systemName: "photo").foregroundStyle(.secondary)
-                            }
+        ZStack(alignment: .topTrailing) {
+            Button(action: open) {
+                Rectangle()
+                    .fill(AssistantDesign.surfaceMuted)
+                    .aspectRatio(1.12, contentMode: .fill)
+                    .overlay {
+                        if let image {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        } else {
+                            Image(systemName: "photo").foregroundStyle(AssistantDesign.inkMuted)
                         }
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                selectionCircle(selected, action: select)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .padding(4)
+                    }
+                    .clipped()
             }
-            Text(file.fileName)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, 2)
+            .buttonStyle(.plain)
+
+            Button(action: select) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(selected ? AssistantDesign.accent : Color.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.selection, trigger: selected)
+            .padding(4)
+            .accessibilityLabel(selected ? "取消选择 \(file.fileName)" : "选择 \(file.fileName)")
         }
-        .padding(6)
-        .assistantSurface(radius: 14, selected: selected)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selected ? AssistantDesign.accent : AssistantDesign.border, lineWidth: selected ? 1.5 : 0.5)
+        )
         .task {
             if let local = try? await model.local(file) {
                 image = await Task.detached {
-                    UIImage(contentsOfFile: local.url.path)?.preparingThumbnail(of: CGSize(width: 300, height: 220))
+                    UIImage(contentsOfFile: local.url.path)?.preparingThumbnail(of: CGSize(width: 300, height: 260))
                 }.value
             }
         }
