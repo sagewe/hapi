@@ -42,14 +42,25 @@ import app.hapi.protocol.chat.AgentTextBlock
 /** Assistant prose: full-width markdown (the shared M2d1 renderer). */
 @Composable
 fun AgentTextBlockView(block: AgentTextBlock, modifier: Modifier = Modifier) {
-    if(app.hapi.companion.di.LocalClientProfile.current?.mode=="assistant") {
-        val clipboard=LocalClipboardManager.current
-        var copied by remember(block.id,block.text) { mutableStateOf(false) }
+    if (app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant") {
+        val clipboard = LocalClipboardManager.current
+        val palette = app.hapi.companion.feature.assistant.assistantPalette()
+        var copied by remember(block.id, block.text) { mutableStateOf(false) }
         Column(modifier.fillMaxWidth()) {
-            SelectionContainer { Markdown(text=block.text,modifier=Modifier.fillMaxWidth()) }
-            TextButton({clipboard.setText(AnnotatedString(block.text));copied=true},Modifier.align(Alignment.End)) {
-                Icon(if(copied) Icons.Default.Check else Icons.Default.ContentCopy,null,Modifier.size(14.dp))
-                Text(if(copied) "已复制" else "复制结论",Modifier.padding(start=5.dp),style=MaterialTheme.typography.labelSmall)
+            SelectionContainer { Markdown(text = block.text, modifier = Modifier.fillMaxWidth()) }
+            TextButton({ clipboard.setText(AnnotatedString(block.text)); copied = true }, Modifier.align(Alignment.End)) {
+                Icon(
+                    if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                    null,
+                    Modifier.size(14.dp),
+                    tint = if (copied) palette.accent else palette.inkMuted,
+                )
+                Text(
+                    if (copied) "已复制" else "复制结论",
+                    Modifier.padding(start = 5.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (copied) palette.accent else palette.inkMuted,
+                )
             }
         }
     } else Markdown(text = block.text, modifier = modifier.fillMaxWidth())

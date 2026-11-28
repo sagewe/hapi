@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,7 +21,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -303,46 +306,133 @@ internal fun ChatScreen(
     val assistantNavigation = app.hapi.companion.feature.assistant.AssistantNavigation.current
     val assistantDrawer = androidx.compose.material3.rememberDrawerState(androidx.compose.material3.DrawerValue.Closed)
     val assistantScope = rememberCoroutineScope()
-    app.hapi.companion.feature.assistant.AssistantConversationShell(assistantDrawer) {
+    val assistantColors = if (assistantProfile != null) app.hapi.companion.feature.assistant.assistantPalette() else null
+    app.hapi.companion.feature.assistant.AssistantConversationShell(assistantDrawer, selectedSessionId = viewModel.sessionId) {
     CompositionLocalProvider(app.hapi.companion.feature.assistant.LocalCaseFiles provides app.hapi.companion.feature.assistant.CaseFilesAccess(caseFiles,{casePanel=true})) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = assistantColors?.background ?: MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                expandedHeight = if (assistantProfile != null) 88.dp else toolbarHeight,
-                navigationIcon = {
-                    IconButton(onClick = { if(assistantProfile != null) assistantScope.launch { assistantDrawer.open() } else onBack() }) {
-                        Icon(if(assistantProfile != null) androidx.compose.material.icons.Icons.Filled.Menu else Icons.AutoMirrored.Filled.ArrowBack, contentDescription = if(assistantProfile!=null) "历史调查" else stringResource(R.string.chat_back))
+            if (assistantProfile != null && assistantColors != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(assistantColors.background)
+                        .statusBarsPadding(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Surface(
+                            onClick = { assistantScope.launch { assistantDrawer.open() } },
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = assistantColors.surface,
+                            border = androidx.compose.foundation.BorderStroke(0.5.dp, assistantColors.border),
+                            shadowElevation = 2.dp,
+                            modifier = Modifier.size(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                app.hapi.companion.feature.assistant.AssistantMenuIcon(tint = assistantColors.ink)
+                            }
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(
+                                text = state.header.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = assistantColors.ink,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (reconnecting) {
+                                Text(
+                                    text = stringResource(R.string.chat_reconnecting_retry),
+                                    style = app.hapi.companion.ui.theme.HapiTypography.caption,
+                                    color = assistantColors.report,
+                                    maxLines = 1,
+                                    modifier = Modifier.clickable(onClick = viewModel::retry),
+                                )
+                            } else if (state.header.thinking) {
+                                Row(
+                                    modifier = Modifier
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(assistantColors.accentSoft)
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    app.hapi.companion.feature.assistant.AssistantOrbitingRing(
+                                        color = assistantColors.accent,
+                                        strokeWidth = 1.4.dp,
+                                        modifier = Modifier.size(10.dp),
+                                    )
+                                    Text(
+                                        text = "调查中",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = assistantColors.accent,
+                                    )
+                                }
+                            }
+                        }
+                        Surface(
+                            onClick = { assistantNavigation.home() },
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = assistantColors.surface,
+                            border = androidx.compose.foundation.BorderStroke(0.5.dp, assistantColors.border),
+                            shadowElevation = 2.dp,
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Add, contentDescription = "新建调查", tint = assistantColors.ink, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true }, viewModel::reopenSession)
                     }
-                },
-                title = { ChatTitle(state.header, reconnecting, viewModel::retry) },
-                actions = {
-                    // Two icons max (device feedback: four icons squeezed the
-                    // title out) — gear for the frequent config switches,
-                    // everything else in the overflow menu.
-                    IconButton(onClick = { if (assistantProfile != null) assistantNavigation.home() else configSheetOpen = true }) {
-                        Icon(if (assistantProfile != null) Icons.Filled.Add else Icons.Filled.Settings, contentDescription = if(assistantProfile!=null) "新建调查" else stringResource(R.string.chat_open_settings))
-                    }
-                    val scratchlistCount by viewModel.scratchlistCount.collectAsState()
-                    if (assistantProfile != null) app.hapi.companion.feature.assistant.AssistantCaseMenu(viewModel.sessionId, state.header.title, { deleteDialogOpen = true },viewModel::reopenSession)
-                    else SessionOverflowMenu(
-                        active = state.header.active,
-                        onOpenFiles = onOpenFiles,
-                        scratchlistCount = scratchlistCount,
-                        onOpenScratchlist = if (viewModel.scratchlistEnabled) onOpenScratchlist else null,
-                        onRename = { renameDialogOpen = true },
-                        onReopen = viewModel::reopenSession,
-                        onDelete = { deleteDialogOpen = true },
-                        // Draft-level action, relocated from the composer's
-                        // own overflow (one less button in the input bar).
-                        onParkDraft = if (viewModel.scratchlistEnabled && composerState.text.isNotBlank()) {
-                            viewModel::parkComposerDraft
-                        } else {
-                            null
-                        },
-                    )
-                },
-            )
+                    HorizontalDivider(thickness = 0.5.dp, color = assistantColors.border)
+                }
+            } else {
+                TopAppBar(
+                    expandedHeight = toolbarHeight,
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.chat_back))
+                        }
+                    },
+                    title = { ChatTitle(state.header, reconnecting, viewModel::retry) },
+                    actions = {
+                        // Two icons max (device feedback: four icons squeezed the
+                        // title out) — gear for the frequent config switches,
+                        // everything else in the overflow menu.
+                        IconButton(onClick = { configSheetOpen = true }) {
+                            Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.chat_open_settings))
+                        }
+                        val scratchlistCount by viewModel.scratchlistCount.collectAsState()
+                        SessionOverflowMenu(
+                            active = state.header.active,
+                            onOpenFiles = onOpenFiles,
+                            scratchlistCount = scratchlistCount,
+                            onOpenScratchlist = if (viewModel.scratchlistEnabled) onOpenScratchlist else null,
+                            onRename = { renameDialogOpen = true },
+                            onReopen = viewModel::reopenSession,
+                            onDelete = { deleteDialogOpen = true },
+                            // Draft-level action, relocated from the composer's
+                            // own overflow (one less button in the input bar).
+                            onParkDraft = if (viewModel.scratchlistEnabled && composerState.text.isNotBlank()) {
+                                viewModel::parkComposerDraft
+                            } else {
+                                null
+                            },
+                        )
+                    },
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {

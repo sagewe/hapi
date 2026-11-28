@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import app.hapi.companion.di.LocalAppGraph
 import app.hapi.protocol.wire.SessionReadStateRequest
@@ -29,7 +30,19 @@ import java.io.File
     var tags by remember(summary?.metadata?.tags) { mutableStateOf(summary?.metadata?.tags.orEmpty().joinToString("，")) }
     var failure by remember { mutableStateOf<String?>(null) }
     fun action(block: suspend () -> Unit) { open = false; scope.launch { try { block() } catch (_: Exception) { failure = "操作未完成，请重试" } } }
-    IconButton({ open = true }) { Icon(Icons.Default.MoreVert, "调查操作") }
+    val palette = assistantPalette()
+    Surface(
+        onClick = { open = true },
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = palette.surface,
+        border = androidx.compose.foundation.BorderStroke(0.5.dp, palette.border),
+        shadowElevation = 2.dp,
+        modifier = Modifier.size(40.dp),
+    ) {
+        Box(contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Icon(Icons.Default.MoreVert, "调查操作", tint = palette.ink, modifier = Modifier.size(20.dp))
+        }
+    }
     DropdownMenu(open, { open = false }) {
         DropdownMenuItem({ Text("重命名与标签") }, { open = false; editing = true })
         DropdownMenuItem({ Text("导出") }, { action {

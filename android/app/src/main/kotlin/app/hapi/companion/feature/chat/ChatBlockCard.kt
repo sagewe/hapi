@@ -99,16 +99,66 @@ fun ChatBlockCard(
 }
 
 @Composable private fun AssistantStage(tools: List<ToolCallBlock>, modifier: Modifier, summary: app.hapi.protocol.chat.ToolGroupSummary? = null, groupId: String? = null) {
-    val label=assistantStageText(tools,summary) ?: return
-    val running=label.startsWith("正在")
-    val inspection=LocalChatInspection.current
-    androidx.compose.material3.Surface(onClick={ if(groupId!=null) inspection?.openGroup(groupId) else tools.firstOrNull()?.id?.let {inspection?.openTool(it)} },enabled=inspection!=null && (groupId!=null || tools.isNotEmpty()),
-        color=androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha=.45f),shape=androidx.compose.foundation.shape.RoundedCornerShape(12.dp),modifier=modifier.fillMaxWidth().padding(vertical=6.dp)) {
-        androidx.compose.foundation.layout.Row(androidx.compose.ui.Modifier.padding(horizontal=12.dp,vertical=11.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-            if(running) app.hapi.companion.feature.assistant.PulseDot(androidx.compose.material3.MaterialTheme.colorScheme.primary)
-            else androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.CheckCircle,null,androidx.compose.ui.Modifier.size(15.dp),tint=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            androidx.compose.material3.Text(label,androidx.compose.ui.Modifier.padding(start=8.dp).weight(1f),style=androidx.compose.material3.MaterialTheme.typography.labelMedium)
-            if(!running) androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ChevronRight,"展开查证步骤",androidx.compose.ui.Modifier.size(16.dp),tint=androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+    val label = assistantStageText(tools, summary) ?: return
+    val running = label.startsWith("正在")
+    val totalSteps = summary?.totalTools ?: tools.size
+    val inspection = LocalChatInspection.current
+    val palette = app.hapi.companion.feature.assistant.assistantPalette()
+    androidx.compose.material3.Surface(
+        onClick = { if (groupId != null) inspection?.openGroup(groupId) else tools.firstOrNull()?.id?.let { inspection?.openTool(it) } },
+        enabled = inspection != null && (groupId != null || tools.isNotEmpty()),
+        color = if (running) palette.accentSoft else palette.surface,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            width = if (running) 1.dp else 0.5.dp,
+            color = if (running) palette.accentBorder else palette.border,
+        ),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        androidx.compose.foundation.layout.Row(
+            androidx.compose.ui.Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            if (running) {
+                app.hapi.companion.feature.assistant.AssistantOrbitingRing(
+                    color = palette.accent,
+                    strokeWidth = 1.7.dp,
+                    modifier = androidx.compose.ui.Modifier.size(14.dp),
+                )
+            } else {
+                androidx.compose.material3.Icon(
+                    androidx.compose.material.icons.Icons.Default.CheckCircle,
+                    null,
+                    androidx.compose.ui.Modifier.size(16.dp),
+                    tint = palette.accent,
+                )
+            }
+            androidx.compose.material3.Text(
+                label,
+                androidx.compose.ui.Modifier.padding(start = 10.dp).weight(1f),
+                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                color = if (running) palette.ink else palette.inkSecondary,
+            )
+            if (running && totalSteps > 0) {
+                androidx.compose.material3.Surface(
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    color = palette.accent.copy(alpha = 0.14f),
+                    modifier = androidx.compose.ui.Modifier.padding(end = 6.dp),
+                ) {
+                    androidx.compose.material3.Text(
+                        "$totalSteps 步",
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        color = palette.accent,
+                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            androidx.compose.material3.Icon(
+                androidx.compose.material.icons.Icons.Default.ChevronRight,
+                "展开查证步骤",
+                androidx.compose.ui.Modifier.size(16.dp),
+                tint = palette.inkMuted,
+            )
         }
     }
 }

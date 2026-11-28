@@ -19,4 +19,25 @@ class HoldDictationTest {
         val b=ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN)
         assertEquals(16000,b.getInt(24));assertEquals(32000,b.getInt(28));assertEquals(4,b.getInt(40));assertArrayEquals(pcm,wave.copyOfRange(44,48))
     }
+    @Test fun holdVoiceZonesMatchMyDotsGeometry() {
+        assertEquals(HoldVoiceZone.SEND, resolveHoldVoiceZone(0f, 0f))
+        assertEquals(HoldVoiceZone.SEND, resolveHoldVoiceZone(12f, -15f))
+        assertEquals(HoldVoiceZone.CANCEL, resolveHoldVoiceZone(-30f, -50f))
+        assertEquals(HoldVoiceZone.CANCEL, resolveHoldVoiceZone(0f, -84f))
+        assertEquals(HoldVoiceZone.EDIT, resolveHoldVoiceZone(42f, -32f))
+    }
+    @Test fun assistantVisibleUserTextStripsHiddenInstructions() {
+        val scene = defaultAssistantScenes[0].copy(prompt = "check registry")
+        val wire = scene.buildMessage("查一下某某公司")
+        assertTrue(wire.contains("<investigation-instructions>"))
+        assertEquals("【调查场景：企业股权穿透】\n\n查一下某某公司", assistantVisibleUserText(wire))
+        assertEquals("普通消息", assistantVisibleUserText("普通消息"))
+    }
+    @Test fun assistantGreetingCoversAllTimeBuckets() {
+        assertEquals("早上好", assistantGreeting(8))
+        assertEquals("中午好", assistantGreeting(12))
+        assertEquals("下午好", assistantGreeting(15))
+        assertEquals("晚上好", assistantGreeting(20))
+        assertEquals("夜深了", assistantGreeting(2))
+    }
 }

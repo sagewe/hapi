@@ -51,24 +51,30 @@ import app.hapi.protocol.chat.UserTextBlock
  */
 @Composable
 fun UserTextBlockView(block: UserTextBlock, modifier: Modifier = Modifier) {
-    val preview = remember(block.text) { messagePreview(block.text) }
+    val isAssistant = app.hapi.companion.di.LocalClientProfile.current?.mode == "assistant"
+    val visibleText = remember(block.text, isAssistant) {
+        if (isAssistant) app.hapi.companion.feature.assistant.assistantVisibleUserText(block.text) else block.text
+    }
+    val preview = remember(visibleText) { messagePreview(visibleText) }
     val inspection = LocalChatInspection.current
+    val assistantColors = if (isAssistant) app.hapi.companion.feature.assistant.assistantPalette() else null
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val maxBubbleWidth = maxWidth * 0.85f
         Row(modifier = Modifier.fillMaxWidth()) {
             Spacer(modifier = Modifier.width(48.dp).weight(1f))
             Column(horizontalAlignment = Alignment.End) {
                 Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 4.dp),
+                    color = assistantColors?.accentSoft ?: MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = assistantColors?.ink ?: MaterialTheme.colorScheme.onPrimaryContainer,
+                    border = assistantColors?.let { androidx.compose.foundation.BorderStroke(0.5.dp, it.accentBorder) },
+                    shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 5.dp),
                     modifier = Modifier.widthIn(max = maxBubbleWidth),
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                         SelectionContainer {
                             Text(text = preview.text, style = HapiTypography.body)
                         }
-                        if (preview.end < block.text.length) {
+                        if (preview.end < visibleText.length) {
                             TextButton(onClick = { inspection?.openMessage(block.id) }, enabled = inspection != null) {
                                 Text(stringResource(R.string.chat_view_full_message))
                             }
