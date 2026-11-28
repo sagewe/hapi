@@ -122,35 +122,80 @@ private struct GeneratedMediaCard: View {
     private var assistantFileCard: some View {
         let pdf = content.block.fileName.lowercased().hasSuffix(".pdf")
         let zip = content.block.fileName.lowercased().hasSuffix(".zip")
-        let color: Color = pdf ? .pink : zip ? .orange : .teal
-        return VStack(alignment: .leading, spacing: 18) {
+        let color: Color = pdf ? AssistantDesign.report : zip ? AssistantDesign.risk : AssistantDesign.accent
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                AssistantIcon(symbol: pdf ? "doc.richtext" : zip ? "archivebox" : "doc", color: color, size: 40)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(content.block.fileName).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                    Text(pdf ? "PDF 报告" : zip ? "证据包" : "交付文件").font(.caption).foregroundStyle(color)
+                AssistantIcon(symbol: pdf ? "doc.richtext.fill" : zip ? "archivebox.fill" : "doc.fill", color: color, size: 42)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(content.block.fileName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Text(pdf ? "尽调 PDF 报告" : zip ? "证据资料包" : "交付文件")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(color)
+                        if content.isLoading {
+                            ProgressView().controlSize(.mini).tint(AssistantDesign.accent)
+                        }
+                    }
                 }
                 Spacer(minLength: 0)
             }
+
             HStack(spacing: 10) {
                 Button { openFile(share: false) } label: {
-                    Label("预览", systemImage: "doc.text.magnifyingglass").frame(maxWidth: .infinity, minHeight: 42)
-                        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(color)
+                    Label(pdf ? "预览报告" : "预览", systemImage: "doc.text.magnifyingglass")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 42)
+                        .background(AssistantDesign.accentGradient, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        .shadow(color: AssistantDesign.accent.opacity(0.22), radius: 6, y: 2)
                 }
+                .buttonStyle(AssistantPressStyle(scale: 0.97))
+
                 Button { openFile(share: true) } label: {
-                    Label("转发", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 42)
-                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12)).foregroundStyle(.primary)
+                    Label("转发", systemImage: "square.and.arrow.up")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 18)
+                        .frame(minHeight: 42)
+                        .background(AssistantDesign.subtleFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(AssistantDesign.border, lineWidth: 0.6))
                 }
-                if content.isLoading { ProgressView().controlSize(.small) }
-            }.font(.subheadline.weight(.medium)).buttonStyle(.plain).disabled(loader == nil || content.isLoading)
-            if pdf, let access = caseFileAccess, access.mainReportID == content.block.imageId, access.count > 1 {
-                Button(action: access.open) {
-                    HStack { Image(systemName: "archivebox"); Text("附 \(access.count - 1) 项核验图与资料"); Spacer(); Text("查看 ›") }
-                        .font(.caption).foregroundStyle(.blue).frame(minHeight: 36)
-                }.buttonStyle(.plain)
+                .buttonStyle(AssistantPressStyle(scale: 0.96))
             }
-            if content.loadFailed { Text("文件暂不可用，请重试").font(.caption).foregroundStyle(.secondary) }
-        }.padding(16).assistantSurface().accessibilityIdentifier("assistant.report-card")
+            .disabled(loader == nil || content.isLoading)
+
+            if pdf, let access = caseFileAccess, access.mainReportID == content.block.imageId, access.count > 1 {
+                Divider().overlay(AssistantDesign.border)
+                Button(action: access.open) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "folder.fill")
+                            .font(.caption)
+                            .foregroundStyle(AssistantDesign.accent)
+                        Text("附 \(access.count - 1) 项核验图与资料")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("查看 ›")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AssistantDesign.accent)
+                    }
+                    .frame(minHeight: 30)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            if content.loadFailed {
+                Text("文件暂不可用，请重试")
+                    .font(.caption)
+                    .foregroundStyle(AssistantDesign.report)
+            }
+        }
+        .padding(16)
+        .assistantSurface(radius: 16)
+        .accessibilityIdentifier("assistant.report-card")
     }
     private func openFile(share: Bool) {
         wantsShare = share

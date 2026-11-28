@@ -31,11 +31,15 @@ final class AssistantWorkbenchModel {
             ?? session.clientProfile?.defaultModelPreset?.id ?? ""
     }
     func removeFile(_ id: String) { guard allocatedSessionID == nil else { return }; files.removeAll { $0.id == id } }
+    func selectPreset(_ preset: ClientModelPreset) {
+        guard allocatedSessionID == nil else { return }
+        presetID = preset.id
+        UserDefaults.standard.set(presetID, forKey: "assistant.preset:\(session.hubUrl)")
+    }
     func cyclePreset() {
         guard allocatedSessionID == nil, !presets.isEmpty else { return }
         let index = presets.firstIndex { $0.id == presetID } ?? -1
-        presetID = presets[(index + 1) % presets.count].id
-        UserDefaults.standard.set(presetID, forKey: "assistant.preset:\(session.hubUrl)")
+        selectPreset(presets[(index + 1) % presets.count])
     }
     func add(_ result: PrepareResult) {
         switch result {

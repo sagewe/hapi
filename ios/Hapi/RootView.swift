@@ -34,6 +34,7 @@ struct RootView: View {
                 }
             }
         }
+        .tint(AppBrand.isQiqiWork ? AssistantDesign.accent : nil)
         .sheet(item: $model.pendingPairing) { pending in
             NavigationStack {
                 PairingConfirmView(pending: pending)

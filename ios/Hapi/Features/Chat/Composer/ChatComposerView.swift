@@ -121,7 +121,8 @@ struct ChatComposerView: View {
     /// mode. `secondarySystemBackground` made the whole composer read like a
     /// grouped form cell instead of a floating iOS control.
     private var composerSurfaceColor: Color {
-        Color(uiColor: UIColor { traits in
+        if isAssistantMode { return AssistantDesign.surfaceElevated }
+        return Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark
                 ? UIColor(white: 0.12, alpha: 1)
                 : .white
@@ -129,13 +130,15 @@ struct ChatComposerView: View {
     }
 
     private var primaryCircleFill: Color {
-        colorScheme == .dark
+        if isAssistantMode { return AssistantDesign.accentSolidFill }
+        return colorScheme == .dark
             ? Color.white
             : Color(red: 0.08, green: 0.09, blue: 0.11)
     }
 
     private var primaryCircleForeground: Color {
-        colorScheme == .dark
+        if isAssistantMode { return .white }
+        return colorScheme == .dark
             ? Color(red: 0.08, green: 0.09, blue: 0.11)
             : Color.white
     }

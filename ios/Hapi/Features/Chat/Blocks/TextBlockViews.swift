@@ -177,11 +177,25 @@ struct AgentTextBlockView: View {
             if assistant {
                 HStack {
                     Spacer()
-                    Button(copied ? "已复制" : "复制结论", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                        pasteboard.copy(block.text); copied = true
-                        Task { try? await Task.sleep(for: .milliseconds(1500)); copied = false }
-                    }.font(.caption).foregroundStyle(.blue).frame(minHeight: 36).buttonStyle(.plain)
+                    Button {
+                        pasteboard.copy(block.text)
+                        withAnimation(.snappy(duration: 0.2)) { copied = true }
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(1500))
+                            withAnimation(.snappy(duration: 0.2)) { copied = false }
+                        }
+                    } label: {
+                        Label(copied ? "已复制" : "复制结论", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(AssistantDesign.accent)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 6)
+                            .background(AssistantDesign.accentSoft, in: Capsule())
+                    }
+                    .buttonStyle(AssistantPressStyle(scale: 0.95))
+                    .sensoryFeedback(.selection, trigger: copied)
                 }
+                .padding(.top, 4)
             }
             #endif
             #if targetEnvironment(macCatalyst)
@@ -292,10 +306,14 @@ struct AgentReasoningBlockView: View {
 
     var body: some View {
         if executionDetailsHidden {
-            Text("正在检索与核验资料…")
-                .font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
-                .accessibilityIdentifier("assistant.progress")
+            HStack(spacing: 8) {
+                AssistantPulseDot(color: AssistantDesign.accent, size: 5)
+                Text("正在检索与核验资料…")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
+            .accessibilityIdentifier("assistant.progress")
         } else { developerBody }
     }
 

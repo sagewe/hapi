@@ -24,9 +24,9 @@ final class AssistantWorkbenchTests: XCTestCase {
             var status = 200
             let body: Data
             if path.hasSuffix("/voice/transcription/providers") { body = Data(#"{"providers":[{"id":"openai-compatible","label":"语音","modes":["standard"]}]}"#.utf8) }
-            else if path.hasSuffix("hub-settings") { body = profile }
+            else if path.hasSuffix("hub-settings") || path.hasSuffix("/settings") { body = profile }
             else if path.hasSuffix("/machines") { body = machines }
-            else if path.hasSuffix("/spawn") { body = Data(#"{"type":"success","sessionId":"investigation"}"#.utf8) }
+            else if path.hasSuffix("/spawn") || (path.hasSuffix("/sessions") && request.httpMethod == "POST") { body = Data(#"{"type":"success","sessionId":"investigation"}"#.utf8) }
             else if path.hasSuffix("/uploads") { body = Data(#"{"success":true,"path":"/test/evidence.pdf"}"#.utf8) }
             else if path.hasSuffix("/messages") && request.httpMethod == "POST" {
                 if failSend { failSend = false; status = 503 }
@@ -79,7 +79,7 @@ final class AssistantWorkbenchTests: XCTestCase {
         let first = await draft.send(); XCTAssertNil(first)
         let second = await draft.send(); XCTAssertEqual(second, "investigation")
         let requests = await http.requests
-        XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/spawn") }.count, 1)
+        XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/spawn") || ($0.url!.path.hasSuffix("/sessions") && $0.httpMethod == "POST") }.count, 1)
         XCTAssertEqual(requests.filter { $0.url!.path.hasSuffix("/uploads") }.count, 1)
         let sends = requests.filter { $0.url!.path.hasSuffix("/messages") }
         let firstBody = try JSONSerialization.jsonObject(with: sends[0].httpBody!) as! [String: Any]

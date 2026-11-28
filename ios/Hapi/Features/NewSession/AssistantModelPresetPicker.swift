@@ -52,17 +52,29 @@ struct AssistantChatPresetCapsule: View {
         return presets.first { $0.matches(model: detail?.model, effort: detail?.effort) }
     }
     var body: some View {
-        AssistantPresetCapsule(label: selected?.label ?? "深度") {
-            guard !applying, !presets.isEmpty else { return }
-            let index = presets.firstIndex { $0.id == selected?.id } ?? -1
-            let next = presets[(index + 1) % presets.count]
-            applying = true
-            Task {
-                do { try await session.api.setModel(sessionId: sessionId, model: .id(next.model), effort: next.effort) }
-                catch { failed = true }
-                applying = false
+        AssistantPresetCapsule(
+            label: selected?.label ?? "深度",
+            presets: presets,
+            selectedID: selected?.id,
+            onSelect: { apply($0) },
+            action: {
+                guard !presets.isEmpty else { return }
+                let index = presets.firstIndex { $0.id == selected?.id } ?? -1
+                apply(presets[(index + 1) % presets.count])
             }
-        }.disabled(applying)
+        )
+        .disabled(applying)
+        .opacity(applying ? 0.65 : 1)
         .alert("切换暂未成功，请稍后重试", isPresented: $failed) { Button("好") {} }
+    }
+
+    private func apply(_ preset: ClientModelPreset) {
+        guard !applying else { return }
+        applying = true
+        Task {
+            do { try await session.api.setModel(sessionId: sessionId, model: .id(preset.model), effort: preset.effort) }
+            catch { failed = true }
+            applying = false
+        }
     }
 }

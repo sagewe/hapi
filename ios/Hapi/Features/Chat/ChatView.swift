@@ -479,51 +479,130 @@ struct ChatView: View {
     private var assistantCaseBar: some View {
         ZStack {
             if !caseFiles.files.isEmpty {
+                let hasReport = caseFiles.files.contains { !$0.isUpload && $0.isPDF }
                 Button { caseFilesOpen = true } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.fill").foregroundStyle(.orange)
+                    HStack(spacing: 8) {
+                        Image(systemName: "folder.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(AssistantDesign.accent)
                         Text("本案资料 · \(caseFiles.files.count)")
-                        if caseFiles.files.contains(where: { !$0.isUpload && $0.isPDF }) { Text("含报告").foregroundStyle(.secondary) }
-                        Image(systemName: "chevron.up").font(.caption2.weight(.semibold))
-                    }.font(.subheadline.weight(.medium)).padding(.horizontal, 16).frame(minHeight: 40)
-                        .background(AssistantDesign.surface, in: Capsule()).overlay(Capsule().stroke(Color.blue.opacity(0.7), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.06), radius: 8, y: 3)
-                }.buttonStyle(.plain)
-                    .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < -12 { caseFilesOpen = true } })
-                    .accessibilityIdentifier("assistant.case-capsule").accessibilityHint("轻点或向上轻挑查看本案资料")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AssistantDesign.ink)
+                        if hasReport {
+                            Text("含报告")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AssistantDesign.accent)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(AssistantDesign.accentSoft, in: Capsule())
+                        }
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(AssistantDesign.inkMuted)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 42)
+                    .assistantGlass(Capsule())
+                }
+                .buttonStyle(AssistantPressStyle(scale: 0.96))
+                .simultaneousGesture(DragGesture(minimumDistance: 8).onEnded { if $0.translation.height < -12 { caseFilesOpen = true } })
+                .accessibilityIdentifier("assistant.case-capsule")
+                .accessibilityHint("轻点或向上轻挑查看本案资料")
             }
             if model.showsJumpToLatest {
                 HStack {
                     Spacer()
                     Button(action: model.jumpToLatest) {
-                        Image(systemName: "arrow.down").font(.subheadline).frame(width: 36, height: 36)
-                            .background(AssistantDesign.surface, in: Circle()).overlay(Circle().stroke(AssistantDesign.border, lineWidth: 0.7))
-                    }.buttonStyle(.plain).accessibilityLabel("回到最新").padding(.trailing, 16)
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(AssistantDesign.ink)
+                            .frame(width: 42, height: 42)
+                            .assistantGlass(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("回到最新")
+                    .padding(.trailing, 14)
                 }
             }
-        }.frame(maxWidth: .infinity, minHeight: 40)
+        }
+        .frame(maxWidth: .infinity, minHeight: 42)
     }
 
     private var assistantHeader: some View {
         let summary = session.sessionStore.sessions.first { $0.id == sessionId }
-        return HStack(alignment: .top, spacing: 10) {
-            Button { onAssistantHistory?() } label: {
-                Image(systemName: "line.3.horizontal").frame(width: 44, height: 44).assistantSurface(radius: 22)
-            }.accessibilityLabel("历史调查")
-            VStack(alignment: .leading, spacing: 5) {
-                Text(model.header.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let summary, AssistantHistoryPresentation.status(summary) == "待回复" {
-                    Text("待回复").font(.caption).foregroundStyle(.orange)
-                } else if let summary, AssistantHistoryPresentation.status(summary) == "调查中" {
-                    HStack(spacing: 5) { ProgressView().controlSize(.mini); Text("调查中").font(.caption) }.foregroundStyle(.secondary)
+        let status = summary.flatMap { AssistantHistoryPresentation.status($0) }
+        return ZStack {
+            HStack(spacing: 8) {
+                Button { onAssistantHistory?() } label: {
+                    AssistantMenuIcon()
+                        .frame(width: 44, height: 44)
+                        .assistantGlass(Circle())
                 }
-            }.padding(.top, 9)
-            HStack(spacing: 2) {
-                Button { onAssistantNew?(false) } label: { Image(systemName: "square.and.pencil").frame(width: 38, height: 44) }.accessibilityLabel("新建调查")
-                moreActionsMenu.frame(width: 32, height: 44)
+                .buttonStyle(.plain)
+                .accessibilityLabel("历史调查")
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 6) {
+                    Button { onAssistantNew?(false) } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AssistantDesign.ink)
+                            .frame(width: 44, height: 44)
+                            .assistantGlass(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("新建调查")
+
+                    moreActionsMenu
+                        .foregroundStyle(AssistantDesign.ink)
+                        .frame(width: 44, height: 44)
+                        .assistantGlass(Circle())
+                }
             }
-        }.foregroundStyle(.primary).padding(.horizontal, 16).padding(.vertical, 10).background(AssistantDesign.background)
+
+            VStack(spacing: 2) {
+                Text(model.header.title)
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(AssistantDesign.ink)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if status == "待回复" {
+                    HStack(spacing: 4) {
+                        Circle().fill(AssistantDesign.risk).frame(width: 5.5, height: 5.5)
+                        Text("待回复").font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(AssistantDesign.risk)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1.5)
+                    .background(AssistantDesign.risk.opacity(0.14), in: Capsule())
+                } else if status == "调查中" {
+                    HStack(spacing: 4) {
+                        AssistantHeaderOrbitingRing(color: AssistantDesign.accent)
+                            .frame(width: 8.5, height: 8.5)
+                        Text("调查中").font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundStyle(AssistantDesign.accent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1.5)
+                    .background(AssistantDesign.accentSoft, in: Capsule())
+                }
+            }
+            .padding(.leading, 56)
+            .padding(.trailing, 104)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .background {
+            ZStack(alignment: .bottom) {
+                Rectangle().fill(.bar)
+                Rectangle().fill(AssistantDesign.background.opacity(0.88))
+                Rectangle().fill(AssistantDesign.border).frame(height: 0.5)
+            }
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+        }
     }
 
     private var moreActionsMenu: some View {

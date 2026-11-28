@@ -10,11 +10,13 @@ private struct CaseFileAction: Identifiable {
     var images = false
     var export = false
 }
+
 struct ZIPRoute: Identifiable {
     let id = UUID()
     let file: GeneratedMediaFile
     let archive: SafeZIP
 }
+
 struct CaseFilesView: View {
     @Bindable var model: CaseFilesModel
     let title: String
@@ -23,16 +25,26 @@ struct CaseFilesView: View {
     @State private var zip: ZIPRoute?
     @State private var action: CaseFileAction?
     @State private var preview: CaseFileAction?
+
     init(model: CaseFilesModel, title: String, initialSelection: Set<String> = []) {
-        self.model = model; self.title = title; _selected = State(initialValue: initialSelection)
+        self.model = model
+        self.title = title
+        _selected = State(initialValue: initialSelection)
     }
+
+    private var deliverablesCount: Int { model.files.filter { !$0.isUpload }.count }
+    private var uploadsCount: Int { model.files.filter(\.isUpload).count }
     private var shown: [CaseFile] { model.files.filter { filter == 0 || (filter == 2) == $0.isUpload } }
     private var picked: [CaseFile] { model.files.filter { selected.contains($0.selectionID) } }
+    private var allShownSelected: Bool { !shown.isEmpty && shown.allSatisfy { selected.contains($0.selectionID) } }
+
     var body: some View {
         Group {
             if let zip {
                 ZIPContentsView(route: zip, title: title, back: { self.zip = nil })
-            } else { inventory }
+            } else {
+                inventory
+            }
         }
         .background(AssistantDesign.background)
         .presentationDetents([.fraction(0.88), .large])
@@ -41,72 +53,197 @@ struct CaseFilesView: View {
         .sheet(item: $action) { value in CaseFilesActivity(files: value.files, images: value.images, export: value.export) }
         .sheet(item: $preview) { value in CaseFilesPreview(file: value.files[0]) }
     }
+
     private var inventory: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("本案资料（\(model.files.count)）").font(.title3.weight(.semibold))
+            HStack(alignment: .center) {
+                HStack(spacing: 8) {
+                    Text("本案资料")
+                        .font(.title3.weight(.bold))
+                    Text("\(model.files.count)")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(AssistantDesign.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(AssistantDesign.accentSoft, in: Capsule())
+                }
                 Spacer(minLength: 8)
-                Text("持久留存").font(.caption.weight(.medium)).foregroundStyle(.green)
-            }.padding(.top, 26).padding(.bottom, 16)
-            Picker("资料分类", selection: $filter) {
-                Text("全部").tag(0); Text("报告与证据").tag(1); Text("送审原件").tag(2)
-            }.pickerStyle(.segmented).padding(.bottom, 16)
+                if !shown.isEmpty {
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            if allShownSelected {
+                                for file in shown { selected.remove(file.selectionID) }
+                            } else {
+                                for file in shown { selected.insert(file.selectionID) }
+                            }
+                        }
+                    } label: {
+                        Text(allShownSelected ? "取消全选" : "全选")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AssistantDesign.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(AssistantDesign.accentSoft, in: Capsule())
+                    }
+                    .buttonStyle(AssistantPressStyle(scale: 0.95))
+                }
+            }
+            .padding(.top, 24)
+            .padding(.bottom, 14)
+
+            HStack(spacing: 6) {
+                filterPill(title: "全部", count: model.files.count, tag: 0)
+                filterPill(title: "报告与证据", count: deliverablesCount, tag: 1)
+                filterPill(title: "送审原件", count: uploadsCount, tag: 2)
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 14)
+
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if shown.isEmpty {
-                        ContentUnavailableView("暂无资料", systemImage: "folder", description: Text("报告、证据和送审原件会保留在这里"))
+                        ContentUnavailableView(
+                            "暂无资料",
+                            systemImage: "folder",
+                            description: Text("报告、证据和送审原件会保留在这里")
+                        )
+                        .padding(.top, 28)
                     }
                     ForEach([false, true], id: \.self) { upload in
                         let group = shown.filter { $0.isUpload == upload }
                         if !group.isEmpty {
-                            Text(upload ? "送审原件" : "报告与证据").font(.subheadline.weight(.medium)).foregroundStyle(.secondary).padding(.top, 4)
-                            ForEach(group.filter { !$0.isImage }.sorted { ($0.selectionID == model.report?.selectionID ? 0 : 1) < ($1.selectionID == model.report?.selectionID ? 0 : 1) }, id: \.selectionID) { file in
-                                CaseFileRow(name: file.fileName, detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file), selected: selected.contains(file.selectionID), label: file.isZIP ? "展开 ›" : "预览", select: { toggle(file.selectionID) }, open: { open(file) })
+                            Text(upload ? "送审原件" : "报告与证据")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 6)
+                                .padding(.leading, 4)
+
+                            let docs = group.filter { !$0.isImage }.sorted {
+                                ($0.selectionID == model.report?.selectionID ? 0 : 1)
+                                    < ($1.selectionID == model.report?.selectionID ? 0 : 1)
                             }
+                            ForEach(docs, id: \.selectionID) { file in
+                                CaseFileRow(
+                                    name: file.fileName,
+                                    detail: ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file),
+                                    isPrimaryReport: file.selectionID == model.report?.selectionID,
+                                    selected: selected.contains(file.selectionID),
+                                    label: file.isZIP ? "展开 ›" : "预览",
+                                    select: { toggle(file.selectionID) },
+                                    open: { open(file) }
+                                )
+                            }
+
                             let images = group.filter(\.isImage)
                             if !images.isEmpty {
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 8)], spacing: 8) {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
                                     ForEach(images, id: \.selectionID) { file in
-                                        CaseImageTile(model: model, file: file, selected: selected.contains(file.selectionID), select: { toggle(file.selectionID) }, open: { open(file) })
+                                        CaseImageTile(
+                                            model: model,
+                                            file: file,
+                                            selected: selected.contains(file.selectionID),
+                                            select: { toggle(file.selectionID) },
+                                            open: { open(file) }
+                                        )
                                     }
                                 }
+                                .padding(.top, 2)
                             }
                         }
                     }
-                }.padding(.bottom, 16)
-            }
-            if let error = model.error {
-                HStack { Text(error).font(.caption).foregroundStyle(.red); Button("重试") { Task { await model.refresh() } } }.padding(.vertical, 8)
-            }
-            HStack(spacing: 8) {
-                thumb("存文件", icon: "arrow.down") { exportFiles(picked.isEmpty ? shown : picked) }
-                if picked.isEmpty {
-                    if let archive = model.files.first(where: \.isZIP) {
-                        thumb("整包发 ZIP", primary: false) { share([archive]) }
-                    }
-                    thumb("转发尽调报告", primary: true) {
-                        if let report = model.report { share([report]) }
-                    }.disabled(!model.files.contains { !$0.isUpload && $0.isPDF })
-                } else {
-                    thumb("转发已选 (\(picked.count))", primary: true) { share(picked) }
                 }
-            }.padding(.vertical, 12).background(AssistantDesign.background)
-            if model.busy { ProgressView("正在准备资料…").font(.caption).padding(.bottom, 6) }
-        }.padding(.horizontal, 16).accessibilityIdentifier("assistant.case-files")
+                .padding(.bottom, 16)
+            }
+
+            if let error = model.error {
+                HStack(spacing: 8) {
+                    Text(error).font(.caption).foregroundStyle(AssistantDesign.report)
+                    Spacer()
+                    Button("重试") { Task { await model.refresh() } }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AssistantDesign.accent)
+                }
+                .padding(.vertical, 8)
+            }
+
+            VStack(spacing: 8) {
+                Divider().overlay(AssistantDesign.border)
+                HStack(spacing: 8) {
+                    compactActionButton("存文件", icon: "arrow.down.to.line") {
+                        exportFiles(picked.isEmpty ? shown : picked)
+                    }
+                    if picked.isEmpty {
+                        if let archive = model.files.first(where: \.isZIP) {
+                            compactActionButton("整包 ZIP", icon: "archivebox") { share([archive]) }
+                        }
+                        primaryActionButton("转发尽调报告", icon: "square.and.arrow.up") {
+                            if let report = model.report { share([report]) }
+                        }
+                        .disabled(!model.files.contains { !$0.isUpload && $0.isPDF })
+                    } else {
+                        primaryActionButton("转发已选 (\(picked.count))", icon: "square.and.arrow.up") {
+                            share(picked)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+                if model.busy {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini).tint(AssistantDesign.accent)
+                        Text("正在准备资料…").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.bottom, 6)
+                }
+            }
+            .background(AssistantDesign.background)
+        }
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier("assistant.case-files")
     }
-    private func toggle(_ id: String) { if !selected.insert(id).inserted { selected.remove(id) } }
+
+    private func filterPill(title: String, count: Int, tag: Int) -> some View {
+        let active = filter == tag
+        return Button {
+            withAnimation(.snappy(duration: 0.2)) { filter = tag }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                if count > 0 {
+                    Text("\(count)").monospacedDigit().opacity(active ? 0.85 : 0.65)
+                }
+            }
+            .font(.caption.weight(active ? .semibold : .medium))
+            .foregroundStyle(active ? .white : .secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(active ? AssistantDesign.accentSolidFill : AssistantDesign.subtleFill, in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggle(_ id: String) {
+        withAnimation(.snappy(duration: 0.18)) {
+            if !selected.insert(id).inserted { selected.remove(id) }
+        }
+    }
+
     private func open(_ file: CaseFile) {
         run {
             let local = try await model.local(file)
             if file.isZIP {
                 let archive = try await Task.detached { try SafeZIP(data: Data(contentsOf: local.url)) }.value
                 zip = ZIPRoute(file: local, archive: archive)
-            } else { preview = CaseFileAction(files: [local]) }
+            } else {
+                preview = CaseFileAction(files: [local])
+            }
         }
     }
+
     private func share(_ files: [CaseFile]) {
         run { action = CaseFileAction(files: try await model.sharing(files, title: title), images: files.allSatisfy(\.isImage)) }
     }
+
     private func exportFiles(_ files: [CaseFile]) {
         guard !files.isEmpty else { return }
         run {
@@ -115,9 +252,15 @@ struct CaseFilesView: View {
             action = CaseFileAction(files: locals, export: true)
         }
     }
+
     private func run(_ work: @escaping @MainActor () async throws -> Void) {
-        guard !model.busy else { return }; model.busy = true; model.error = nil
-        Task { defer { model.busy = false }; do { try await work() } catch { model.error = error.localizedDescription } }
+        guard !model.busy else { return }
+        model.busy = true
+        model.error = nil
+        Task {
+            defer { model.busy = false }
+            do { try await work() } catch { model.error = error.localizedDescription }
+        }
     }
 }
 
@@ -130,133 +273,277 @@ struct ZIPContentsView: View {
     @State private var preview: CaseFileAction?
     @State private var error: String?
     @State private var busy = false
+
     private var picked: [SafeZIP.Entry] { route.archive.entries.filter { selected.contains($0.id) } }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(route.file.url.lastPathComponent).font(.title3.weight(.semibold)).lineLimit(2)
-                    Text("共 \(route.archive.entries.count) 份资料 · 按需预览").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                FileTypeBadge(name: "archive.zip")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(route.file.url.lastPathComponent)
+                        .font(.headline.weight(.semibold))
+                        .lineLimit(2)
+                    Text("共 \(route.archive.entries.count) 份资料")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Spacer(); FileTypeBadge(name: "archive.zip")
-            }.padding(.top, 26).padding(.bottom, 8)
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(route.archive.entries) { entry in
-                        CaseFileRow(name: entry.fileName, detail: entry.path == entry.fileName ? ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file) : entry.path,
-                            selected: selected.contains(entry.id), label: entry.isImage ? "看图" : "预览",
-                            select: { if !selected.insert(entry.id).inserted { selected.remove(entry.id) } },
-                            open: { perform { preview = CaseFileAction(files: try await extract([entry])) } })
-                    }
-                }.padding(.bottom, 12)
+                Spacer(minLength: 4)
             }
-            if let error { Text(error).font(.caption).foregroundStyle(.red) }
-            if busy { ProgressView("正在准备资料…").font(.caption) }
-            HStack(spacing: 8) {
-                thumb("返回资料", icon: "arrow.left", action: back)
-                thumb("存", icon: "arrow.down") { perform { action = CaseFileAction(files: picked.isEmpty ? [route.file] : try await extract(picked), export: true) } }
-                thumb(picked.isEmpty ? "整包转发" : "转发已选 (\(picked.count))", primary: true) {
-                    perform {
-                        if picked.isEmpty { action = CaseFileAction(files: [route.file]) }
-                        else {
-                            let files = try await extract(picked), images = picked.allSatisfy(\.isImage)
-                            let share = files.count > 1 && !images ? [try await CaseFilesModel.package(files, title: title)] : files
-                            action = CaseFileAction(files: share, images: images)
+            .padding(.top, 24)
+            .padding(.bottom, 4)
+
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(route.archive.entries) { entry in
+                        CaseFileRow(
+                            name: entry.fileName,
+                            detail: entry.path == entry.fileName
+                                ? ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file)
+                                : entry.path,
+                            isPrimaryReport: false,
+                            selected: selected.contains(entry.id),
+                            label: entry.isImage ? "看图" : "预览",
+                            select: {
+                                withAnimation(.snappy(duration: 0.18)) {
+                                    if !selected.insert(entry.id).inserted { selected.remove(entry.id) }
+                                }
+                            },
+                            open: { perform { preview = CaseFileAction(files: try await extract([entry])) } }
+                        )
+                    }
+                }
+                .padding(.bottom, 12)
+            }
+
+            if let error { Text(error).font(.caption).foregroundStyle(AssistantDesign.report) }
+            if busy {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini).tint(AssistantDesign.accent)
+                    Text("正在准备资料…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(spacing: 8) {
+                Divider().overlay(AssistantDesign.border)
+                HStack(spacing: 8) {
+                    compactActionButton("返回", icon: "chevron.left", action: back)
+                    compactActionButton("存文件", icon: "arrow.down.to.line") {
+                        perform { action = CaseFileAction(files: picked.isEmpty ? [route.file] : try await extract(picked), export: true) }
+                    }
+                    primaryActionButton(picked.isEmpty ? "整包转发" : "转发已选 (\(picked.count))", icon: "square.and.arrow.up") {
+                        perform {
+                            if picked.isEmpty {
+                                action = CaseFileAction(files: [route.file])
+                            } else {
+                                let files = try await extract(picked)
+                                let images = picked.allSatisfy(\.isImage)
+                                let share = files.count > 1 && !images ? [try await CaseFilesModel.package(files, title: title)] : files
+                                action = CaseFileAction(files: share, images: images)
+                            }
                         }
                     }
                 }
-            }.padding(.vertical, 12)
-        }.padding(.horizontal, 16).accessibilityIdentifier("assistant.zip-contents")
+                .padding(.top, 6)
+                .padding(.bottom, 10)
+            }
+        }
+        .padding(.horizontal, 16)
+        .accessibilityIdentifier("assistant.zip-contents")
         .sheet(item: $action) { value in CaseFilesActivity(files: value.files, images: value.images, export: value.export) }
         .sheet(item: $preview) { value in CaseFilesPreview(file: value.files[0]) }
     }
+
     private func extract(_ entries: [SafeZIP.Entry]) async throws -> [GeneratedMediaFile] {
         let archive = route.archive
         return try await Task.detached(priority: .utility) {
             try entries.map { try GeneratedMediaFile(data: archive.extract($0), fileName: $0.fileName, mimeType: nil) }
         }.value
     }
+
     private func perform(_ work: @escaping @MainActor () async throws -> Void) {
-        guard !busy else { return }; busy = true; error = nil
-        Task { defer { busy = false }; do { try await work() } catch { self.error = error.localizedDescription } }
+        guard !busy else { return }
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do { try await work() } catch { self.error = error.localizedDescription }
+        }
     }
 }
 
 struct FileTypeBadge: View {
     let name: String
+    var compact: Bool = false
+
     private var ext: String { (name as NSString).pathExtension.lowercased() }
     private var color: Color {
-        switch ext { case "pdf": .pink; case "zip": .orange; case "doc", "docx": .blue; case "xls", "xlsx", "csv": .green; default: .purple }
+        switch ext {
+        case "pdf": AssistantDesign.report
+        case "zip": AssistantDesign.risk
+        case "doc", "docx": AssistantDesign.slateBlue
+        case "xls", "xlsx", "csv": AssistantDesign.accent
+        default: AssistantDesign.teal
+        }
     }
+
     var body: some View {
         Text(ext == "docx" ? "DOC" : ext == "xlsx" ? "XLS" : String(ext.uppercased().prefix(4)))
-            .font(.system(size: 11, weight: .semibold)).foregroundStyle(color)
-            .frame(width: 36, height: 38).background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .font(.system(size: compact ? 9.5 : 11, weight: .bold))
+            .foregroundStyle(color)
+            .frame(width: compact ? 30 : 38, height: compact ? 30 : 40)
+            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: compact ? 8 : 11, style: .continuous))
     }
 }
+
 private struct CaseFileRow: View {
-    let name: String; let detail: String; let selected: Bool; let label: String
-    let select: () -> Void; let open: () -> Void
+    let name: String
+    let detail: String
+    let isPrimaryReport: Bool
+    let selected: Bool
+    let label: String
+    let select: () -> Void
+    let open: () -> Void
+
     var body: some View {
         HStack(spacing: 8) {
             selectionCircle(selected, action: select)
             Button(action: open) {
-                HStack(spacing: 10) {
+                HStack(spacing: 11) {
                     FileTypeBadge(name: name)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
-                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(name)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        HStack(spacing: 6) {
+                            if isPrimaryReport {
+                                Text("主报告")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(AssistantDesign.accent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(AssistantDesign.accentSoft, in: Capsule())
+                            }
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
-                    Spacer(minLength: 0)
-                    Text(label).font(.caption.weight(.medium)).foregroundStyle(name.lowercased().hasSuffix(".zip") ? .orange : .blue)
-                }.frame(minHeight: 52).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-        }.padding(10).background(selected ? Color.blue.opacity(0.04) : AssistantDesign.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(selected ? Color.blue : AssistantDesign.border, lineWidth: selected ? 1 : 0.5))
+                    Spacer(minLength: 4)
+                    Text(label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(name.lowercased().hasSuffix(".zip") ? AssistantDesign.risk : AssistantDesign.accent)
+                }
+                .frame(minHeight: 52)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .assistantSurface(radius: 16, selected: selected)
     }
 }
+
 private struct CaseImageTile: View {
-    let model: CaseFilesModel; let file: CaseFile; let selected: Bool
-    let select: () -> Void; let open: () -> Void
+    let model: CaseFilesModel
+    let file: CaseFile
+    let selected: Bool
+    let select: () -> Void
+    let open: () -> Void
     @State private var image: UIImage?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .topTrailing) {
                 Button(action: open) {
-                    Rectangle().fill(Color.blue.opacity(0.07)).frame(height: 88)
+                    Rectangle()
+                        .fill(AssistantDesign.subtleFill)
+                        .frame(height: 92)
                         .overlay {
-                            if let image { Image(uiImage: image).resizable().scaledToFill() }
-                            else { Image(systemName: "photo").foregroundStyle(.secondary) }
-                        }.clipped().clipShape(RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(.plain)
-                selectionCircle(selected, action: select).background(.regularMaterial, in: Circle()).padding(3)
-            }
-            Text(file.fileName).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-        }.padding(6).background(AssistantDesign.surface, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? .blue : AssistantDesign.border, lineWidth: selected ? 1 : 0.5))
-            .task {
-                if let local = try? await model.local(file) {
-                    image = await Task.detached { UIImage(contentsOfFile: local.url.path)?.preparingThumbnail(of: CGSize(width: 300, height: 220)) }.value
+                            if let image {
+                                Image(uiImage: image).resizable().scaledToFill()
+                            } else {
+                                Image(systemName: "photo").foregroundStyle(.secondary)
+                            }
+                        }
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
+                .buttonStyle(.plain)
+                selectionCircle(selected, action: select)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .padding(4)
             }
+            Text(file.fileName)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 2)
+        }
+        .padding(6)
+        .assistantSurface(radius: 14, selected: selected)
+        .task {
+            if let local = try? await model.local(file) {
+                image = await Task.detached {
+                    UIImage(contentsOfFile: local.url.path)?.preparingThumbnail(of: CGSize(width: 300, height: 220))
+                }.value
+            }
+        }
     }
 }
+
 @MainActor private func selectionCircle(_ selected: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-        Image(systemName: selected ? "checkmark.circle.fill" : "circle").font(.system(size: 22)).foregroundStyle(selected ? Color.blue : Color.secondary.opacity(0.45)).frame(width: 32, height: 36)
-    }.buttonStyle(.plain).accessibilityLabel(selected ? "取消选择" : "选择资料")
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 21, weight: .medium))
+            .foregroundStyle(selected ? AssistantDesign.accent : Color.secondary.opacity(0.45))
+            .frame(width: 30, height: 34)
+    }
+    .buttonStyle(.plain)
+    .sensoryFeedback(.selection, trigger: selected)
+    .accessibilityLabel(selected ? "取消选择" : "选择资料")
 }
-@MainActor private func thumb(_ title: String, icon: String? = nil, primary: Bool = false, action: @escaping () -> Void) -> some View {
+
+@MainActor private func compactActionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-        HStack(spacing: 4) { if let icon { Image(systemName: icon) }; Text(title).lineLimit(1).minimumScaleFactor(0.75) }
-            .font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(primary ? Color.white : Color.primary)
-            .background(primary ? Color.blue : AssistantDesign.surface, in: Capsule())
-            .overlay(Capsule().stroke(primary ? .clear : AssistantDesign.border, lineWidth: 0.7))
-    }.buttonStyle(.plain)
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.caption.weight(.semibold))
+            Text(title).lineLimit(1)
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+        .assistantSurface(radius: 22)
+    }
+    .buttonStyle(AssistantPressStyle(scale: 0.96))
 }
+
+@MainActor private func primaryActionButton(_ title: String, icon: String? = nil, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        HStack(spacing: 6) {
+            if let icon { Image(systemName: icon).font(.subheadline.weight(.semibold)) }
+            Text(title).lineLimit(1).minimumScaleFactor(0.85)
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(AssistantDesign.accentGradient, in: Capsule())
+        .shadow(color: AssistantDesign.accent.opacity(0.24), radius: 8, y: 3)
+    }
+    .buttonStyle(AssistantPressStyle(scale: 0.97))
+}
+
 private struct CaseFilesActivity: UIViewControllerRepresentable {
-    let files: [GeneratedMediaFile]; let images: Bool; let export: Bool
+    let files: [GeneratedMediaFile]
+    let images: Bool
+    let export: Bool
     func makeUIViewController(context: Context) -> UIViewController {
         if export { return UIDocumentPickerViewController(forExporting: files.map(\.url), asCopy: true) }
         let items: [Any] = images ? files.map { UIImage(contentsOfFile: $0.url.path) as Any? ?? $0.url as Any } : files.map { $0.url as Any }
@@ -264,17 +551,32 @@ private struct CaseFilesActivity: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }
+
 private struct CaseFilesPreview: View {
     let file: GeneratedMediaFile
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(spacing: 0) {
-            if let image = UIImage(contentsOfFile: file.url.path) { ZoomableImageView(image: image) {} }
-            else { CaseQuickLook(file: file) }
-            Button("返回资料", systemImage: "arrow.down") { dismiss() }.frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.bordered)
-        }.presentationDragIndicator(.visible)
+            if let image = UIImage(contentsOfFile: file.url.path) {
+                ZoomableImageView(image: image) {}
+            } else {
+                CaseQuickLook(file: file)
+            }
+            Button {
+                dismiss()
+            } label: {
+                Label("返回资料", systemImage: "chevron.down")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(AssistantDesign.surface)
+            }
+            .buttonStyle(.plain)
+        }
+        .presentationDragIndicator(.visible)
     }
 }
+
 private struct CaseQuickLook: UIViewControllerRepresentable {
     let file: GeneratedMediaFile
     final class Coordinator: NSObject, QLPreviewControllerDataSource {
@@ -284,7 +586,11 @@ private struct CaseQuickLook: UIViewControllerRepresentable {
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> any QLPreviewItem { file.url as NSURL }
     }
     func makeCoordinator() -> Coordinator { Coordinator(file: file) }
-    func makeUIViewController(context: Context) -> QLPreviewController { let c = QLPreviewController(); c.dataSource = context.coordinator; return c }
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let c = QLPreviewController()
+        c.dataSource = context.coordinator
+        return c
+    }
     func updateUIViewController(_ controller: QLPreviewController, context: Context) {}
 }
 
@@ -293,6 +599,7 @@ struct CaseFileAccess {
     var mainReportID: String? = nil
     let open: () -> Void
 }
+
 private struct CaseFileAccessKey: EnvironmentKey { static let defaultValue: CaseFileAccess? = nil }
 extension EnvironmentValues {
     var caseFileAccess: CaseFileAccess? {
@@ -300,4 +607,5 @@ extension EnvironmentValues {
         set { self[CaseFileAccessKey.self] = newValue }
     }
 }
+
 extension Notification.Name { static let assistantImportFiles = Notification.Name("assistantImportFiles") }
