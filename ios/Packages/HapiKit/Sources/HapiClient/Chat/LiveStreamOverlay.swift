@@ -9,9 +9,12 @@ import HapiProtocol
 /// - While `/stream` is connected, Phase A `meta.streaming == true` rows whose
 ///   segment is actively covered by `/stream` (or already sealed) are suppressed
 ///   so there are no duplicate bubbles or flicker.
-/// - When a user joins mid-turn and a Phase A `meta.streaming == true` row
-///   already has a longer accumulated prefix than `/stream`'s post-join deltas,
-///   the longer Phase A snapshot wins for that segment until sealed.
+/// - When a user joins mid-turn, any Phase A `meta.streaming == true` segment
+///   already present on `/stream` connect is recorded in
+///   `preExistingStreamingSegmentIds` and stays Phase-A-authoritative until
+///   sealed (or `turn_done`), even if fast post-join deltas exceed a short
+///   prefix inside an 800ms Phase A throttle interval. Newly opened segments
+///   stream at 60fps from `/stream`.
 /// - On a sealed `WindowMessage` carrying `meta.segmentId` (with `meta.streaming`
 ///   absent/false) or on `turn_done`, the corresponding live overlay segment is
 ///   dropped immediately for a seamless handoff.
@@ -29,7 +32,9 @@ public struct LiveStreamOverlay: Equatable, Sendable {
 
     public private(set) var isConnected = false
     public private(set) var segments: [Segment] = []
+    public private(set) var preExistingStreamingSegmentIds: Set<String> = []
     private var sealedSegmentIds: Set<String> = []
+    private var awaitingInitialWindowSnapshot = false
 
     public init() {}
 
@@ -40,36 +45,50 @@ public struct LiveStreamOverlay: Equatable, Sendable {
     /// Apply one `/stream` lifecycle or wire event. Returns `true` when visible
     /// overlay output may have changed.
     @discardableResult
-    public mutating func apply(_ event: SessionStreamClientEvent, now: Int) -> Bool {
+    public mutating func apply(
+        _ event: SessionStreamClientEvent,
+        now: Int,
+        persistedMessages: [WindowMessage] = []
+    ) -> Bool {
         switch event {
         case .connected:
-            let changed = !isConnected
+            guard !isConnected else { return false }
             isConnected = true
-            return changed
+            capturePreExistingStreaming(from: persistedMessages)
+            return true
 
         case .disconnected:
             let changed = isConnected || !segments.isEmpty
             isConnected = false
             segments.removeAll()
             sealedSegmentIds.removeAll()
+            preExistingStreamingSegmentIds.removeAll()
+            awaitingInitialWindowSnapshot = false
             return changed
 
         case .event(let wire):
             switch wire {
             case .connected:
-                let changed = !isConnected
+                guard !isConnected else { return false }
                 isConnected = true
-                return changed
+                capturePreExistingStreaming(from: persistedMessages)
+                return true
 
             case .thinkingDelta(let turnId, let segmentId, let delta):
                 guard !delta.isEmpty else { return false }
-                if let segmentId, sealedSegmentIds.contains(segmentId) { return false }
+                if let segmentId,
+                   sealedSegmentIds.contains(segmentId) || preExistingStreamingSegmentIds.contains(segmentId) {
+                    return false
+                }
                 appendDelta(turnId: turnId, segmentId: segmentId, thinking: delta, text: nil, now: now)
                 return true
 
             case .textDelta(let turnId, let segmentId, let delta):
                 guard !delta.isEmpty else { return false }
-                if let segmentId, sealedSegmentIds.contains(segmentId) { return false }
+                if let segmentId,
+                   sealedSegmentIds.contains(segmentId) || preExistingStreamingSegmentIds.contains(segmentId) {
+                    return false
+                }
                 appendDelta(turnId: turnId, segmentId: segmentId, thinking: nil, text: delta, now: now)
                 return true
 
@@ -80,6 +99,7 @@ public struct LiveStreamOverlay: Equatable, Sendable {
                 } else {
                     segments.removeAll { $0.turnId == turnId }
                 }
+                preExistingStreamingSegmentIds.removeAll()
                 if segments.isEmpty {
                     sealedSegmentIds.removeAll()
                 }
@@ -98,32 +118,70 @@ public struct LiveStreamOverlay: Equatable, Sendable {
     }
 
     /// Reconcile against authoritative window messages (called when `windowState`
-    /// updates). Drops any live segment whose sealed `WindowMessage` has landed.
+    /// updates). Drops any live segment whose sealed `WindowMessage` has landed,
+    /// clears sealed IDs from `preExistingStreamingSegmentIds`, and captures
+    /// mid-turn pre-existing streaming rows if the initial window landed after
+    /// `/stream` connected.
     @discardableResult
     public mutating func reconcile(with messages: [WindowMessage]) -> Bool {
-        guard !segments.isEmpty else { return false }
         var removedAny = false
+        var sealedNow = Set<String>()
         for row in messages {
             guard !Self.isStreamingRow(row), let segmentId = Self.segmentId(of: row) else { continue }
+            sealedNow.insert(segmentId)
             sealedSegmentIds.insert(segmentId)
+            preExistingStreamingSegmentIds.remove(segmentId)
             let before = segments.count
             segments.removeAll { $0.segmentId == segmentId }
             if segments.count != before {
                 removedAny = true
             }
         }
-        if segments.isEmpty {
-            sealedSegmentIds.removeAll()
+
+        if isConnected && !messages.isEmpty {
+            for row in messages where Self.isStreamingRow(row) {
+                guard let sid = Self.segmentId(of: row),
+                      !sealedNow.contains(sid),
+                      !sealedSegmentIds.contains(sid),
+                      !preExistingStreamingSegmentIds.contains(sid) else {
+                    continue
+                }
+                let live = segments.first { $0.segmentId == sid }
+                let persistedLen = Self.assistantTextLength(of: row)
+                let shouldProtect: Bool
+                if awaitingInitialWindowSnapshot {
+                    shouldProtect = (live == nil) || (persistedLen > (live?.totalLength ?? 0))
+                } else if let live {
+                    shouldProtect = persistedLen > live.totalLength
+                } else {
+                    shouldProtect = false
+                }
+                if shouldProtect {
+                    preExistingStreamingSegmentIds.insert(sid)
+                    let before = segments.count
+                    segments.removeAll { $0.segmentId == sid }
+                    if segments.count != before {
+                        removedAny = true
+                    }
+                }
+            }
+            if awaitingInitialWindowSnapshot {
+                awaitingInitialWindowSnapshot = false
+            }
         }
+
         return removedAny
     }
 
     /// Clear all active overlay segments (e.g. when session becomes idle or stops).
     @discardableResult
     public mutating func reset() -> Bool {
-        let changed = !segments.isEmpty || !sealedSegmentIds.isEmpty
+        let changed = !segments.isEmpty || !sealedSegmentIds.isEmpty || !preExistingStreamingSegmentIds.isEmpty
+        isConnected = false
         segments.removeAll()
         sealedSegmentIds.removeAll()
+        preExistingStreamingSegmentIds.removeAll()
+        awaitingInitialWindowSnapshot = false
         return changed
     }
 
@@ -131,19 +189,26 @@ public struct LiveStreamOverlay: Equatable, Sendable {
     public func applying(to messages: [WindowMessage]) -> [WindowMessage] {
         guard isConnected, hasActiveContent else { return messages }
 
-        // Index active live segments by segmentId and track whether any unkeyed
-        // fallback segment exists.
+        // Index active live segments by segmentId and track any unkeyed fallback
+        // segment length.
         var liveBySegmentId: [String: Segment] = [:]
+        var unkeyedLiveMaxLength = 0
         var hasUnkeyedLive = false
         for seg in segments where seg.totalLength > 0 {
             if let sid = seg.segmentId {
-                liveBySegmentId[sid] = seg
+                if !preExistingStreamingSegmentIds.contains(sid) && !sealedSegmentIds.contains(sid) {
+                    liveBySegmentId[sid] = seg
+                }
             } else {
                 hasUnkeyedLive = true
+                if seg.totalLength > unkeyedLiveMaxLength {
+                    unkeyedLiveMaxLength = seg.totalLength
+                }
             }
         }
 
         var suppressedOverlayKeys = Set<String>()
+        var suppressUnkeyedOverlays = false
         var filtered: [WindowMessage] = []
         filtered.reserveCapacity(messages.count + segments.count)
 
@@ -153,6 +218,13 @@ public struct LiveStreamOverlay: Equatable, Sendable {
                 continue
             }
             if let sid = Self.segmentId(of: row) {
+                if preExistingStreamingSegmentIds.contains(sid) {
+                    if let live = liveBySegmentId[sid] {
+                        suppressedOverlayKeys.insert(live.key)
+                    }
+                    filtered.append(row)
+                    continue
+                }
                 if sealedSegmentIds.contains(sid) {
                     continue
                 }
@@ -168,8 +240,12 @@ public struct LiveStreamOverlay: Equatable, Sendable {
                 }
                 filtered.append(row)
             } else if hasUnkeyedLive {
+                if Self.assistantTextLength(of: row) > unkeyedLiveMaxLength {
+                    suppressUnkeyedOverlays = true
+                    filtered.append(row)
+                }
                 // Streaming row without segmentId while live overlay is active:
-                // suppress duplicate Phase A bubble.
+                // suppress duplicate Phase A bubble unless Phase A is longer.
                 continue
             } else {
                 filtered.append(row)
@@ -179,12 +255,35 @@ public struct LiveStreamOverlay: Equatable, Sendable {
         let baseSeq = (filtered.compactMap(\.seq).max() ?? 0) + 100_000
         for (idx, seg) in segments.enumerated() where seg.totalLength > 0 {
             if suppressedOverlayKeys.contains(seg.key) { continue }
+            if let sid = seg.segmentId {
+                if preExistingStreamingSegmentIds.contains(sid) || sealedSegmentIds.contains(sid) {
+                    continue
+                }
+            } else if suppressUnkeyedOverlays {
+                continue
+            }
             filtered.append(Self.makeWindowMessage(from: seg, syntheticSeq: baseSeq + idx))
         }
         return filtered
     }
 
     // MARK: - Helpers
+
+    private mutating func capturePreExistingStreaming(from messages: [WindowMessage]) {
+        preExistingStreamingSegmentIds.removeAll()
+        for row in messages where Self.isStreamingRow(row) {
+            if let sid = Self.segmentId(of: row), !sealedSegmentIds.contains(sid) {
+                preExistingStreamingSegmentIds.insert(sid)
+            }
+        }
+        if !preExistingStreamingSegmentIds.isEmpty {
+            segments.removeAll { seg in
+                guard let sid = seg.segmentId else { return false }
+                return preExistingStreamingSegmentIds.contains(sid)
+            }
+        }
+        awaitingInitialWindowSnapshot = messages.isEmpty
+    }
 
     private mutating func appendDelta(
         turnId: String,

@@ -787,7 +787,12 @@ class ChatViewModel(
             streamJob = sessionStreamSource?.let { source ->
                 scope.launch {
                     source.stream(sessionId).collect { event ->
-                        streamBuffer.update { it.apply(event, now()) }
+                        val persisted = if (event is SessionStreamEvent.Connected) {
+                            store.state.value.messages.map { it.wire }
+                        } else {
+                            emptyList()
+                        }
+                        streamBuffer.update { it.apply(event, now(), persisted) }
                         if (event is SessionStreamEvent.Error && event.resync) {
                             runCatching { store.syncTail(ensureAfterCurrent = true) }
                         }

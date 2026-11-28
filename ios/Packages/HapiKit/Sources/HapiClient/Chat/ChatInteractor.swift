@@ -423,7 +423,11 @@ public final class ChatInteractor {
             let stream = await client.start()
             for await event in stream {
                 guard let self, self.isActive, !Task.isCancelled else { return }
-                if self.liveStreamOverlay.apply(event, now: self.now()) {
+                if self.liveStreamOverlay.apply(
+                    event,
+                    now: self.now(),
+                    persistedMessages: self.windowState?.messages ?? []
+                ) {
                     if let messages = self.windowState?.messages {
                         _ = self.liveStreamOverlay.reconcile(with: messages)
                     }

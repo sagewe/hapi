@@ -141,6 +141,121 @@ class ReinsPhaseBTest {
     }
 
     @Test
+    fun `mid-turn join preserves 3000-char Phase A prefix, concurrent streaming rows, and streams new segments at 60fps`() {
+        val prefix3000 = "A".repeat(3000)
+        val preExistingText = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-mid-text","seq":10,"role":"assistant","created_at":2000,
+                "blocks":[{"type":"text","text":"$prefix3000"}],
+                "meta":{"streaming":true,"segmentId":"seg-mid-text"}
+            }""",
+        )
+        val concurrentThinking = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-mid-think","seq":9,"role":"assistant","created_at":1990,
+                "blocks":[{"type":"thinking","thinking":"Inspecting codebase..."}],
+                "meta":{"streaming":true,"segmentId":"seg-mid-think"}
+            }""",
+        )
+
+        // Connect mid-turn with both pre-existing streaming rows already in the window.
+        var buffer = SessionStreamBuffer()
+            .apply(SessionStreamEvent.Connected, 2001L, listOf(concurrentThinking, preExistingText))
+            // Duplicate wire {"type":"connected"} frame must not wipe preExistingStreamingSegmentIds.
+            .apply(SessionStreamEvent.Connected, 2002L, listOf(concurrentThinking, preExistingText))
+
+        assertTrue("seg-mid-text" in buffer.preExistingStreamingSegmentIds)
+        assertTrue("seg-mid-think" in buffer.preExistingStreamingSegmentIds)
+
+        // Even a 1-token delta or a >3000-char fast burst for seg-mid-text must NOT wipe out Phase A.
+        buffer = buffer
+            .apply(SessionStreamEvent.TextDelta("t1", "seg-mid-text", "!"), 2003L)
+            .apply(SessionStreamEvent.TextDelta("t1", "seg-mid-text", "B".repeat(4000)), 2004L)
+
+        assertFalse(buffer.shouldSuppressPersisted(preExistingText))
+        assertFalse(buffer.shouldSuppressPersisted(concurrentThinking))
+        assertEquals(emptyList(), buffer.overlayMessages(listOf(concurrentThinking, preExistingText)))
+
+        // A brand-new segment opens later in the same turn -> streams at 60fps from /stream
+        // without hiding concurrent pre-existing thinking/text rows!
+        buffer = buffer
+            .apply(SessionStreamEvent.TextDelta("t1", "seg-new", "Fresh 60fps "), 2010L)
+            .apply(SessionStreamEvent.TextDelta("t1", "seg-new", "segment"), 2011L)
+
+        val newSegmentPhaseA = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-new","seq":11,"role":"assistant","created_at":2012,
+                "blocks":[{"type":"text","text":"Fresh 60fps "}],
+                "meta":{"streaming":true,"segmentId":"seg-new"}
+            }""",
+        )
+        // Only seg-new's Phase A row is suppressed; pre-existing thinking & text rows stay visible!
+        assertFalse(buffer.shouldSuppressPersisted(concurrentThinking))
+        assertFalse(buffer.shouldSuppressPersisted(preExistingText))
+        assertTrue(buffer.shouldSuppressPersisted(newSegmentPhaseA))
+
+        val overlay = buffer.overlayMessages(listOf(concurrentThinking, preExistingText, newSegmentPhaseA))
+        assertEquals(1, overlay.size)
+        val reducedOverlay = reduceChatBlocks(overlay, null)
+        assertEquals("Fresh 60fps segment", assertIs<AgentTextBlock>(reducedOverlay.blocks.single()).text)
+
+        // Sealing seg-mid-text removes it from preExistingStreamingSegmentIds while seg-mid-think stays tracked.
+        val sealedMidText = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-mid-text","seq":10,"role":"assistant","created_at":2000,
+                "blocks":[{"type":"text","text":"${prefix3000}!"}],
+                "meta":{"streaming":false,"segmentId":"seg-mid-text"}
+            }""",
+        )
+        buffer = buffer.reconcileSealed(listOf(concurrentThinking, sealedMidText, newSegmentPhaseA))
+        assertFalse("seg-mid-text" in buffer.preExistingStreamingSegmentIds)
+        assertTrue("seg-mid-think" in buffer.preExistingStreamingSegmentIds)
+
+        // turn_done clears remaining pre-existing tracking and active overlays for t1.
+        buffer = buffer.apply(SessionStreamEvent.TurnDone("t1", aborted = false), 2020L)
+        assertTrue(buffer.preExistingStreamingSegmentIds.isEmpty())
+        assertFalse(buffer.hasActiveOverlay)
+    }
+
+    @Test
+    fun `cold-open mid-turn join protects 3000-char Phase A prefix even when stream connects before window sync`() {
+        // /stream connects while persisted window is still empty and delivers 1-token tail delta first.
+        var buffer = SessionStreamBuffer()
+            .apply(SessionStreamEvent.Connected, 3000L, emptyList())
+            .apply(SessionStreamEvent.TextDelta("t1", "seg-cold", "x"), 3001L)
+
+        val phaseA3000 = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-cold","seq":20,"role":"assistant","created_at":2990,
+                "blocks":[{"type":"text","text":"${"Z".repeat(3000)}"}],
+                "meta":{"streaming":true,"segmentId":"seg-cold"}
+            }""",
+        )
+        val unrelatedThinking = HapiJson.decodeFromString<DecryptedMessage>(
+            """{
+                "id":"m-think-2","seq":19,"role":"assistant","created_at":2980,
+                "blocks":[{"type":"thinking","thinking":"Reasoning still streaming"}],
+                "meta":{"streaming":true,"segmentId":"seg-think-2"}
+            }""",
+        )
+
+        // Even before reconcileSealed runs, shouldSuppressPersisted & overlayMessages must preserve Phase A
+        // and never hide unrelated streaming thinking rows.
+        assertFalse(buffer.shouldSuppressPersisted(phaseA3000))
+        assertFalse(buffer.shouldSuppressPersisted(unrelatedThinking))
+        assertEquals(emptyList(), buffer.overlayMessages(listOf(unrelatedThinking, phaseA3000)))
+
+        // Once window sync reconciles, seg-cold is promoted to preExistingStreamingSegmentIds so
+        // even a subsequent 5000-char burst stays Phase-A-authoritative until sealed.
+        buffer = buffer.reconcileSealed(listOf(unrelatedThinking, phaseA3000))
+        assertTrue("seg-cold" in buffer.preExistingStreamingSegmentIds)
+        assertTrue("seg-think-2" in buffer.preExistingStreamingSegmentIds)
+        buffer = buffer.apply(SessionStreamEvent.TextDelta("t1", "seg-cold", "Y".repeat(5000)), 3002L)
+        assertFalse(buffer.shouldSuppressPersisted(phaseA3000))
+        assertEquals(emptyList(), buffer.overlayMessages(listOf(unrelatedThinking, phaseA3000)))
+    }
+
+    @Test
     fun `phase A in-place StoredMessage id upsert replaces existing row without duplicating`() {
         val initial = HapiJson.decodeFromString<DecryptedMessage>(
             """{"id":"m-1","seq":1,"role":"assistant","created_at":1000,"blocks":[{"type":"text","text":"Hel"}],"meta":{"streaming":true}}""",

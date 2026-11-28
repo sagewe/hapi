@@ -39,6 +39,7 @@ export type StreamOverlaySegment = {
 export type StreamOverlaySnapshot = {
     segments: readonly StreamOverlaySegment[]
     isConnected: boolean
+    preExistingStreamingSegmentIds?: readonly string[]
 }
 
 const EMPTY_SNAPSHOT: StreamOverlaySnapshot = {
@@ -140,6 +141,21 @@ function getAssistantOutputBlocks(message: DecryptedMessage): UnknownRecord[] | 
     const msg = data.message
     if (!isRecord(msg) || !Array.isArray(msg.content)) return null
     return msg.content.filter(isRecord)
+}
+
+function getAssistantContentLength(message: DecryptedMessage): number {
+    const blocks = getAssistantOutputBlocks(message)
+    if (!blocks) return 0
+    let total = 0
+    for (const blk of blocks) {
+        if (blk.type === 'text' && typeof blk.text === 'string') {
+            total += blk.text.length
+        }
+        if (blk.type === 'thinking' && typeof blk.thinking === 'string') {
+            total += blk.thinking.length
+        }
+    }
+    return total
 }
 
 function replaceAssistantOutputBlocks(
@@ -270,10 +286,16 @@ export function mergeStreamOverlayMessages(
             sealedSegmentIds.add(segmentId)
         }
     }
+    const preExistingSegmentIds = new Set<string>(overlay.preExistingStreamingSegmentIds ?? [])
 
     const overlayBySegmentAndKind = new Map<string, StreamOverlaySegment>()
     for (const seg of overlay.segments) {
-        if (seg.segmentId !== null && seg.text.length > 0 && !sealedSegmentIds.has(seg.segmentId)) {
+        if (
+            seg.segmentId !== null
+            && seg.text.length > 0
+            && !sealedSegmentIds.has(seg.segmentId)
+            && !preExistingSegmentIds.has(seg.segmentId)
+        ) {
             overlayBySegmentAndKind.set(`${seg.segmentId}:${seg.kind}`, seg)
         }
     }
@@ -359,7 +381,7 @@ export function mergeStreamOverlayMessages(
             continue
         }
         if (seg.segmentId !== null) {
-            if (sealedSegmentIds.has(seg.segmentId)) {
+            if (sealedSegmentIds.has(seg.segmentId) || preExistingSegmentIds.has(seg.segmentId)) {
                 continue
             }
         } else if (hasSealedAssistantCoverage(messages, seg)) {
@@ -394,6 +416,8 @@ export function useSessionStream(options: {
     const sessionIdRef = useRef(options.sessionId)
     const segmentsRef = useRef<Map<string, StreamOverlaySegment>>(new Map())
     const sealedSegmentIdsRef = useRef<Set<string>>(new Set())
+    const preExistingStreamingSegmentIdsRef = useRef<Set<string>>(new Set())
+    const awaitingInitialWindowSnapshotRef = useRef(false)
     const isConnectedRef = useRef(false)
     const messagesRef = useRef(options.messages)
     const onResyncRef = useRef(options.onResync)
@@ -503,41 +527,94 @@ export function useSessionStream(options: {
         }
     }
 
+    const snapshotPreExistingStreamingSegments = (messages: readonly DecryptedMessage[]) => {
+        const preExisting = preExistingStreamingSegmentIdsRef.current
+        preExisting.clear()
+        for (const msg of messages) {
+            const { streaming, segmentId } = getMessageStreamingMeta(msg)
+            if (streaming && segmentId !== null && !sealedSegmentIdsRef.current.has(segmentId)) {
+                preExisting.add(segmentId)
+            }
+        }
+        if (preExisting.size > 0) {
+            for (const [key, seg] of segmentsRef.current) {
+                if (seg.segmentId !== null && preExisting.has(seg.segmentId)) {
+                    segmentsRef.current.delete(key)
+                }
+            }
+        }
+        awaitingInitialWindowSnapshotRef.current = messages.length === 0
+    }
+
     // Reset per-session sealed history when session changes.
     useEffect(() => {
         sealedSegmentIdsRef.current.clear()
+        preExistingStreamingSegmentIdsRef.current.clear()
+        awaitingInitialWindowSnapshotRef.current = false
         clearAllSegments()
         isConnectedRef.current = false
         setSnapshotState({ sessionId: options.sessionId, snapshot: EMPTY_SNAPSHOT })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [options.sessionId])
 
-    // Prune overlay segments immediately when their sealed StoredMessage lands via /v1/events or REST.
+    // Prune overlay segments immediately when their sealed StoredMessage lands via /v1/events or REST,
+    // clear sealed IDs from preExistingStreamingSegmentIds, and protect mid-turn streaming rows if
+    // the initial window snapshot arrives right after /stream connects.
     useEffect(() => {
-        if (segmentsRef.current.size === 0) {
-            // Still record sealed segment IDs so late out-of-order stream deltas cannot resurrect them.
-            for (const msg of options.messages) {
-                const { streaming, segmentId } = getMessageStreamingMeta(msg)
-                if (!streaming && segmentId !== null) {
-                    recordSealedSegment(segmentId)
-                }
-            }
-            return
-        }
-
         const sealedNow = new Set<string>()
         for (const msg of options.messages) {
             const { streaming, segmentId } = getMessageStreamingMeta(msg)
             if (!streaming && segmentId !== null) {
                 sealedNow.add(segmentId)
                 recordSealedSegment(segmentId)
+                preExistingStreamingSegmentIdsRef.current.delete(segmentId)
             }
+        }
+
+        if (isConnectedRef.current && options.messages.length > 0) {
+            for (const msg of options.messages) {
+                const { streaming, segmentId } = getMessageStreamingMeta(msg)
+                if (
+                    !streaming
+                    || segmentId === null
+                    || sealedNow.has(segmentId)
+                    || sealedSegmentIdsRef.current.has(segmentId)
+                    || preExistingStreamingSegmentIdsRef.current.has(segmentId)
+                ) {
+                    continue
+                }
+                let hasLive = false
+                let liveLen = 0
+                for (const seg of segmentsRef.current.values()) {
+                    if (seg.segmentId === segmentId) {
+                        hasLive = true
+                        liveLen += seg.text.length
+                    }
+                }
+                const persistedLen = getAssistantContentLength(msg)
+                const shouldProtect = awaitingInitialWindowSnapshotRef.current
+                    ? (!hasLive || persistedLen > liveLen)
+                    : (hasLive && persistedLen > liveLen)
+                if (shouldProtect) {
+                    preExistingStreamingSegmentIdsRef.current.add(segmentId)
+                }
+            }
+            if (awaitingInitialWindowSnapshotRef.current) {
+                awaitingInitialWindowSnapshotRef.current = false
+            }
+        }
+
+        if (segmentsRef.current.size === 0) {
+            return
         }
 
         let changed = false
         for (const [key, seg] of segmentsRef.current) {
             if (seg.segmentId !== null) {
-                if (sealedNow.has(seg.segmentId)) {
+                if (
+                    sealedNow.has(seg.segmentId)
+                    || preExistingStreamingSegmentIdsRef.current.has(seg.segmentId)
+                ) {
                     segmentsRef.current.delete(key)
                     changed = true
                 }
@@ -564,20 +641,23 @@ export function useSessionStream(options: {
     // mark remaining open segments for grace cleanup so nothing leaks across turns.
     useEffect(() => {
         const isThinking = options.isThinking ?? false
-        if (prevThinkingRef.current && !isThinking && segmentsRef.current.size > 0) {
-            const now = Date.now()
-            const affectedTurns = new Set<string>()
-            for (const seg of segmentsRef.current.values()) {
-                if (seg.completedAt === null) {
-                    seg.completedAt = now
-                    affectedTurns.add(seg.turnId)
+        if (prevThinkingRef.current && !isThinking) {
+            preExistingStreamingSegmentIdsRef.current.clear()
+            if (segmentsRef.current.size > 0) {
+                const now = Date.now()
+                const affectedTurns = new Set<string>()
+                for (const seg of segmentsRef.current.values()) {
+                    if (seg.completedAt === null) {
+                        seg.completedAt = now
+                        affectedTurns.add(seg.turnId)
+                    }
                 }
-            }
-            for (const turnId of affectedTurns) {
-                scheduleTurnGraceCleanup(turnId)
-            }
-            if (affectedTurns.size > 0) {
-                publishSnapshotNow()
+                for (const turnId of affectedTurns) {
+                    scheduleTurnGraceCleanup(turnId)
+                }
+                if (affectedTurns.size > 0) {
+                    publishSnapshotNow()
+                }
             }
         }
         prevThinkingRef.current = isThinking
@@ -603,6 +683,8 @@ export function useSessionStream(options: {
             reconnectAttemptRef.current = 0
             reconnectDeferredRef.current = false
             isConnectedRef.current = false
+            preExistingStreamingSegmentIdsRef.current.clear()
+            awaitingInitialWindowSnapshotRef.current = false
             clearAllSegments()
             publishSnapshotNow()
             return
@@ -651,25 +733,38 @@ export function useSessionStream(options: {
                 eventSourceRef.current = null
             }
             isConnectedRef.current = false
+            preExistingStreamingSegmentIdsRef.current.clear()
+            awaitingInitialWindowSnapshotRef.current = false
             clearAllSegments()
             publishSnapshotNow()
             scheduleReconnect()
         }
 
+        const markConnected = () => {
+            reconnectAttemptRef.current = 0
+            reconnectDeferredRef.current = false
+            if (!isConnectedRef.current) {
+                isConnectedRef.current = true
+                snapshotPreExistingStreamingSegments(messagesRef.current)
+                publishSnapshotNow()
+            }
+        }
+
         const handleFrame = (frame: SessionStreamFrame) => {
             switch (frame.type) {
                 case 'connected': {
-                    reconnectAttemptRef.current = 0
-                    reconnectDeferredRef.current = false
-                    if (!isConnectedRef.current) {
-                        isConnectedRef.current = true
-                        publishSnapshotNow()
-                    }
+                    markConnected()
                     return
                 }
                 case 'text_delta':
                 case 'thinking_delta': {
-                    if (frame.segmentId !== null && sealedSegmentIdsRef.current.has(frame.segmentId)) {
+                    if (
+                        frame.segmentId !== null
+                        && (
+                            sealedSegmentIdsRef.current.has(frame.segmentId)
+                            || preExistingStreamingSegmentIdsRef.current.has(frame.segmentId)
+                        )
+                    ) {
                         return
                     }
                     const kind: 'text' | 'thinking' = frame.type === 'thinking_delta' ? 'thinking' : 'text'
@@ -728,6 +823,7 @@ export function useSessionStream(options: {
                     return
                 }
                 case 'turn_done': {
+                    preExistingStreamingSegmentIdsRef.current.clear()
                     const now = Date.now()
                     let changed = false
                     let hasPending = false
@@ -794,12 +890,7 @@ export function useSessionStream(options: {
                 clearTimeout(reconnectTimerRef.current)
                 reconnectTimerRef.current = null
             }
-            reconnectAttemptRef.current = 0
-            reconnectDeferredRef.current = false
-            if (!isConnectedRef.current) {
-                isConnectedRef.current = true
-                publishSnapshotNow()
-            }
+            markConnected()
         }
 
         eventSource.onmessage = (message: MessageEvent<string>) => {
@@ -854,6 +945,8 @@ export function useSessionStream(options: {
                 eventSourceRef.current = null
             }
             isConnectedRef.current = false
+            preExistingStreamingSegmentIdsRef.current.clear()
+            awaitingInitialWindowSnapshotRef.current = false
             clearAllSegments()
             cancelScheduledFlush()
         }

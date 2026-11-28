@@ -124,6 +124,92 @@ struct ReinsPhaseBTests {
         #expect(overlay.applying(to: [sealedRow]).count == 1)
     }
 
+    @Test("LiveStreamOverlay protects mid-turn pre-existing segments from fast bursts while streaming new segments at 60fps")
+    func liveStreamOverlayMidTurnPreExistingProtection() throws {
+        let shortPrefix = "First 50 chars already streamed before join..."
+        let preExistingRow = try makeStoredRow(
+            id: "msg-mid",
+            seq: 8,
+            text: shortPrefix,
+            meta: ["streaming": .bool(true), "segmentId": .string("seg-mid")]
+        )
+
+        var overlay = LiveStreamOverlay()
+        let connected = overlay.apply(.connected, now: 2000, persistedMessages: [preExistingRow])
+        #expect(connected)
+        // Duplicate wire connected frame must not clear preExistingStreamingSegmentIds.
+        let dupConnected = overlay.apply(.event(.connected), now: 2001, persistedMessages: [preExistingRow])
+        #expect(dupConnected == false)
+        #expect(overlay.preExistingStreamingSegmentIds.contains("seg-mid"))
+
+        // Fast streaming burst exceeding the 46-char Phase A prefix inside an 800ms interval must be ignored.
+        let burst = String(repeating: "B", count: 120)
+        let burstApplied = overlay.apply(.event(.textDelta(turnId: "t1", segmentId: "seg-mid", delta: burst)), now: 2002)
+        #expect(burstApplied == false)
+        #expect(overlay.segments.isEmpty)
+
+        // Newly opened segment in the same turn streams at 60fps without disturbing preExistingRow.
+        let newSegApplied = overlay.apply(.event(.textDelta(turnId: "t1", segmentId: "seg-new", delta: "Fresh 60fps")), now: 2003)
+        #expect(newSegApplied)
+        let newSegmentPhaseA = try makeStoredRow(
+            id: "msg-new",
+            seq: 9,
+            text: "Fresh",
+            meta: ["streaming": .bool(true), "segmentId": .string("seg-new")]
+        )
+        let projected = overlay.applying(to: [preExistingRow, newSegmentPhaseA])
+        #expect(projected.count == 2)
+        #expect(projected.contains { $0.id == "msg-mid" })
+        #expect(projected.contains { $0.id == "msg-new" } == false)
+        #expect(projected.contains { $0.id == "stream:t1:seg-new" })
+
+        // Sealing seg-mid clears it from preExistingStreamingSegmentIds.
+        let sealedMid = try makeStoredRow(
+            id: "msg-mid",
+            seq: 8,
+            text: shortPrefix + burst,
+            meta: ["segmentId": .string("seg-mid")]
+        )
+        _ = overlay.reconcile(with: [sealedMid, newSegmentPhaseA])
+        #expect(overlay.preExistingStreamingSegmentIds.contains("seg-mid") == false)
+
+        // turn_done clears remaining segments and any remaining pre-existing tracking.
+        let doneChanged = overlay.apply(.event(.turnDone(turnId: "t1", aborted: false)), now: 2010)
+        #expect(doneChanged)
+        #expect(overlay.preExistingStreamingSegmentIds.isEmpty)
+        #expect(overlay.hasActiveContent == false)
+    }
+
+    @Test("LiveStreamOverlay protects 3000-char mid-turn Phase A prefix when stream connects before initial window arrives")
+    func liveStreamOverlayColdOpenMidTurnProtection() throws {
+        var overlay = LiveStreamOverlay()
+        let connected = overlay.apply(.connected, now: 3000, persistedMessages: [])
+        #expect(connected)
+        let firstDelta = overlay.apply(.event(.textDelta(turnId: "t2", segmentId: "seg-cold", delta: "x")), now: 3001)
+        #expect(firstDelta)
+
+        let phaseA3000 = try makeStoredRow(
+            id: "msg-cold",
+            seq: 20,
+            text: String(repeating: "Z", count: 3000),
+            meta: ["streaming": .bool(true), "segmentId": .string("seg-cold")]
+        )
+
+        // Reconciling initial window promotes seg-cold to preExistingStreamingSegmentIds and drops the 1-char tail.
+        let reconciled = overlay.reconcile(with: [phaseA3000])
+        #expect(reconciled)
+        #expect(overlay.preExistingStreamingSegmentIds.contains("seg-cold"))
+        #expect(overlay.segments.isEmpty)
+
+        // Even a subsequent 5000-char burst stays ignored so Phase A remains authoritative until seal.
+        let bigBurst = String(repeating: "Y", count: 5000)
+        let burstApplied = overlay.apply(.event(.textDelta(turnId: "t2", segmentId: "seg-cold", delta: bigBurst)), now: 3002)
+        #expect(burstApplied == false)
+        let projected = overlay.applying(to: [phaseA3000])
+        #expect(projected.count == 1)
+        #expect(projected.first?.id == "msg-cold")
+    }
+
     // MARK: - 3. Queue / Steer / Cancel / Retry wire shapes
 
     @Test("QueuedStateResponse decodes dispatchingLocalIds and SyncEvent decodes Phase B queue events")

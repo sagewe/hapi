@@ -519,4 +519,133 @@ describe('useSessionStream hook', () => {
         rerender({ messages: [initialUser, finalAssistant] })
         expect(result.current.segments).toHaveLength(0)
     })
+
+    it('keeps Phase A authoritative for mid-turn pre-existing segments even when fast bursts exceed a short prefix, while streaming new segments at 60fps', () => {
+        const preExistingShortRow = makeV1AssistantRow({
+            id: 'a-mid-short',
+            seq: 5,
+            text: 'First 50 chars already streamed before join...',
+            segmentId: 'seg-mid',
+            streaming: true,
+            createdAt: 500
+        })
+
+        const { result, rerender } = renderHook(
+            (props: { messages: DecryptedMessage[] }) => useSessionStream({
+                enabled: true,
+                baseUrl: 'https://hub.example.test',
+                token: 'jwt-1',
+                sessionId: 'sess-mid',
+                messages: props.messages,
+                turnDoneGraceMs: 1000
+            }),
+            { initialProps: { messages: [preExistingShortRow] } }
+        )
+
+        const es = MockEventSource.instances[0]!
+        act(() => {
+            es.emitOpen()
+            // Duplicate wire connected frame must not clear pre-existing segment protection.
+            es.emitData({ type: 'connected' })
+        })
+
+        // Fast streaming burst (>120 chars) exceeds the 46-char Phase A prefix inside an 800ms window.
+        act(() => {
+            es.emitData({
+                type: 'text_delta',
+                turnId: 't-mid',
+                segmentId: 'seg-mid',
+                delta: 'B'.repeat(120)
+            })
+            flushRaf()
+        })
+
+        // Pre-existing segment deltas are ignored so Phase A stays authoritative without prefix truncation.
+        expect(result.current.segments).toHaveLength(0)
+        const mergedMid = mergeStreamOverlayMessages([preExistingShortRow], result.current)
+        const midBlocks = reduceToBlocks(mergedMid)
+        expect(midBlocks).toHaveLength(1)
+        expect(midBlocks[0]).toMatchObject({
+            kind: 'agent-text',
+            id: 'seg:seg-mid:text',
+            text: 'First 50 chars already streamed before join...'
+        })
+
+        // A brand-new segment in the same turn streams at 60fps without disturbing seg-mid.
+        act(() => {
+            es.emitData({ type: 'text_delta', turnId: 't-mid', segmentId: 'seg-new', delta: 'Fresh 60fps text' })
+            flushRaf()
+        })
+        expect(result.current.segments).toHaveLength(1)
+        expect(result.current.segments[0]?.segmentId).toBe('seg-new')
+        const mergedBoth = mergeStreamOverlayMessages([preExistingShortRow], result.current)
+        const bothBlocks = reduceToBlocks(mergedBoth)
+        expect(bothBlocks).toHaveLength(2)
+        expect(bothBlocks[0]).toMatchObject({ id: 'seg:seg-mid:text', text: 'First 50 chars already streamed before join...' })
+        expect(bothBlocks[1]).toMatchObject({ id: 'seg:seg-new:text', text: 'Fresh 60fps text' })
+
+        // Sealing seg-mid + turn_done clears pre-existing tracking cleanly.
+        const sealedMidRow = makeV1AssistantRow({
+            id: 'a-mid-short',
+            seq: 5,
+            text: `First 50 chars already streamed before join...${'B'.repeat(120)}`,
+            segmentId: 'seg-mid',
+            createdAt: 500
+        })
+        const sealedNewRow = makeV1AssistantRow({
+            id: 'a-new',
+            seq: 6,
+            text: 'Fresh 60fps text',
+            segmentId: 'seg-new',
+            createdAt: 520
+        })
+        rerender({ messages: [sealedMidRow, sealedNewRow] })
+        act(() => {
+            es.emitData({ type: 'turn_done', turnId: 't-mid', aborted: false })
+        })
+        expect(result.current.segments).toHaveLength(0)
+    })
+
+    it('protects mid-turn Phase A prefix even when /stream connects before initial REST messages load', () => {
+        const { result, rerender } = renderHook(
+            (props: { messages: DecryptedMessage[] }) => useSessionStream({
+                enabled: true,
+                baseUrl: 'https://hub.example.test',
+                token: 'jwt-1',
+                sessionId: 'sess-cold',
+                messages: props.messages
+            }),
+            { initialProps: { messages: [] as DecryptedMessage[] } }
+        )
+
+        const es = MockEventSource.instances[0]!
+        act(() => {
+            es.emitOpen()
+            es.emitData({ type: 'text_delta', turnId: 't-cold', segmentId: 'seg-cold', delta: 'x' })
+            flushRaf()
+        })
+        expect(result.current.segments).toHaveLength(1)
+
+        // Initial REST load arrives with 3000-char Phase A streaming snapshot -> seg-cold is promoted to pre-existing.
+        const phaseA3000 = makeV1AssistantRow({
+            id: 'a-cold',
+            seq: 12,
+            text: 'P'.repeat(3000),
+            segmentId: 'seg-cold',
+            streaming: true,
+            createdAt: 800
+        })
+        rerender({ messages: [phaseA3000] })
+        expect(result.current.segments).toHaveLength(0)
+
+        // Subsequent 5000-char burst on /stream stays ignored so Phase A remains authoritative until seal.
+        act(() => {
+            es.emitData({ type: 'text_delta', turnId: 't-cold', segmentId: 'seg-cold', delta: 'Q'.repeat(5000) })
+            flushRaf()
+        })
+        expect(result.current.segments).toHaveLength(0)
+        const blocks = reduceToBlocks(mergeStreamOverlayMessages([phaseA3000], result.current))
+        expect(blocks).toHaveLength(1)
+        expect(blocks[0]).toMatchObject({ kind: 'agent-text', text: 'P'.repeat(3000) })
+    })
 })
