@@ -134,6 +134,10 @@ public func buildExecutionProcessBlocks(
             if case .agentText(let text) = block { return text.meta?["assistantPhase"]?.stringValue == "final" }
             return false
         }
+        let hasThinkingOnly = round.contains { block in
+            if case .agentEvent(let ev) = block { return ev.event.type == "thinking-only" }
+            return false
+        }
         let hasSubstantiveOutput = round.contains { block in
             switch block {
             case .agentEvent, .userText: return false
@@ -173,7 +177,7 @@ public func buildExecutionProcessBlocks(
             round = []
             return
         }
-        if !completed && !hasFinal, let lastExplanation = round.lastIndex(where: { block in
+        if !completed && !hasFinal && !hasThinkingOnly, let lastExplanation = round.lastIndex(where: { block in
             switch block { case .agentText, .agentReasoning: return true; default: return false }
         }) {
             var cursor = lastExplanation
@@ -216,7 +220,7 @@ public func buildExecutionProcessBlocks(
         var insertionIndex: Int?
         for block in round {
             if !canFoldExecutionBlock(block) || replies.contains(block.id) || explanation.contains(block.id) || decisionContext.contains(block.id) || keepVisibleIds.contains(block.id)
-                || ((!completed || replies.isEmpty) && block.id == latest && block.asToolCall == nil && block.kind != "generated-image") {
+                || ((!completed || replies.isEmpty) && block.id == latest && block.asToolCall == nil && block.kind != "generated-image" && !(hasThinkingOnly && block.kind == "agent-reasoning")) {
                 output.append(.block(block))
             } else {
                 if insertionIndex == nil { insertionIndex = output.count }

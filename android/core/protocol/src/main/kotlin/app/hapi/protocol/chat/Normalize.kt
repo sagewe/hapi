@@ -65,6 +65,18 @@ fun normalizeDecryptedMessage(message: DecryptedMessage): NormalizedMessage? {
     }
 
     if (record.role == "system") {
+        val structuredEvent = asObject(record.meta)?.get("event")?.let(::asObject)
+        if (structuredEvent != null && !asString(structuredEvent["type"]).isNullOrBlank()) {
+            return NormalizedMessage.Event(
+                id = message.id,
+                localId = message.localId,
+                createdAt = message.createdAt,
+                event = AgentEvent.of(structuredEvent),
+                isSidechain = false,
+                meta = record.meta,
+                invokedAt = invokedAt,
+            )
+        }
         val text = asString(record.content)
             ?: asObject(record.content)?.let { asString(it["text"]) }
             ?: safeStringify(record.content)

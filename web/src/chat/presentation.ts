@@ -288,6 +288,15 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'token-count') {
         return formatTokenCountEvent(event)
     }
+    if (event.type === 'thinking-only') {
+        const rawMsg = typeof event.message === 'string' ? event.message.trim() : ''
+        const title = rawMsg || '模型仅完成思考，未输出正文'
+        const tokens = asNumber((event as Record<string, unknown>).contextTokens)
+        if (tokens !== null && tokens >= 150_000) {
+            return { icon: null, text: `${title} · 上下文 ${formatTokenCount(tokens)}，可 /compact` }
+        }
+        return { icon: null, text: title }
+    }
     try {
         return { icon: null, text: JSON.stringify(event) }
     } catch {

@@ -54,6 +54,7 @@ export type AgentEvent =
     | { type: 'thread-goal-updated'; goal: ThreadGoal; threadId?: string; turnId?: string }
     | { type: 'thread-goal-cleared'; threadId?: string }
     | { type: 'abort-restore'; text: string }
+    | { type: 'thinking-only'; message?: string; contextTokens?: number; contextWindow?: number }
     | ({ type: string } & Record<string, unknown>)
 
 export type ToolResultPermission = {

@@ -62,6 +62,25 @@ export function normalizeDecryptedMessage(message: DecryptedMessage): Normalized
             }
     }
 
+    if (record.role === 'system') {
+        const metaObj = record.meta && typeof record.meta === 'object' ? record.meta as Record<string, unknown> : null
+        const ev = metaObj?.event
+        if (ev && typeof ev === 'object' && typeof (ev as Record<string, unknown>).type === 'string' && (ev as Record<string, unknown>).type) {
+            return {
+                id: message.id,
+                localId: message.localId,
+                createdAt: message.createdAt,
+                role: 'event',
+                isSidechain: false,
+                content: ev as import('@/chat/types').AgentEvent,
+                meta: record.meta,
+                status: message.status,
+                originalText: message.originalText,
+                invokedAt: message.invokedAt
+            }
+        }
+    }
+
     return {
         id: message.id,
         localId: message.localId,

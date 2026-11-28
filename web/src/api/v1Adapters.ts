@@ -552,7 +552,8 @@ export function adaptV1Message(raw: unknown): DecryptedMessage {
             .join('\n')
         content = {
             role: 'system',
-            content: { type: 'text', text }
+            content: { type: 'text', text },
+            ...(hasMeta ? { meta: rawMeta } : {})
         }
     }
 

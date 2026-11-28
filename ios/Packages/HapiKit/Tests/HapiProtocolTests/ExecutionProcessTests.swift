@@ -236,6 +236,49 @@ struct ExecutionProcessTests {
         #expect(initialResponseState(after, isSending: false, isRunning: true, isActive: true) == nil)
     }
 
+    @Test func foldsTrailingReasoningWhenThinkingOnlyEventEndsRound() {
+        let reasoning = ChatBlock.agentReasoning(.init(
+            id: "r1",
+            localId: nil,
+            createdAt: 2000,
+            invokedAt: nil,
+            durationMs: nil,
+            usage: nil,
+            model: nil,
+            text: "Long English thoughts",
+            meta: nil
+        ))
+        let thinkingOnly = ChatBlock.agentEvent(.init(
+            id: "e1",
+            createdAt: 3000,
+            invokedAt: nil,
+            model: nil,
+            event: .init(object: [
+                "type": .string("thinking-only"),
+                "message": .string("模型仅完成思考，未输出正文"),
+                "contextTokens": .number(167_200),
+            ]),
+            meta: nil
+        ))
+        let visible = buildExecutionProcessBlocks(
+            [user, tool("t1"), reasoning, thinkingOnly].map { .block($0) },
+            completedRounds: [],
+            isRunning: false,
+            hasMoreMessages: false
+        )
+        #expect(visible.count == 3)
+        if case .toolGroup(let group) = visible[1] {
+            #expect(group.processBlocks?.map(\.id) == ["t1", "r1"])
+        } else {
+            Issue.record("Expected execution process group folding tool + reasoning")
+        }
+        if case .block(.agentEvent(let ev)) = visible[2] {
+            #expect(ev.event.type == "thinking-only")
+        } else {
+            Issue.record("Expected trailing thinking-only event block")
+        }
+    }
+
     @Test func ignoresSummaryContentInTimingsAndCompletedRounds() {
         let prompt = NormalizedMessage(
             id: "u",

@@ -158,6 +158,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         // Keep consecutive prose/reasoning until a new explanation or answer arrives.
         const explanation = new Set<string>()
         const hasFinal = round.some(block => block.kind === 'agent-text' && isObject(block.meta) && block.meta.assistantPhase === 'final')
+        const hasThinkingOnly = round.some(block => block.kind === 'agent-event' && block.event.type === 'thinking-only')
         const hasSubstantiveOutput = round.some(block => {
             if (block.kind === 'agent-event' || block.kind === 'user-text') return false
             if (block.kind === 'agent-text' || block.kind === 'agent-reasoning') return block.text.trim().length > 0
@@ -192,7 +193,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
             return
         }
 
-        if (!completed && !hasFinal) {
+        if (!completed && !hasFinal && !hasThinkingOnly) {
             let cursor = round.findLastIndex(block => block.kind === 'agent-text' || block.kind === 'agent-reasoning')
             for (; cursor >= 0; cursor -= 1) {
                 const block = round[cursor]
@@ -234,7 +235,7 @@ export function buildExecutionProcessBlocks(blocks: readonly ChatBlock[], option
         let insertionIndex: number | null = null
         for (const block of round) {
             if (!foldable(block) || replies.has(block.id) || explanation.has(block.id) || decisionContext.has(block.id) || options.keepVisibleIds?.has(block.id)
-                || ((!completed || replies.size === 0) && block.id === latest && block.kind !== 'tool-call' && block.kind !== 'generated-image')) {
+                || ((!completed || replies.size === 0) && block.id === latest && block.kind !== 'tool-call' && block.kind !== 'generated-image' && !(hasThinkingOnly && block.kind === 'agent-reasoning'))) {
                 output.push(activityPresentation(block, Boolean(options.keepVisibleIds?.has(block.id) && options.previousActivityIds?.has(block.id))))
             } else {
                 insertionIndex ??= output.length

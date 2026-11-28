@@ -16,11 +16,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import app.hapi.companion.ui.markdown.Markdown
 import app.hapi.protocol.chat.getCompactionPresentation
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -32,6 +35,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import app.hapi.companion.di.LocalClientProfile
+import app.hapi.companion.feature.chat.LocalChatInteractions
 import app.hapi.companion.ui.theme.HapiTheme
 import app.hapi.companion.ui.theme.hapi
 import app.hapi.protocol.chat.AgentEvent
@@ -49,6 +54,50 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 @Composable
 fun AgentEventBlockView(block: AgentEventBlock, modifier: Modifier = Modifier) {
+    if (block.event.type == "thinking-only") {
+        val interactions = LocalChatInteractions.current
+        val isAssistant = LocalClientProfile.current?.mode == "assistant"
+        var continued by rememberSaveable(block.id) { mutableStateOf(false) }
+        val text = remember(block, isAssistant) {
+            if (isAssistant) "本次分析已完成，但未生成正文" else getEventPresentation(block.event).text
+        }
+        Surface(
+            modifier = modifier.fillMaxWidth().testTag("thinking-only-card-${block.id}"),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.hapi.hint,
+                    modifier = Modifier.weight(1f),
+                )
+                if (interactions != null) {
+                    FilledTonalButton(
+                        onClick = {
+                            continued = true
+                            interactions.sendQuickMessage("请继续，直接输出最终回复。")
+                        },
+                        enabled = !continued,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("thinking-only-continue-${block.id}"),
+                    ) {
+                        Text(
+                            text = if (continued) "已继续" else "继续输出",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
     val compact = remember(block) { getCompactionPresentation(block.event) }
     if (compact != null && (compact.hasSummary || compact.tokenDelta != null)) {
         var expanded by rememberSaveable(block.id) { mutableStateOf(false) }

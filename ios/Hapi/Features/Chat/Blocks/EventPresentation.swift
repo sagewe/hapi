@@ -252,6 +252,14 @@ func eventPresentation(_ event: AgentEvent) -> EventPresentation {
     case "token-count":
         return tokenCountPresentation(event)
 
+    case "thinking-only":
+        let base = event["message"]?.chatString?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = (base?.isEmpty == false) ? base! : "模型仅完成思考，未输出正文"
+        if let tokens = event["contextTokens"]?.chatNumber, tokens >= 150_000 {
+            return EventPresentation(icon: nil, text: "\(title) · 上下文 \(formatTokenCount(tokens))，可 /compact")
+        }
+        return EventPresentation(icon: nil, text: title)
+
     default:
         // Unknown event types: generic raw rendering, truncated.
         return EventPresentation(icon: nil, text: chatTruncate(chatPrettyJSON(event.wireValue), 300))

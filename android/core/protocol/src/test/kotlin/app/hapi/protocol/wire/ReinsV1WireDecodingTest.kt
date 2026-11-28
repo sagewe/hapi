@@ -294,4 +294,16 @@ class ReinsV1WireDecodingTest {
         assertEquals("", rel.releaseNotes)
         assertEquals("", rel.publishedAt)
     }
+
+    @Test
+    fun `v1 system message with structured thinking-only meta event decodes as thinking-only AgentEvent`() {
+        val raw = HapiJson.decodeFromString<DecryptedMessage>(
+            """{"id":"m-thk","session_id":"s1","seq":9,"role":"system","blocks":[{"type":"text","text":"模型仅完成思考，未输出正文"}],"meta":{"source":"thinking_only_response","event":{"type":"thinking-only","message":"模型仅完成思考，未输出正文","contextTokens":167200}},"created_at":1700000000900}"""
+        )
+        val norm = assertIs<NormalizedMessage.Event>(normalizeDecryptedMessage(raw))
+        assertEquals("thinking-only", norm.event.type)
+        val label = app.hapi.protocol.chat.getEventPresentation(norm.event).text
+        assertTrue(label.contains("模型仅完成思考，未输出正文"))
+        assertTrue(label.contains("/compact"))
+    }
 }

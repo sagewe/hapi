@@ -115,7 +115,13 @@ internal fun ChatHost(
         handledReset = reset
     }
     val interactions = remember(state.flavor, state.permissionOverrides, viewModel) {
-        ChatInteractions(state.flavor, state.permissionOverrides, viewModel::resolvePermission, viewModel::retryFailedMessage)
+        ChatInteractions(
+            flavor = state.flavor,
+            permissionOverrides = state.permissionOverrides,
+            resolvePermission = viewModel::resolvePermission,
+            retryFailedMessage = viewModel::retryFailedMessage,
+            sendQuickMessage = viewModel::sendQuickMessage,
+        )
     }
     val openFile: (String, Int?) -> Unit = { path, line -> pauseReading(); onOpenFile(path, line) }
     CompositionLocalProvider(

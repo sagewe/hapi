@@ -264,6 +264,26 @@ describe('execution process projection', () => {
         })
         expect(completedExecutionRounds([userRow, readyRow, summaryWire]).has('u')).toBe(true)
     })
+
+    it('folds trailing reasoning into execution-process when a thinking-only event ends the round', () => {
+        const blocks: ChatBlock[] = [
+            { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'design this' },
+            tool('t1', 'read_file'),
+            { kind: 'agent-reasoning', id: 'r1', localId: null, createdAt: 3, text: 'long english thoughts' },
+            { kind: 'agent-event', id: 'e1', createdAt: 4, event: { type: 'thinking-only', message: '模型仅完成思考，未输出正文', contextTokens: 167200 } }
+        ]
+        const visible = buildExecutionProcessBlocks(blocks, {
+            completedRounds: new Set(),
+            isRunning: false,
+            hasMoreMessages: false
+        })
+        expect(visible.map(b => b.kind)).toEqual(['user-text', 'tool-group', 'agent-event'])
+        const group = visible[1]
+        expect(group.kind).toBe('tool-group')
+        if (group.kind === 'tool-group') {
+            expect(group.processBlocks?.map(b => b.id)).toEqual(['t1', 'r1'])
+        }
+    })
 })
 
 describe('silent session title presentation', () => {

@@ -234,6 +234,35 @@ struct ReinsV1WireDecodingTests {
         #expect(rs.readState == SessionReadState(readRevision: 12, manualUnread: false, version: 5))
     }
 
+    @Test func decodesV1SystemThinkingOnlyEventWithMetaPreserved() throws {
+        let rawJSON = """
+        {
+          "id": "m-thk",
+          "session_id": "s1",
+          "seq": 9,
+          "role": "system",
+          "blocks": [{"type": "text", "text": "模型仅完成思考，未输出正文"}],
+          "meta": {
+            "source": "thinking_only_response",
+            "event": {
+              "type": "thinking-only",
+              "message": "模型仅完成思考，未输出正文",
+              "contextTokens": 167200
+            }
+          },
+          "created_at": 1700000000900
+        }
+        """
+        let msg = try JSONDecoder().decode(DecryptedMessage.self, from: Data(rawJSON.utf8))
+        let normalized = normalizeDecryptedMessage(msg)
+        if case .event(let ev) = normalized?.content {
+            #expect(ev.type == "thinking-only")
+            #expect(ev["contextTokens"]?.numberValue == 167_200)
+        } else {
+            Issue.record("Expected structured thinking-only AgentEvent")
+        }
+    }
+
     @Test func decodesV1SyncEventsAndSnakeCaseConfigs() throws {
         let connJSON = """
         {"type":"connection_changed","data":{"status":"connected","subscription_id":"sub-1","resume":"ok"}}

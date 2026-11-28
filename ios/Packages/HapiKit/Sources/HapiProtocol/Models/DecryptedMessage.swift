@@ -283,13 +283,17 @@ public struct DecryptedMessage: Codable, Equatable, Sendable {
                 guard case .object(let obj) = blk, obj["type"]?.stringValue == "text" else { return nil }
                 return obj["text"]?.stringValue
             }
-            return .object([
+            var envelope: [String: JSONValue] = [
                 "role": .string("system"),
                 "content": .object([
                     "type": .string("text"),
                     "text": .string(texts.joined(separator: "\n")),
                 ]),
-            ])
+            ]
+            if let meta, meta != .null {
+                envelope["meta"] = meta
+            }
+            return .object(envelope)
         }
     }
 }

@@ -5,6 +5,7 @@ import type { AgentEvent } from '@/chat/types'
 import type { HappyChatMessageMetadata } from '@/lib/assistant-runtime'
 import { getConversationMessageAnchorId } from '@/chat/outline'
 import { MessageTimestamp } from '@/components/AssistantChat/messages/MessageTimestamp'
+import { useOptionalHappyChatContext } from '@/components/AssistantChat/context'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { CodeBlock } from '@/components/CodeBlock'
 import { parseGoalStatusMessage } from '@/components/ToolCard/goalTools'
@@ -76,6 +77,30 @@ export function CompactSummaryCard({ delta, text }: { delta: string | null; text
     )
 }
 
+function ThinkingOnlyCard({ text }: { text: string }) {
+    const ctx = useOptionalHappyChatContext()
+    const [continued, setContinued] = useState(false)
+    const canContinue = Boolean(ctx?.onQuickSend && !ctx.disabled && !continued)
+    return (
+        <div className="mx-auto flex w-full max-w-[92%] items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-subtle-bg)] px-3 py-2 text-xs text-[var(--app-hint)]">
+            <span className="min-w-0 leading-relaxed">{text}</span>
+            {ctx?.onQuickSend ? (
+                <button
+                    type="button"
+                    disabled={!canContinue}
+                    onClick={() => {
+                        setContinued(true)
+                        ctx.onQuickSend?.('请继续，直接输出最终回复。')
+                    }}
+                    className="shrink-0 rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2.5 py-1 text-xs font-medium text-[var(--app-fg)] transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    {continued ? '已继续' : '继续输出'}
+                </button>
+            ) : null}
+        </div>
+    )
+}
+
 export function HappySystemMessage() {
     const { t } = useTranslation()
     const role = useAuiState((s) => s.message.role)
@@ -129,6 +154,18 @@ export function HappySystemMessage() {
         return (
             <MessagePrimitive.Root id={getConversationMessageAnchorId(messageId)} className="scroll-mt-4 py-1">
                 <CompactSummaryCard delta={delta} text={text} />
+            </MessagePrimitive.Root>
+        )
+    }
+
+    if (event?.type === 'thinking-only') {
+        return (
+            <MessagePrimitive.Root
+                id={getConversationMessageAnchorId(messageId)}
+                data-hapi-source-message-ids={sourceMessageIds?.join(' ') || undefined}
+                className="scroll-mt-4 py-1"
+            >
+                <ThinkingOnlyCard text={text} />
             </MessagePrimitive.Root>
         )
     }

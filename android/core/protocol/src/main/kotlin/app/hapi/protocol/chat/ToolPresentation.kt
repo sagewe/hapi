@@ -225,6 +225,17 @@ fun getEventPresentation(event: AgentEvent): EventPresentation {
         "thread-goal-updated" -> return formatThreadGoalEvent(event)
         "thread-goal-cleared" -> return EventPresentation(icon = null, text = "Goal cleared")
         "token-count" -> return formatTokenCountEvent(event)
+        "thinking-only" -> {
+            val base = asString(raw["message"])?.trim()?.takeIf(String::isNotEmpty)
+                ?: "模型仅完成思考，未输出正文"
+            val tokens = asNumber(raw["contextTokens"])
+            val text = if (tokens != null && tokens >= 150_000.0) {
+                "$base · 上下文 ${formatTokenCount(tokens)}，可 /compact"
+            } else {
+                base
+            }
+            return EventPresentation(icon = null, text = text)
+        }
     }
     return EventPresentation(icon = null, text = raw.toString())
 }

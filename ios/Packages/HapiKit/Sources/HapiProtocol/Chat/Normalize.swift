@@ -69,6 +69,18 @@ public func normalizeDecryptedMessage(_ message: DecryptedMessage) -> Normalized
     }
 
     if record.role == "system" {
+        if let metaObj = record.meta?.objectValue,
+           let event = normalizeAgentEvent(metaObj["event"]) {
+            return NormalizedMessage(
+                id: message.id,
+                localId: message.localId,
+                createdAt: message.createdAt,
+                content: .event(event),
+                isSidechain: false,
+                meta: record.meta,
+                invokedAt: message.invokedAt
+            )
+        }
         let systemText: String
         if let text = record.content.stringValue {
             systemText = text

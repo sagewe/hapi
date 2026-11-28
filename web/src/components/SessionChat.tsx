@@ -2353,6 +2353,13 @@ function SessionChatInner(props: SessionChatProps) {
                         onRefresh={props.onRefresh}
                         onRetryMessage={props.onRetryMessage}
                         onContinuePlan={() => focusComposerRef.current?.()}
+                        onQuickSend={sessionInactive && !inactiveCanResume ? undefined : (text) => {
+                            void Promise.resolve(props.onSend(text)).then((accepted) => {
+                                if (accepted !== false) {
+                                    setForceScrollToken((token) => token + 1)
+                                }
+                            })
+                        }}
                         historyActionPending={historyActionPending}
                         onForkConversation={controlledByUser && !sessionInactive ? undefined : onForkConversation}
                         onRewindConversation={controlledByUser ? undefined : onRewindConversation}

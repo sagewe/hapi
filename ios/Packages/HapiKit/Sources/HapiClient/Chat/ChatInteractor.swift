@@ -691,6 +691,28 @@ public final class ChatInteractor {
         }
     }
 
+    /// Dispatches a one-tap follow-up prompt (e.g. continuing after a thinking-only
+    /// turn) without disturbing the user's current composer draft or attachments.
+    public func sendQuickMessage(_ rawText: String) {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isSending, !scratchlistBusy else { return }
+        isSending = true
+        let localId = makeLocalId()
+        let createdAt = now()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.performSend(
+                text: text,
+                localId: localId,
+                createdAt: createdAt,
+                deliveryMode: .queue,
+                attachments: nil,
+                scheduledAt: nil,
+                isRetry: false
+            )
+        }
+    }
+
     /// Dictation transcript arrived: append with a space separator (web
     /// `appendTranscript`).
     public func appendDictatedText(_ transcript: String) {

@@ -289,6 +289,7 @@ internal object DecryptedMessageSerializer : KSerializer<DecryptedMessage> {
                     put("type", JsonPrimitive("text"))
                     put("text", JsonPrimitive(text))
                 })
+                if (meta != null && meta.isNotEmpty()) put("meta", meta)
             }
         }
         else -> buildJsonObject {

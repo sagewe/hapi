@@ -22,6 +22,7 @@ export type HappyChatContextValue = {
     codexPlanProposalId?: string | null
     onContinuePlan?: (planId: string) => void
     continuedPlanIds?: ReadonlySet<string>
+    onQuickSend?: (text: string) => void
     onRetryMessage?: (localId: string) => void
     historyActionPending?: boolean
     onForkConversation?: (messageLocalId?: string) => Promise<void>

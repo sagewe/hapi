@@ -359,16 +359,28 @@ struct AgentReasoningBlockView: View {
 /// Compact centered status row for the `'event'` family (limits, compaction,
 /// switches, errors, turn duration, …); wording via `eventPresentation`.
 struct AgentEventBlockView: View {
+    @Environment(\.chatInteractions) private var interactions
+    @Environment(\.isAssistantMode) private var isAssistantMode
     let block: AgentEventBlock
     @ChatStoredState private var expanded: Bool
+    @ChatStoredState private var continued: Bool
 
     init(block: AgentEventBlock) {
         self.block = block
         _expanded = ChatStoredState(wrappedValue: false, id: block.id, field: "expanded")
+        _continued = ChatStoredState(wrappedValue: false, id: block.id, field: "continued")
     }
 
     var body: some View {
-        if let compact = compactionPresentation(block.event), compact.hasSummary || compact.tokenDelta != nil {
+        if block.event.type == "thinking-only" {
+            ThinkingOnlyEventRow(
+                id: block.id,
+                event: block.event,
+                isAssistantMode: isAssistantMode,
+                interactions: interactions,
+                continued: $continued
+            )
+        } else if let compact = compactionPresentation(block.event), compact.hasSummary || compact.tokenDelta != nil {
             CompactionSummaryCard(id: block.id, presentation: compact, expanded: $expanded)
         } else {
             let presentation = eventPresentation(block.event)
@@ -381,6 +393,59 @@ struct AgentEventBlockView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 2)
         }
+    }
+}
+
+private struct ThinkingOnlyEventRow: View {
+    let id: String
+    let event: AgentEvent
+    let isAssistantMode: Bool
+    let interactions: ChatInteractor?
+    @Binding var continued: Bool
+
+    private var labelText: String {
+        if isAssistantMode {
+            return "本次分析已完成，但未生成正文"
+        }
+        return eventPresentation(event).text
+    }
+
+    private var canContinue: Bool {
+        guard let interactions, !continued else { return false }
+        return !interactions.isSending
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(labelText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            if interactions != nil {
+                Button {
+                    continued = true
+                    interactions?.sendQuickMessage("请继续，直接输出最终回复。")
+                } label: {
+                    Text(continued ? "已继续" : "继续输出")
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canContinue)
+                .accessibilityIdentifier("thinking-only-continue-\(id)")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("thinking-only-card-\(id)")
     }
 }
 

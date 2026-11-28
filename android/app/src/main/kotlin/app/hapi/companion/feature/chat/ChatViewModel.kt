@@ -1351,6 +1351,29 @@ class ChatViewModel(
     }
 
     /**
+     * Dispatches a one-tap follow-up prompt (e.g. continuing after a thinking-only
+     * turn) without disturbing the user's current composer draft or attachments.
+     */
+    fun sendQuickMessage(rawText: String) {
+        val text = rawText.trim()
+        if (text.isEmpty() || sendInFlight.value || importingShare.value) return
+        sendInFlight.value = true
+        scope.launch {
+            try {
+                performSend(
+                    text = text,
+                    localId = localIdGenerator(),
+                    createdAt = now(),
+                    deliveryMode = "queue",
+                    attachments = null,
+                    scheduledAt = null,
+                    isRetry = false,
+                )
+            } finally { sendInFlight.value = false }
+        }
+    }
+
+    /**
      * The screen is going away for good (holder `onCleared`, not a config
      * change): un-sent uploads are discarded after a best-effort hub delete.
      * Attachments deliberately do not persist in drafts v1.

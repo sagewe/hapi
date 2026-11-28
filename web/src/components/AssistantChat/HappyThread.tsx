@@ -694,6 +694,7 @@ export function HappyThread(props: {
     allowInactiveFork?: boolean
     onRefresh: () => void
     onContinuePlan?: () => void
+    onQuickSend?: (text: string) => void
     onRetryMessage?: (localId: string) => void
     historyActionPending?: boolean
     onForkConversation?: (messageLocalId?: string) => Promise<void>
@@ -2605,6 +2606,7 @@ export function HappyThread(props: {
             codexPlanProposalId: props.session.active && props.session.metadata?.capabilities?.concurrentClients
                 ? props.session.agentState?.codexPlanProposalId : null,
             onContinuePlan: props.onContinuePlan,
+            onQuickSend: props.onQuickSend,
             onRetryMessage: props.onRetryMessage,
             historyActionPending: props.historyActionPending,
             allowInactiveFork: props.allowInactiveFork,

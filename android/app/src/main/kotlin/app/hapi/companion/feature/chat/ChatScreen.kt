@@ -289,6 +289,7 @@ internal fun ChatScreen(
             codexPlanActions = codexPlanActions,
             implementCodexPlan = viewModel::implementCodexPlan,
             continueCodexPlan = viewModel::continueCodexPlan,
+            sendQuickMessage = viewModel::sendQuickMessage,
         )
     }
 
