@@ -25,6 +25,7 @@ private actor ChatRoutingPerformer: HTTPPerforming {
     struct Exchange: Sendable {
         let method: String
         let path: String
+        let query: String?
         let body: String?
     }
 
@@ -83,12 +84,19 @@ private actor ChatRoutingPerformer: HTTPPerforming {
         exchanges.filter { $0.method == method && $0.path.hasSuffix(pathSuffix) }.map(\.path)
     }
 
+    func queries(_ method: String, pathSuffix: String) -> [String?] {
+        exchanges
+            .filter { $0.method == method && $0.path.hasSuffix(pathSuffix) }
+            .map(\.query)
+    }
+
     func perform(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let method = request.httpMethod ?? "GET"
         let path = request.url?.path ?? ""
         exchanges.append(Exchange(
             method: method,
             path: path,
+            query: request.url?.query,
             body: request.httpBody.map { String(decoding: $0, as: UTF8.self) }
         ))
         if gatedRoutes.contains(where: { $0.method == method && path.hasSuffix($0.suffix) }) {
@@ -225,7 +233,8 @@ private final class ChatInteractionHarness {
     init(
         detail: Session = chatDetail(),
         activate: Bool = true,
-        directSendGrace: Duration = .seconds(5)
+        directSendGrace: Duration = .seconds(5),
+        now: @escaping () -> Int = { 1_000 }
     ) async throws {
         sessionID = detail.id
         let performer = ChatRoutingPerformer()
@@ -297,7 +306,7 @@ private final class ChatInteractionHarness {
             drafts: drafts,
             draftSaveDebounce: .milliseconds(10),
             directSendGrace: directSendGrace,
-            now: { 1_000 },
+            now: now,
             makeLocalId: {
                 localIdCounter += 1
                 return "local-\(localIdCounter)"
@@ -1775,6 +1784,69 @@ struct ChatInteractorTests {
                 == [#"{"model":"b/n"}"#]
         })
         #expect(pi.store.detail(for: chatSessionID)?.metadata?.piSelectedModel == PiModelReference(provider: "b", modelId: "n"))
+    }
+
+    @Test func agyCatalogRefreshesOnForceStalenessAndMachineInvalidationWithoutClearingLoadedOptions() async throws {
+        var clockMs = 1_000
+        var agyDetail = chatDetail(flavor: "agy", model: "gemini-4-hydrogen-high")
+        agyDetail.metadata?.machineId = "mach-1"
+        let agy = try await ChatInteractionHarness(detail: agyDetail, now: { clockMs })
+        await agy.performer.serve(
+            "GET", "/v1/machines/mach-1/agy-models",
+            json: #"{"success":true,"availableModels":[{"modelId":"gemini-4-hydrogen-high","name":"Gemini 4 Hydrogen (High)"}]}"#
+        )
+
+        agy.interactor.loadModelOptions()
+        #expect(await eventually {
+            agy.interactor.config.modelOptions?.map(\.value) == ["gemini-4-hydrogen-high"]
+        })
+
+        // Fresh catalog skips redundant unforced loads.
+        agy.interactor.loadModelOptions()
+        try? await Task.sleep(for: .milliseconds(40))
+        #expect(await agy.performer.count("GET", pathSuffix: "/agy-models") == 1)
+
+        // Background force-refresh failure preserves existing options and does not emit a notice.
+        await agy.performer.script("GET", "/v1/machines/mach-1/agy-models", status: 500, json: #"{"error":"boom"}"#)
+        agy.interactor.loadModelOptions(force: true)
+        #expect(await eventually { await agy.performer.count("GET", pathSuffix: "/agy-models") == 2 })
+        try? await Task.sleep(for: .milliseconds(40))
+        #expect(agy.interactor.config.modelOptions?.map(\.value) == ["gemini-4-hydrogen-high"])
+        #expect(!agy.interactor.config.modelLoadFailed)
+        #expect(agy.events.isEmpty)
+
+        // Force-refresh with refresh=true propagates the query flag and updates to the new catalog.
+        await agy.performer.serve(
+            "GET", "/v1/machines/mach-1/agy-models",
+            json: #"{"success":true,"availableModels":[{"modelId":"gemini-4-neon-high","name":"Gemini 4 Neon (High)"},{"modelId":"gemini-4-hydrogen-high","name":"Gemini 4 Hydrogen (High)"}]}"#
+        )
+        agy.interactor.loadModelOptions(force: true, refresh: true)
+        #expect(await eventually {
+            agy.interactor.config.modelOptions?.map(\.value) == ["gemini-4-neon-high", "gemini-4-hydrogen-high"]
+        })
+        #expect(await agy.performer.queries("GET", pathSuffix: "/agy-models").last == "refresh=true")
+
+        // Unrelated machine/agent invalidations leave the catalog fresh; matching invalidation forces a reload.
+        agy.interactor.invalidateModelCatalog(machineId: "mach-other", agent: "agy")
+        agy.interactor.invalidateModelCatalog(machineId: "mach-1", agent: "codex")
+        agy.interactor.loadModelOptions()
+        try? await Task.sleep(for: .milliseconds(40))
+        #expect(await agy.performer.count("GET", pathSuffix: "/agy-models") == 3)
+
+        await agy.performer.serve(
+            "GET", "/v1/machines/mach-1/agy-models",
+            json: #"{"success":true,"availableModels":[{"modelId":"gemini-4-neon-xhigh","name":"Gemini 4 Neon (XHigh)"}]}"#
+        )
+        agy.interactor.invalidateModelCatalog(machineId: "mach-1", agent: "agy")
+        agy.interactor.loadModelOptions()
+        #expect(await eventually {
+            agy.interactor.config.modelOptions?.map(\.value) == ["gemini-4-hydrogen-high", "gemini-4-neon-xhigh"]
+        })
+
+        // Passing the 60s staleness window refreshes even without explicit force.
+        clockMs += 60_000
+        agy.interactor.loadModelOptions()
+        #expect(await eventually { await agy.performer.count("GET", pathSuffix: "/agy-models") == 5 })
     }
 
     // MARK: Session lifecycle

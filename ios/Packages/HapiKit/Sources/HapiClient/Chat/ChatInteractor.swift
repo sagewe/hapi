@@ -83,6 +83,13 @@ public final class ChatInteractor {
     public private(set) var codexModels: CodexModelsState = .idle
     /// Discovered-agent model catalog (feeds ``config``).
     public private(set) var agentModels: AgentCatalogLoadState = .idle
+    /// Matches web `useAgyModels` (`staleTime: 60_000`) so long-lived chats
+    /// pick up account/catalog updates without refetching on every layout pass.
+    private static let modelCatalogStaleMs = 60_000
+    @ObservationIgnored private var codexModelsLoadedAtMs: Int?
+    @ObservationIgnored private var codexModelsRefreshing = false
+    @ObservationIgnored private var agentModelsLoadedAtMs: Int?
+    @ObservationIgnored private var agentModelsRefreshing = false
     /// Grok/opencode in-session effort options (feeds ``config``).
     public private(set) var agentEfforts: ReasoningEffortOptionsResponse?
     /// `GET /slash-commands` result: nil until loaded; a failure retries on
@@ -1317,21 +1324,49 @@ public final class ChatInteractor {
         )
     }
 
+    /// Marks the cached model catalog stale when the runner/hub announces a
+    /// machine catalog update (`machine_models_updated`). Existing options stay
+    /// visible until the next refresh finishes.
+    public func invalidateModelCatalog(machineId: String? = nil, agent: String? = nil) {
+        if let machineId {
+            let sessionMachineId = sessionStore.detail(for: sessionId)?.metadata?.machineId
+                ?? sessionStore.sessions.first { $0.id == sessionId }?.metadata?.machineId
+            guard sessionMachineId == machineId else { return }
+        }
+        guard let flavor = currentFlavor() else { return }
+        if let agent, !agent.isEmpty, agent != flavor { return }
+        if flavor == "codex" {
+            codexModelsLoadedAtMs = nil
+        } else {
+            agentModelsLoadedAtMs = nil
+        }
+    }
+
     /// Fetch the model catalog for the picker: codex per session, the
     /// discovered agents per session (agy per machine), plus grok/opencode
     /// effort options. Live sessions only for discovered agents; grok and
     /// copilot also skip terminal-controlled ones (web query gates).
-    public func loadModelOptions() {
+    ///
+    /// Pass `force: true` to refresh an already-loaded catalog in the
+    /// background without flashing a loading state, and `refresh: true` to ask
+    /// the runner to bypass its own cache (e.g. explicit Retry).
+    public func loadModelOptions(force: Bool = false, refresh: Bool = false) {
         if let flavor = currentFlavor(), flavor != "codex" {
-            loadAgentModels(AgentFlavor(rawValue: flavor))
+            loadAgentModels(AgentFlavor(rawValue: flavor), force: force, refresh: refresh)
             return
         }
         guard currentFlavor() == "codex" else { return }
+        let isBackgroundRefresh: Bool
         switch codexModels {
-        case .loading, .loaded:
+        case .loading:
             return
+        case .loaded:
+            let isStale = force
+                || codexModelsLoadedAtMs.map { now() - $0 >= Self.modelCatalogStaleMs } ?? true
+            guard isStale, !codexModelsRefreshing else { return }
+            isBackgroundRefresh = true
         case .idle, .failed:
-            break
+            isBackgroundRefresh = false
         }
         let detail = sessionStore.detail(for: sessionId)
         let summary = sessionStore.sessions.first { $0.id == sessionId }
@@ -1339,9 +1374,14 @@ public final class ChatInteractor {
         let machineId = detail?.metadata?.machineId ?? summary?.metadata?.machineId
         guard active || machineId != nil else { return }
 
-        codexModels = .loading
+        if isBackgroundRefresh {
+            codexModelsRefreshing = true
+        } else {
+            codexModels = .loading
+        }
         Task { [weak self] in
             guard let self else { return }
+            defer { self.codexModelsRefreshing = false }
             do {
                 let response: CodexModelsResponse
                 if active {
@@ -1354,59 +1394,78 @@ public final class ChatInteractor {
                 } else if let machineId {
                     response = try await self.api.machineCodexModels(machineId: machineId)
                 } else {
-                    self.codexModels = .idle
+                    if !isBackgroundRefresh { self.codexModels = .idle }
                     return
                 }
                 if response.success, let models = response.models {
                     self.codexModels = .loaded(models)
-                } else if active {
-                    self.emit(.notice(response.error ?? "Failed to load models"))
-                    self.codexModels = .failed
-                } else {
-                    self.codexModels = .idle
+                    self.codexModelsLoadedAtMs = self.now()
+                } else if !isBackgroundRefresh {
+                    if active {
+                        self.emit(.notice(response.error ?? "Failed to load models"))
+                        self.codexModels = .failed
+                    } else {
+                        self.codexModels = .idle
+                    }
                 }
             } catch {
-                if active {
-                    self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
-                    self.codexModels = .failed
-                } else {
-                    self.codexModels = .idle
+                if !isBackgroundRefresh {
+                    if active {
+                        self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
+                        self.codexModels = .failed
+                    } else {
+                        self.codexModels = .idle
+                    }
                 }
             }
         }
     }
 
-    private func loadAgentModels(_ agent: AgentFlavor) {
+    private func loadAgentModels(_ agent: AgentFlavor, force: Bool, refresh: Bool) {
         guard AgentModelCatalog.scope(for: agent) != nil, catalogQueriesAllowed(agent) else { return }
         loadEffortOptions(force: false)
+        let isBackgroundRefresh: Bool
         switch agentModels {
-        case .loading, .loaded:
+        case .loading:
             return
+        case .loaded:
+            let isStale = force
+                || agentModelsLoadedAtMs.map { now() - $0 >= Self.modelCatalogStaleMs } ?? true
+            guard isStale, !agentModelsRefreshing else { return }
+            isBackgroundRefresh = true
         case .idle, .failed:
-            break
+            isBackgroundRefresh = false
         }
         let machineId = sessionStore.detail(for: sessionId)?.metadata?.machineId
             ?? sessionStore.sessions.first { $0.id == sessionId }?.metadata?.machineId
         // agy has no session route; its catalog is the machine's.
         if agent == .agy, machineId == nil { return }
-        agentModels = .loading
+        if isBackgroundRefresh {
+            agentModelsRefreshing = true
+        } else {
+            agentModels = .loading
+        }
         Task { [weak self] in
             guard let self else { return }
+            defer { self.agentModelsRefreshing = false }
             do {
                 let response = if agent == .agy, let machineId {
-                    try await self.api.machineAgentModels(machineId: machineId, flavor: .agy)
+                    try await self.api.machineAgentModels(machineId: machineId, flavor: .agy, refresh: refresh)
                 } else {
                     try await self.api.sessionAgentModels(sessionId: self.sessionId, flavor: agent)
                 }
                 if response.success {
                     self.agentModels = .loaded(response)
-                } else {
+                    self.agentModelsLoadedAtMs = self.now()
+                } else if !isBackgroundRefresh {
                     self.emit(.notice(response.error ?? "Failed to load models"))
                     self.agentModels = .failed
                 }
             } catch {
-                self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
-                self.agentModels = .failed
+                if !isBackgroundRefresh {
+                    self.emit(.notice(Self.errorMessage(error, fallback: "Failed to load models")))
+                    self.agentModels = .failed
+                }
             }
         }
     }

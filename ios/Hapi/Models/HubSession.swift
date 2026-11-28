@@ -113,7 +113,13 @@ final class HubSession {
     /// back to pairing with a banner.
     @ObservationIgnored var onTerminalAuthFailure: (@MainActor () -> Void)?
 
-    @ObservationIgnored private let router: SyncEventRouter
+    @ObservationIgnored private lazy var router = SyncEventRouter(
+        sessions: sessionStore,
+        machines: machineStore,
+        onMachineModelsUpdated: { [weak self] machineId, agent in
+            self?.handleMachineModelsUpdated(machineId: machineId, agent: agent)
+        }
+    )
     @ObservationIgnored private var sse: SSEClient?
     @ObservationIgnored private var consumeTask: Task<Void, Never>?
     @ObservationIgnored private var reportedAuthFailure = false
@@ -192,7 +198,6 @@ final class HubSession {
         self.visibility = VisibilityReporter(setVisibility: { subscriptionId, visibility in
             try await api.setVisibility(subscriptionId: subscriptionId, visibility: visibility)
         })
-        self.router = SyncEventRouter(sessions: sessionStore, machines: machineStore)
         sessionStore.onSessionRemoved = { [weak self] sessionId in
             guard let self else { return }
             if self.composerHandoff?.sourceSessionId == sessionId { return }
@@ -246,6 +251,15 @@ final class HubSession {
         for id in inactive { evictCachedChatModel(sessionId: id) }
         let windows = windows
         Task { await windows.releaseCachedWindows() }
+    }
+
+    private func handleMachineModelsUpdated(machineId: String, agent: String?) {
+        for (sessionId, cachedModel) in chatModels {
+            cachedModel.interactor.invalidateModelCatalog(machineId: machineId, agent: agent)
+            if sessionId == openChatSessionId {
+                cachedModel.interactor.loadModelOptions()
+            }
+        }
     }
 
     /// Builds the per-session wiring for an opened chat: window controller

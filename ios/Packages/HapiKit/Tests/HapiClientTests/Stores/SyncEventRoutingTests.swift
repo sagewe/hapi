@@ -174,4 +174,30 @@ struct SyncEventRoutingTests {
         #expect(box.toasts.count == 1)
         #expect(box.toasts.first?.title == "t")
     }
+
+    @Test func machineModelsUpdatedNotifiesCallbackOnGlobalScopeOnly() async throws {
+        final class UpdateBox {
+            var updates: [(machineId: String, agent: String?)] = []
+        }
+        let machines = FakeMachineListStore()
+        let box = UpdateBox()
+        let router = SyncEventRouter(
+            sessions: FakeSessionListStore(),
+            machines: machines,
+            onMachineModelsUpdated: { machineId, agent in
+                box.updates.append((machineId, agent))
+            }
+        )
+        let event = try decodeSyncEvent(
+            "{\"type\":\"machine_models_updated\",\"machineId\":\"mach-1\",\"agent\":\"agy\"}"
+        )
+        router.route(event, scope: .session("s1"))
+        #expect(box.updates.isEmpty)
+
+        router.route(event, scope: .global)
+        #expect(box.updates.count == 1)
+        #expect(box.updates.first?.machineId == "mach-1")
+        #expect(box.updates.first?.agent == "agy")
+        try await expectEventually { machines.calls == ["refresh"] }
+    }
 }

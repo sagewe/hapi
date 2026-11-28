@@ -9,12 +9,16 @@ extension APIClient {
     public func machineAgentModels(
         machineId: String,
         flavor: AgentFlavor,
-        cwd: String? = nil
+        cwd: String? = nil,
+        refresh: Bool = false
     ) async throws -> AgentModelsResponse {
-        try await request(
+        var query: [URLQueryItem] = []
+        if let cwd { query.append(URLQueryItem(name: "cwd", value: cwd)) }
+        if refresh { query.append(URLQueryItem(name: "refresh", value: "true")) }
+        return try await request(
             .get,
             "/v1/machines/\(encodePathComponent(machineId))/\(flavor.rawValue)-models",
-            query: cwd.map { [URLQueryItem(name: "cwd", value: $0)] } ?? []
+            query: query
         )
     }
 

@@ -337,7 +337,7 @@ struct SessionConfigView: View {
             } else if model.modelLoadFailed {
                 Text("Failed to load models")
                     .foregroundStyle(.secondary)
-                Button("Retry") { model.loadModels() }
+                Button("Retry") { model.loadModels(force: true, refresh: true) }
                     .buttonStyle(.borderless)
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("session-config-model-retry")

@@ -33,15 +33,18 @@ public struct SyncEventRouter {
     private let sessions: any SessionListStoring
     private let machines: any MachineListStoring
     private let onToast: @MainActor (ToastPayload) -> Void
+    private let onMachineModelsUpdated: @MainActor (_ machineId: String, _ agent: String?) -> Void
 
     public init(
         sessions: any SessionListStoring,
         machines: any MachineListStoring,
-        onToast: @escaping @MainActor (ToastPayload) -> Void = { _ in }
+        onToast: @escaping @MainActor (ToastPayload) -> Void = { _ in },
+        onMachineModelsUpdated: @escaping @MainActor (_ machineId: String, _ agent: String?) -> Void = { _, _ in }
     ) {
         self.sessions = sessions
         self.machines = machines
         self.onToast = onToast
+        self.onMachineModelsUpdated = onMachineModelsUpdated
     }
 
     /// `resume == .ok` skips the resync for a healthy list (replay covers every
@@ -81,10 +84,11 @@ public struct SyncEventRouter {
         case .machineUpdated(_, let machineId, let data):
             machines.applyMachineEvent(machineId: machineId, data: data)
 
-        case .machineModelsUpdated:
+        case .machineModelsUpdated(_, let machineId, let agent):
             guard scope == .global else { return }
             let machines = self.machines
             Task { @MainActor in try? await machines.refresh() }
+            onMachineModelsUpdated(machineId, agent)
 
         case .messagesInvalidated, .messagesConsumed, .messagesIndeterminate, .messagesRequeued, .messageCancelled, .scheduledMatured:
             guard scope == .global else { return }

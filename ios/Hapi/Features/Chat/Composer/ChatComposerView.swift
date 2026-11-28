@@ -3509,7 +3509,10 @@ struct ComposerSessionControlsPopupCard: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .modifier(ComposerPopupSurface(colorScheme: colorScheme))
-        .onAppear { if model.showsQuota { model.loadQuota() } }
+        .onAppear {
+            if model.showsComposerModelMenu { model.loadModels() }
+            if model.showsQuota { model.loadQuota() }
+        }
     }
 
     private var content: some View {
@@ -3553,7 +3556,10 @@ struct ComposerSessionControlsPopupCard: View {
                 Divider().padding(.vertical, 8)
             }
             if model.showsModel || model.canDiscoverModels {
-                Button { page = .model } label: {
+                Button {
+                    page = .model
+                    model.loadModels(force: true)
+                } label: {
                     row("Model", icon: "cube", value: Text(verbatim: model.modelLabel), stacked: true)
                 }
                 .accessibilityIdentifier("session-controls-model")
@@ -3648,7 +3654,7 @@ struct ComposerSessionControlsPopupCard: View {
             if model.config.modelOptionsLoading {
                 ProgressView("Loading models…").padding(.vertical, 12)
             } else if model.modelLoadFailed {
-                Button("Retry") { model.loadModels() }.frame(minHeight: 44)
+                Button("Retry") { model.loadModels(force: true, refresh: true) }.frame(minHeight: 44)
             } else {
                 if let current = model.unlistedModelOption {
                     choice(Text(verbatim: current.label), selected: true, allowed: false) {}

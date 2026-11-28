@@ -178,8 +178,8 @@ final class SessionConfigModel {
         interactor.setServiceTier(tier)
     }
 
-    func loadModels() {
-        interactor.loadModelOptions()
+    func loadModels(force: Bool = false, refresh: Bool = false) {
+        interactor.loadModelOptions(force: force, refresh: refresh)
     }
 
     func loadQuota(force: Bool = false) {
