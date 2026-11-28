@@ -46,8 +46,18 @@ private struct WeChatHoldDictationOverlay: View {
     let isFinalizing: Bool
 
     @Environment(\.hapiTheme) private var theme
+    @Environment(\.isAssistantMode) private var isAssistantMode
+
+    private var activeAccent: Color {
+        isAssistantMode ? AssistantDesign.accent : theme.accent
+    }
 
     private var scrimTint: Color {
+        if isAssistantMode {
+            return theme.isDark
+                ? Color.black.opacity(0.54)
+                : Color(red: 0.965, green: 0.965, blue: 0.955).opacity(0.46)
+        }
         switch theme.variant {
         case .light:
             return Color(red: 0.95, green: 0.96, blue: 0.98).opacity(0.46)
@@ -61,6 +71,7 @@ private struct WeChatHoldDictationOverlay: View {
     private var bubbleBackground: Color {
         switch zone {
         case .send:
+            if isAssistantMode { return AssistantDesign.accentSoft }
             switch theme.variant {
             case .light:
                 return Color(red: 0.93, green: 0.96, blue: 1.00)
@@ -72,37 +83,37 @@ private struct WeChatHoldDictationOverlay: View {
         case .cancel:
             return theme.diffRemovedBackground
         case .edit:
-            return theme.surface
+            return isAssistantMode ? AssistantDesign.surface : theme.surface
         }
     }
 
     private var bubbleStroke: Color {
         switch zone {
         case .send:
-            return theme.accent.opacity(theme.isDark ? 0.44 : 0.34)
+            return activeAccent.opacity(theme.isDark ? 0.44 : 0.34)
         case .cancel:
             return theme.danger.opacity(0.46)
         case .edit:
-            return theme.textPrimary.opacity(0.22)
+            return (isAssistantMode ? AssistantDesign.ink : theme.textPrimary).opacity(0.22)
         }
     }
 
     private var bubbleTextColor: Color {
-        zone == .cancel ? theme.danger : theme.textPrimary
+        zone == .cancel ? theme.danger : (isAssistantMode ? AssistantDesign.ink : theme.textPrimary)
     }
 
     private var bubblePlaceholderColor: Color {
-        zone == .cancel ? theme.danger.opacity(0.82) : theme.textSecondary
+        zone == .cancel ? theme.danger.opacity(0.82) : (isAssistantMode ? AssistantDesign.inkSecondary : theme.textSecondary)
     }
 
     private var waveformColor: Color {
         switch zone {
         case .send:
-            return theme.accent
+            return activeAccent
         case .cancel:
             return theme.danger.opacity(0.86)
         case .edit:
-            return theme.textSecondary
+            return isAssistantMode ? AssistantDesign.inkSecondary : theme.textSecondary
         }
     }
 
@@ -280,6 +291,11 @@ private struct WeChatHoldDictationOverlay: View {
 
     private var bottomArcFill: Color {
         if zone == .send {
+            if isAssistantMode {
+                return theme.isDark
+                    ? Color(red: 0.09, green: 0.19, blue: 0.16)
+                    : Color(red: 0.87, green: 0.95, blue: 0.93)
+            }
             switch theme.variant {
             case .light:
                 return Color(red: 0.88, green: 0.92, blue: 0.99)
@@ -289,11 +305,11 @@ private struct WeChatHoldDictationOverlay: View {
                 return Color(red: 0.09, green: 0.14, blue: 0.22)
             }
         }
-        return theme.surface.opacity(0.90)
+        return (isAssistantMode ? AssistantDesign.surface : theme.surface).opacity(0.90)
     }
 
     private var bottomArcStroke: Color {
-        zone == .send ? theme.accent.opacity(theme.isDark ? 0.38 : 0.28) : theme.divider
+        zone == .send ? activeAccent.opacity(theme.isDark ? 0.38 : 0.28) : (isAssistantMode ? AssistantDesign.border : theme.divider)
     }
 
     private var bottomArcPad: some View {
@@ -309,7 +325,7 @@ private struct WeChatHoldDictationOverlay: View {
 
             Image(systemName: "waveform")
                 .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(zone == .send ? theme.accent : theme.textHint)
+                .foregroundStyle(zone == .send ? activeAccent : (isAssistantMode ? AssistantDesign.inkMuted : theme.textHint))
                 .offset(y: -6)
         }
         .frame(height: 112)

@@ -5,28 +5,51 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Compact Liquid Glass composer card with always-accessible in-composer mode switching (`快速 | 深度`),
-/// clean monochrome attachment cards, and MyDots hold-to-speak / send ergonomics.
+/// MyDots-native Liquid Glass composer for QiqiWork workbench:
+/// - Tap anywhere on the input area to focus keyboard; hold anywhere (or pull upward / hold right voice circle)
+///   for full-screen WeChat/MyDots Hold-to-Dictate.
+/// - Releasing on "松手 发送" immediately submits the investigation; sliding right to "文 编辑" edits inline.
+/// - Single compact `✦ 深度` / `⚡ 快速` capsule lives in the bottom-left tool row.
 struct AssistantDraftComposer: View {
     @Bindable var draft: AssistantWorkbenchModel
+    #if !targetEnvironment(macCatalyst)
+    let voice: HoldToDictateController
+    #endif
     let send: () -> Void
     let onToggleCodex: () -> Void
     let focusChanged: (Bool) -> Void
     var attachmentRequest = false
     var focusRequest = false
+
     @State private var attachPopover = false
     @State private var camera = false
     @State private var photos = false
     @State private var filePicker = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
-    @FocusState private var focused: Bool
-    @State private var holdArmed = false
-    @State private var voiceFrame = CGRect.zero
+    @State private var textFocused = false
+    @State private var textSelection = NSRange(location: 0, length: 0)
+    @State private var textComposing = false
     @State private var composerBounds = CGRect.zero
-    #if !targetEnvironment(macCatalyst)
-    @State private var voice: HoldToDictateController
-    #endif
 
+    #if !targetEnvironment(macCatalyst)
+    init(
+        draft: AssistantWorkbenchModel,
+        voice: HoldToDictateController,
+        attachmentRequest: Bool,
+        focusRequest: Bool = false,
+        onToggleCodex: @escaping () -> Void = {},
+        focusChanged: @escaping (Bool) -> Void = { _ in },
+        send: @escaping () -> Void
+    ) {
+        self.draft = draft
+        self.voice = voice
+        self.attachmentRequest = attachmentRequest
+        self.focusRequest = focusRequest
+        self.onToggleCodex = onToggleCodex
+        self.send = send
+        self.focusChanged = focusChanged
+    }
+    #else
     init(
         draft: AssistantWorkbenchModel,
         attachmentRequest: Bool,
@@ -41,17 +64,21 @@ struct AssistantDraftComposer: View {
         self.onToggleCodex = onToggleCodex
         self.send = send
         self.focusChanged = focusChanged
-        #if !targetEnvironment(macCatalyst)
-        _voice = State(initialValue: HoldToDictateController(
-            api: draft.session.api,
-            streamer: HubStreamingAsrClient(api: draft.session.api),
-            recorder: PCMStreamingAudioRecorder()
-        ))
-        #endif
     }
+    #endif
 
     private var showsSendAction: Bool {
         draft.canSend || draft.sending
+    }
+
+    private var placeholderText: String {
+        if let custom = draft.scene?.placeholder { return custom }
+        #if !targetEnvironment(macCatalyst)
+        if !textFocused && voice.isAvailable && draft.allocatedSessionID == nil {
+            return "可按住说话，或输入线索…"
+        }
+        #endif
+        return "输入调查线索，或添加单据…"
     }
 
     var body: some View {
@@ -59,7 +86,7 @@ struct AssistantDraftComposer: View {
             if let scene = draft.scene {
                 AssistantSceneChip(scene: scene) {
                     withAnimation(.snappy(duration: 0.2)) { draft.scene = nil }
-                    focused = false
+                    textFocused = false
                 }
                 .disabled(draft.allocatedSessionID != nil)
                 .padding(.horizontal, 6)
@@ -82,26 +109,10 @@ struct AssistantDraftComposer: View {
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
 
-            ZStack(alignment: .leading) {
-                if draft.text.isEmpty {
-                    Text(draft.scene?.placeholder ?? "输入线索，或按住右侧说话…")
-                        .font(.system(size: 16))
-                        .foregroundStyle(AssistantDesign.inkMuted)
-                        .lineLimit(1)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: $draft.text, axis: .vertical)
-                    .font(.system(size: 16))
-                    .foregroundStyle(AssistantDesign.ink)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .accessibilityLabel("调查线索")
-                    .accessibilityIdentifier("assistant.draft-input")
-                    .disabled(draft.allocatedSessionID != nil)
-            }
-            .frame(minHeight: 36)
-            .padding(.horizontal, 10)
-            .padding(.top, 2)
+            inputField
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
 
             HStack(alignment: .center, spacing: 8) {
                 attachButton
@@ -119,7 +130,7 @@ struct AssistantDraftComposer: View {
                         }
                         .foregroundStyle(AssistantDesign.risk)
                         .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .frame(height: 32)
                         .background(AssistantDesign.risk.opacity(0.14), in: Capsule())
                     }
                     .buttonStyle(.plain)
@@ -142,6 +153,7 @@ struct AssistantDraftComposer: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(AssistantDesign.accent)
+                        .frame(width: 36, height: 36)
                 } else if voice.isAvailable, draft.allocatedSessionID == nil {
                     holdVoiceButton(compact: showsSendAction)
                 }
@@ -174,7 +186,7 @@ struct AssistantDraftComposer: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .background {
-            AssistantComposerCardSurface(cornerRadius: 24, focused: focused)
+            AssistantComposerCardSurface(cornerRadius: 24, focused: textFocused)
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { composerBounds = $0 }
         .overlay(alignment: .bottomLeading) {
@@ -203,7 +215,7 @@ struct AssistantDraftComposer: View {
                     }
                 }
                 pickedPhotos = []
-                focused = true
+                textFocused = true
             }
         }
         .fileImporter(isPresented: $filePicker, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
@@ -212,7 +224,7 @@ struct AssistantDraftComposer: View {
                 Task {
                     defer { draft.pendingImports -= 1 }
                     for url in urls { draft.add(await AttachmentPreparer.prepare(fileURL: url)) }
-                    focused = true
+                    textFocused = true
                 }
             }
         }
@@ -223,26 +235,32 @@ struct AssistantDraftComposer: View {
                 Task {
                     defer { draft.pendingImports -= 1 }
                     draft.add(await AttachmentPreparer.prepare(data: data, filename: AttachmentPreparer.cameraFilename(), mimeType: "image/jpeg"))
-                    focused = true
+                    textFocused = true
                 }
             }
         }
-        .overlay { WeChatVoiceOverlayHost(controller: voice) }
-        .task {
+        .task(id: ObjectIdentifier(voice)) {
             voice.onOutcome = { outcome in
                 switch outcome {
-                case .finishSend(_, let text): draft.appendVoice(text)
-                case .beginInlineEdit(let partial): draft.beginVoiceEdit(partial); focused = true
-                case .refineInlineEdit(let text): draft.refineVoiceEdit(text)
-                case .error(let message): draft.error = message
-                default: break
+                case .finishSend(_, let text):
+                    draft.appendVoice(text)
+                    send()
+                case .beginInlineEdit(let partial):
+                    draft.beginVoiceEdit(partial)
+                    textFocused = true
+                case .refineInlineEdit(let text):
+                    draft.refineVoiceEdit(text)
+                case .error(let message):
+                    draft.error = message
+                default:
+                    break
                 }
             }
             await voice.refreshAvailability()
         }
         .onDisappear { voice.cancelIfHolding() }
         #endif
-        .onChange(of: focused) { _, value in
+        .onChange(of: textFocused) { _, value in
             if value { attachPopover = false }
             focusChanged(value)
         }
@@ -251,7 +269,67 @@ struct AssistantDraftComposer: View {
                 attachPopover = true
             }
         }
-        .onChange(of: focusRequest) { _, _ in focused = true }
+        .onChange(of: focusRequest) { _, _ in textFocused = true }
+    }
+
+    // MARK: - MyDots Tap-or-Hold Input Field
+
+    private var inputField: some View {
+        ZStack(alignment: .topLeading) {
+            if draft.text.isEmpty && !textComposing {
+                Text(placeholderText)
+                    .font(.system(size: 16))
+                    .foregroundStyle(AssistantDesign.inkMuted)
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+            }
+            #if targetEnvironment(macCatalyst)
+            ComposerTextView(
+                text: $draft.text,
+                selection: $textSelection,
+                isFocused: $textFocused,
+                isComposing: $textComposing,
+                font: .systemFont(ofSize: 16),
+                accessibilityLabel: "调查线索",
+                onReturn: {
+                    guard draft.canSend else { return false }
+                    send()
+                    return true
+                }
+            )
+            #else
+            ComposerTextView(
+                text: $draft.text,
+                selection: $textSelection,
+                isFocused: $textFocused,
+                isComposing: $textComposing,
+                font: .systemFont(ofSize: 16),
+                accessibilityLabel: "调查线索",
+                onReturn: {
+                    guard draft.canSend else { return false }
+                    send()
+                    return true
+                },
+                holdToDictateEnabled: voice.isAvailable && draft.allocatedSessionID == nil,
+                hitTestOutsets: UIEdgeInsets(top: 10, left: 10, bottom: 4, right: 10),
+                onHoldBegan: { location, windowSize in
+                    beginVoiceHold(location: location, windowSize: windowSize)
+                },
+                onHoldChanged: { location, windowSize in
+                    updateVoiceHold(location: location, windowSize: windowSize)
+                },
+                onHoldEnded: {
+                    voice.endHold()
+                },
+                onHoldCancelled: {
+                    voice.cancelIfHolding()
+                }
+            )
+            #endif
+        }
+        .frame(minHeight: 28)
+        .disabled(draft.allocatedSessionID != nil)
+        .accessibilityIdentifier("assistant.draft-input")
     }
 
     // MARK: - Controls
@@ -348,14 +426,15 @@ struct AssistantDraftComposer: View {
 
     #if !targetEnvironment(macCatalyst)
     private func holdVoiceButton(compact: Bool) -> some View {
-        Image(systemName: holdArmed ? "waveform" : (compact ? "mic.fill" : "waveform"))
+        let holding = voice.phase.isOverlayActive
+        return Image(systemName: holding ? "waveform" : (compact ? "mic.fill" : "waveform"))
             .font(.system(size: compact ? 15 : 16, weight: .semibold))
             .foregroundStyle(
-                holdArmed ? .white : (compact ? AssistantDesign.inkSecondary : AssistantDesign.inkOnSolid)
+                holding ? .white : (compact ? AssistantDesign.inkSecondary : AssistantDesign.inkOnSolid)
             )
             .frame(width: 36, height: 36)
             .background {
-                if holdArmed {
+                if holding {
                     Circle().fill(AssistantDesign.accentGradient)
                 } else if !compact {
                     Circle().fill(AssistantDesign.ink)
@@ -363,42 +442,72 @@ struct AssistantDraftComposer: View {
                     Circle().fill(AssistantDesign.surfaceMuted)
                 }
             }
-            .scaleEffect(holdArmed ? 0.92 : 1)
-            .animation(.spring(response: 0.22, dampingFraction: 0.8), value: holdArmed)
-            .contentShape(Circle())
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.onAppear { voiceFrame = proxy.frame(in: .global) }
-                }
-            )
-            .gesture(
-                LongPressGesture(minimumDuration: 0.18)
-                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
-                    .onChanged { value in
-                        switch value {
-                        case .first(true):
-                            holdArmed = true
-                            beginVoice()
-                        case .second(true, let drag):
-                            if !holdArmed { holdArmed = true; beginVoice() }
-                            if let drag {
-                                voice.updateFinger(
-                                    fingerX: drag.location.x,
-                                    fingerY: drag.location.y,
-                                    containerWidth: UIScreen.main.bounds.width,
-                                    containerHeight: UIScreen.main.bounds.height
-                                )
+            .overlay {
+                VoicePrimaryTouchSurface(
+                    a11yLabel: "按住说话",
+                    a11yIdentifier: "assistant.voice-button",
+                    holdEnabled: voice.isAvailable && draft.allocatedSessionID == nil,
+                    onTap: {
+                        draft.error = "按住输入框或右侧语音键即可说话"
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            if draft.error == "按住输入框或右侧语音键即可说话" {
+                                draft.error = nil
                             }
-                        default:
-                            break
                         }
-                    }
-                    .onEnded { _ in
-                        holdArmed = false
+                    },
+                    onHoldBegan: { location, windowSize in
+                        beginVoiceHold(location: location, windowSize: windowSize)
+                    },
+                    onHoldChanged: { location, windowSize in
+                        updateVoiceHold(location: location, windowSize: windowSize)
+                    },
+                    onHoldEnded: {
                         voice.endHold()
+                    },
+                    onHoldCancelled: {
+                        voice.cancelIfHolding()
                     }
+                )
+            }
+    }
+
+    private func beginVoiceHold(location: CGPoint, windowSize: CGSize) {
+        guard case .idle = voice.phase else { return }
+        attachPopover = false
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted:
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            textFocused = false
+            voice.context = VoiceRecognitionContext(draft: draft.text)
+            voice.beginHold(
+                fingerX: Double(location.x),
+                fingerY: Double(location.y),
+                containerWidth: Double(windowSize.width),
+                containerHeight: Double(windowSize.height)
             )
-            .accessibilityLabel("按住说话")
+        case .denied:
+            draft.error = "请在系统设置中允许麦克风访问"
+        case .undetermined:
+            Task {
+                let granted = await AVAudioApplication.requestRecordPermission()
+                if !granted {
+                    draft.error = "请在系统设置中允许麦克风访问"
+                }
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    private func updateVoiceHold(location: CGPoint, windowSize: CGSize) {
+        guard case .holding = voice.phase else { return }
+        voice.updateFinger(
+            fingerX: Double(location.x),
+            fingerY: Double(location.y),
+            containerWidth: Double(windowSize.width),
+            containerHeight: Double(windowSize.height)
+        )
     }
     #endif
 
@@ -409,26 +518,6 @@ struct AssistantDraftComposer: View {
         false
         #endif
     }
-
-    #if !targetEnvironment(macCatalyst)
-    private func beginVoice() {
-        guard voice.phase == .idle else { return }
-        Task {
-            let granted = await AVAudioApplication.requestRecordPermission()
-            if granted && holdArmed {
-                voice.context = VoiceRecognitionContext(draft: draft.text)
-                voice.beginHold(
-                    fingerX: voiceFrame.midX,
-                    fingerY: voiceFrame.midY,
-                    containerWidth: UIScreen.main.bounds.width,
-                    containerHeight: UIScreen.main.bounds.height
-                )
-            } else {
-                draft.error = "请在系统设置中允许麦克风访问"
-            }
-        }
-    }
-    #endif
 }
 
 private struct AssistantLocalFileChip: View {

@@ -1955,7 +1955,7 @@ private enum ComposerPrimaryAction: Equatable {
 /// Raw touch surface over the empty-state `waveform` voice input circle:
 /// - Quick tap (`< 150ms`) toggles hands-free dictation (`RecordingChipView` -> inserts draft).
 /// - Stationary hold (`>= 150ms`) or drag (`> 14pt`) engages WeChat Hold-to-Dictate seamlessly.
-private struct VoicePrimaryTouchSurface: UIViewRepresentable {
+struct VoicePrimaryTouchSurface: UIViewRepresentable {
     var a11yLabel: String
     var a11yIdentifier: String
     var holdEnabled: Bool
@@ -1986,8 +1986,8 @@ private struct VoicePrimaryTouchSurface: UIViewRepresentable {
         private var holdTimer: DispatchWorkItem?
         private var startWindowPoint: CGPoint = .zero
         private var latestWindowPoint: CGPoint = .zero
-        private var isTrackingTouch = false
-        private var didEngageHold = false
+        private(set) var isTrackingTouch = false
+        private(set) var didEngageHold = false
         private var cancelledTap = false
 
         override init(frame: CGRect) {

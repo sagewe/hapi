@@ -15,6 +15,9 @@ struct AssistantRootView: View {
     @State private var attachmentRequest = false
     @State private var focusRequest = false
     @State private var editing = false
+    #if !targetEnvironment(macCatalyst)
+    @State private var workbenchVoice: HoldToDictateController
+    #endif
 
     init(
         session: HubSession,
@@ -28,6 +31,13 @@ struct AssistantRootView: View {
         _draft = State(initialValue: initial)
         _drawerOpen = State(initialValue: historyOpen)
         _history = State(initialValue: SessionListModel(session: session))
+        #if !targetEnvironment(macCatalyst)
+        _workbenchVoice = State(initialValue: HoldToDictateController(
+            api: session.api,
+            streamer: HubStreamingAsrClient(api: session.api),
+            recorder: PCMStreamingAudioRecorder()
+        ))
+        #endif
     }
 
     private var needsAttention: Bool {
@@ -51,6 +61,40 @@ struct AssistantRootView: View {
             let reveal = min(1, max(0, (drawerOpen ? width + min(0, drag) : max(0, drag)) / width))
             ZStack(alignment: .leading) {
                 AssistantDesign.background.ignoresSafeArea()
+
+                // Pre-mounted left drawer underneath center (exact MyDots `DotsDrawerStage` parallax — zero hitch on pan begin).
+                AssistantHistoryDrawer(
+                    brandTitle: brandTitle,
+                    model: history,
+                    selectedID: selectedID,
+                    onNew: { newInvestigation(false) },
+                    select: { id in
+                        selectedID = id
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                            drawerOpen = false
+                            drag = 0
+                        }
+                    },
+                    settings: {
+                        drawerOpen = false
+                        settingsOpen = true
+                    }
+                )
+                .frame(width: width)
+                .background(AssistantDesign.background)
+                .overlay {
+                    Color.black
+                        .opacity(0.16 * (1 - reveal))
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+                .offset(x: -width * 0.22 * (1 - reveal))
+                .opacity(reveal > 0.001 ? 1 : 0)
+                .allowsHitTesting(drawerOpen && drag == 0)
+                .accessibilityHidden(!drawerOpen)
+                .accessibilityIdentifier("assistant.history-drawer")
+
+                // Center stage pushes 1:1 with finger (MyDots push-slide drawer physics).
                 NavigationStack {
                     Group {
                         if let id = selectedID {
@@ -69,49 +113,36 @@ struct AssistantRootView: View {
                     }
                     .toolbar(.hidden, for: .navigationBar)
                 }
-                .offset(x: reveal * 32)
-                if reveal > 0 {
-                    Color.black.opacity(0.28 * reveal)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(AssistantDesign.border)
+                        .frame(width: 0.5)
+                        .opacity(reveal)
                         .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                                drawerOpen = false
-                                drag = 0
-                            }
-                        }
-                        .accessibilityLabel("关闭历史调查")
-                    AssistantHistoryDrawer(
-                        brandTitle: brandTitle,
-                        model: history,
-                        selectedID: selectedID,
-                        onNew: { newInvestigation(false) },
-                        select: { id in
-                            selectedID = id
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                                drawerOpen = false
-                                drag = 0
-                            }
-                        },
-                        settings: {
-                            drawerOpen = false
-                            settingsOpen = true
-                        }
-                    )
-                    .frame(width: width)
-                    .background(AssistantDesign.background)
-                    .overlay(alignment: .trailing) {
-                        Rectangle().fill(AssistantDesign.border).frame(width: 0.5)
-                    }
-                    .offset(x: -width + width * reveal)
-                    .compositingGroup()
-                    .shadow(color: .black.opacity(0.12), radius: 20, x: 6)
-                    .accessibilityIdentifier("assistant.history-drawer")
+                        .allowsHitTesting(false)
                 }
+                .overlay {
+                    if reveal > 0.001 {
+                        Color.black.opacity(0.14 * reveal)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                                    drawerOpen = false
+                                    drag = 0
+                                }
+                            }
+                            .allowsHitTesting(drawerOpen)
+                            .accessibilityLabel("关闭历史调查")
+                    }
+                }
+                .offset(x: reveal * width)
             }
             .background {
                 AssistantDrawerPanInstaller(
                     drawerOpen: drawerOpen,
                     drawerWidth: width,
+                    isVoiceActive: isWorkbenchVoiceActive,
                     onBegan: {
                         dismissKeyboard()
                     },
@@ -126,6 +157,13 @@ struct AssistantRootView: View {
                     }
                 )
             }
+            #if !targetEnvironment(macCatalyst)
+            .overlay {
+                if selectedID == nil {
+                    WeChatVoiceOverlayHost(controller: workbenchVoice)
+                }
+            }
+            #endif
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !app.pendingIncomingFiles.isEmpty {
@@ -234,27 +272,37 @@ struct AssistantRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AssistantDesign.background)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            AssistantDraftComposer(
-                draft: draft,
-                attachmentRequest: attachmentRequest,
-                focusRequest: focusRequest,
-                onToggleCodex: { newInvestigation(!draft.useCodex) },
-                focusChanged: { isFocused in
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                        editing = isFocused
-                    }
-                }
-            ) {
-                Task {
-                    let pending = draft
-                    if let id = await pending.send() {
-                        if selectedID == nil {
-                            withAnimation(.easeInOut(duration: 0.22)) { selectedID = id }
+            Group {
+                #if targetEnvironment(macCatalyst)
+                AssistantDraftComposer(
+                    draft: draft,
+                    attachmentRequest: attachmentRequest,
+                    focusRequest: focusRequest,
+                    onToggleCodex: { newInvestigation(!draft.useCodex) },
+                    focusChanged: { isFocused in
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                            editing = isFocused
                         }
-                        if draft === pending { draft = AssistantWorkbenchModel(session: session) }
-                        await history.refresh()
                     }
+                ) {
+                    submitWorkbenchDraft()
                 }
+                #else
+                AssistantDraftComposer(
+                    draft: draft,
+                    voice: workbenchVoice,
+                    attachmentRequest: attachmentRequest,
+                    focusRequest: focusRequest,
+                    onToggleCodex: { newInvestigation(!draft.useCodex) },
+                    focusChanged: { isFocused in
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                            editing = isFocused
+                        }
+                    }
+                ) {
+                    submitWorkbenchDraft()
+                }
+                #endif
             }
             .padding(.top, 6)
             .background(alignment: .bottom) {
@@ -268,6 +316,27 @@ struct AssistantRootView: View {
             }
         }
         .accessibilityIdentifier("assistant.workbench")
+    }
+
+    private var isWorkbenchVoiceActive: Bool {
+        #if !targetEnvironment(macCatalyst)
+        return workbenchVoice.phase.isOverlayActive
+        #else
+        return false
+        #endif
+    }
+
+    private func submitWorkbenchDraft() {
+        Task {
+            let pending = draft
+            if let id = await pending.send() {
+                if selectedID == nil {
+                    withAnimation(.easeInOut(duration: 0.22)) { selectedID = id }
+                }
+                if draft === pending { draft = AssistantWorkbenchModel(session: session) }
+                await history.refresh()
+            }
+        }
     }
 
     private var workbenchHeader: some View {
@@ -682,6 +751,7 @@ struct AssistantHistoryRow: View {
 private struct AssistantDrawerPanInstaller: UIViewRepresentable {
     let drawerOpen: Bool
     let drawerWidth: CGFloat
+    let isVoiceActive: Bool
     let onBegan: () -> Void
     let onChanged: (CGFloat) -> Void
     let onEnded: (Bool) -> Void
@@ -720,6 +790,10 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
         var parent: AssistantDrawerPanInstaller
         private weak var hostView: UIView?
         private weak var lastHorizontalScrollView: UIScrollView?
+        #if !targetEnvironment(macCatalyst)
+        private weak var lastHoldOverlay: ComposerTextView.HoldOrTapOverlayView?
+        private weak var lastVoiceSurface: VoicePrimaryTouchSurface.TouchView?
+        #endif
         private lazy var pan: UIPanGestureRecognizer = {
             let gr = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
             gr.delegate = self
@@ -733,7 +807,6 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
         }
 
         func attach(from anchor: UIView) {
-            // Attach to the nearest hosting root view so the gesture covers the full stage.
             var target: UIView? = anchor.superview
             while let next = target?.superview, !(next is UIWindow) {
                 target = next
@@ -788,10 +861,22 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-            guard let hostView, !hasPresentedModal(in: hostView.window) else { return false }
+            guard !parent.isVoiceActive, let hostView, !hasPresentedModal(in: hostView.window) else { return false }
             lastHorizontalScrollView = nil
+            #if !targetEnvironment(macCatalyst)
+            lastHoldOverlay = nil
+            lastVoiceSurface = nil
+            #endif
             var cur: UIView? = touch.view
             while let v = cur {
+                #if !targetEnvironment(macCatalyst)
+                if let hold = v as? ComposerTextView.HoldOrTapOverlayView {
+                    lastHoldOverlay = hold
+                }
+                if let voice = v as? VoicePrimaryTouchSurface.TouchView {
+                    lastVoiceSurface = voice
+                }
+                #endif
                 if lastHorizontalScrollView == nil,
                    let sv = v as? UIScrollView,
                    sv.isScrollEnabled,
@@ -812,21 +897,26 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard gestureRecognizer === pan, let hostView, !hasPresentedModal(in: hostView.window) else {
+            guard gestureRecognizer === pan,
+                  !parent.isVoiceActive,
+                  let hostView,
+                  !hasPresentedModal(in: hostView.window)
+            else { return false }
+            #if !targetEnvironment(macCatalyst)
+            if lastHoldOverlay?.didEngageHold == true || lastVoiceSurface?.didEngageHold == true {
                 return false
             }
+            #endif
             let t = pan.translation(in: hostView)
             let v = pan.velocity(in: hostView)
             let ax = abs(t.x)
             let ay = abs(t.y)
             let dx = (ax + ay > 2) ? t.x : v.x
-            // Closed: only allow right swipe. Open: only allow left swipe.
             if !parent.drawerOpen && dx <= 0 { return false }
             if parent.drawerOpen && dx >= 0 { return false }
             let isHorizontal = (ax + ay > 2) ? (ax > ay * 1.15) : (abs(v.x) > abs(v.y) * 1.15)
             guard isHorizontal else { return false }
 
-            // Yield to horizontal ScrollViews while they still have room in the swipe direction.
             if let hsv = lastHorizontalScrollView {
                 let minX = -hsv.adjustedContentInset.left
                 let maxX = max(minX, hsv.contentSize.width - hsv.bounds.width + hsv.adjustedContentInset.right)
@@ -848,10 +938,16 @@ private struct AssistantDrawerPanInstaller: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
+            guard gestureRecognizer === pan else { return false }
+            #if !targetEnvironment(macCatalyst)
+            if otherGestureRecognizer is ComposerTextView.ExclusiveTouchHoldRecognizer {
+                return otherGestureRecognizer.state == .possible
+            }
+            #endif
             if otherGestureRecognizer is UIPanGestureRecognizer && otherGestureRecognizer.view is UIScrollView {
                 return false
             }
-            return false
+            return true
         }
     }
 }
