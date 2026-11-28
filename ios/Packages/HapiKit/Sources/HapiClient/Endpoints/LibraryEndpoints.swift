@@ -4,7 +4,12 @@ import HapiProtocol
 extension APIClient {
     public func recentDeliverables(limit: Int = 40) async throws -> [RecentDeliverable] {
         struct Response: Decodable { let files: [RecentDeliverable] }
-        let res: Response = try await request(.get, "/v1/library/deliverables?limit=\(max(1, min(limit, 100)))")
+        let clamped = max(1, min(limit, 100))
+        let res: Response = try await request(
+            .get,
+            "/v1/library/deliverables",
+            query: [URLQueryItem(name: "limit", value: String(clamped))]
+        )
         return res.files
     }
 

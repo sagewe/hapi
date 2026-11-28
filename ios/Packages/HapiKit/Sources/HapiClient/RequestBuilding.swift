@@ -21,7 +21,8 @@ enum HubRequestURL {
     /// ``encodePathComponent(_:)``); any path on `baseURL` itself is replaced,
     /// matching the web client's `new URL(path, baseUrl)` for absolute paths.
     static func make(baseURL: URL, path: String, query: [URLQueryItem]) throws -> URL {
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
+        guard !path.contains("?"), !path.contains("#"),
+              var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
             throw URLError(.badURL)
         }
         components.percentEncodedPath = path
